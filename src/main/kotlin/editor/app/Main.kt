@@ -1,16 +1,44 @@
 package editor.app
 
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
-fun main() {
-    val name = "Kotlin"
-    //TIP Press <shortcut actionId="ShowIntentionActions"/> with your caret at the highlighted text
-    // to see how IntelliJ IDEA suggests fixing it.
-    println("Hello, " + name + "!")
+import editor.renderer.AnsiCanvasRenderer
+import editor.state.EditorState
+import editor.state.buffer.TextBuffer
+import editor.terminal.JLineTerminalInput
+import editor.terminal.TerminalEvent
+import editor.ui.UiRenderer
 
-    for (i in 1..5) {
-        //TIP Press <shortcut actionId="Debug"/> to start debugging your code. We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-        // for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.
-        println("i = $i")
+/**
+ * Minimal bootstrap: initialize renderer/input, render once, and react to resize.
+ * Extend this into a full event loop with key/mouse handling.
+ */
+fun main() {
+    val buffer = TextBuffer.fromString(
+        """
+        Welcome to the TUI editor scaffold.
+        - Left pane: tabs (Project, Git, Settings).
+        - Right pane: layered code editor with gutter and syntax color.
+        - Status bar: mode, file path, dirty flag, Git info.
+        """.trimIndent()
+    )
+
+    var state = EditorState(buffer = buffer, filePath = "scratch.txt")
+    val renderer = AnsiCanvasRenderer()
+    val uiRenderer = UiRenderer(renderer)
+    val input = JLineTerminalInput()
+
+    uiRenderer.render(state)
+
+    while (true) {
+        when (val event = input.poll()) {
+            is TerminalEvent.Resize -> {
+                uiRenderer.render(state)
+            }
+            is TerminalEvent.Key -> {
+                if (event.key == "Ctrl-C" || event.key == "\u0003") break
+            }
+            else -> {
+                // Mouse and other events will be handled later.
+            }
+        }
     }
 }
