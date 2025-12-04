@@ -27,3 +27,4 @@
 - Use `./gradlew build` / `./gradlew test` as primary checks; target Java 21 per `build.gradle.kts`.
 - Add regression tests for buffer operations, renderer diffing, event parsing, and panel behaviors. Snapshot tests can cover render output.
 - Keep `README.md` updated when layout, objectives, or architecture change so contributors stay aligned.
+- Current scaffolding: JLine-backed terminal input (`JLineTerminalInput`), ANSI renderer (`AnsiCanvasRenderer`), basic `EditorState` with viewport/visible lines, and a `UiRenderer` that draws the top bar, split panes, and status bar.
