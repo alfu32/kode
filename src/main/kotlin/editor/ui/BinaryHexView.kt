@@ -21,12 +21,18 @@ class BinaryHexView(
     private var mime: String? = null
     private var bytes: ByteArray = ByteArray(0)
     private var scrollRow: Int = 0
+    private var hexCursorIndex: Int = 0
+    private var asciiCursorIndex: Int = 0
+
+    var onRequestOpenLastText: (() -> Unit)? = null
 
     fun openFile(path: String, detection: MimeTypeResult? = null) {
         filePath = path
         mime = detection?.mime
         bytes = runCatching { File(path).readBytes() }.getOrElse { ByteArray(0) }
         scrollRow = 0
+        hexCursorIndex = 0
+        asciiCursorIndex = 0
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -35,6 +41,8 @@ class BinaryHexView(
         val headerStyle = styleSheet.getStyle("code-header").withDefaults()
         val bodyStyle = styleSheet.getStyle("code-body").withDefaults()
         val gutterStyle = styleSheet.getStyle("code-gutter").withDefaults(bodyStyle.fg, bodyStyle.bg)
+        val cursorStyle = styleSheet.getStyle("code-cursor")
+            .withDefaults(fg = bodyStyle.bg ?: gutterStyle.bg, bg = bodyStyle.fg ?: gutterStyle.fg)
 
         canvas.applyStyle(headerStyle) {
             val mimeLabel = mime?.let { "[$it]" } ?: "[binary]"
@@ -71,6 +79,29 @@ class BinaryHexView(
                 if (asciiStart < cols) {
                     drawText(asciiStart, 1 + row, asciiText.take(max(0, cols - asciiStart)))
                 }
+
+                // Overlay cursors for hex and ASCII regions
+                val rowStartIndex = index
+                if (hexCursorIndex in rowStartIndex until rowStartIndex + slice.size) {
+                    val local = hexCursorIndex - rowStartIndex
+                    val hx = hexStart + (local * 3)
+                    if (hx < cols - 1) {
+                        val pair = String.format("%02X", slice[local].toInt() and 0xFF)
+                        canvas.applyStyle(cursorStyle) {
+                            drawText(hx, 1 + row, pair.take(max(0, cols - hx)))
+                        }
+                    }
+                }
+                if (asciiCursorIndex in rowStartIndex until rowStartIndex + slice.size) {
+                    val local = asciiCursorIndex - rowStartIndex
+                    val ax = asciiStart + local
+                    if (ax < cols) {
+                        val ch = asciiText.getOrNull(local)?.toString() ?: " "
+                        canvas.applyStyle(cursorStyle) {
+                            drawText(ax, 1 + row, ch)
+                        }
+                    }
+                }
             }
         }
     }
@@ -80,6 +111,11 @@ class BinaryHexView(
         val maxRow = max(0, totalRows - 1)
         val bodyRows = max(1, (event.rows ?: 0) - 1)
         when (event.kind) {
+            "mouse_down" -> {
+                val clicked = handleClick(event)
+                onRequestOpenLastText?.invoke()
+                return clicked
+            }
             "mouse_scroll" -> {
                 val delta = event.scrollDelta ?: return false
                 val prev = scrollRow
@@ -102,6 +138,34 @@ class BinaryHexView(
             }
         }
         return false
+    }
+
+    private fun handleClick(event: UIEvent): Boolean {
+        val x = event.x ?: return false
+        val y = event.y ?: return false
+        if (y == 0) return false // header
+        val row = scrollRow + (y - 1)
+        if (row < 0) return false
+        val index = row * bytesPerRow
+        if (index >= bytes.size) return false
+        val sliceSize = minOf(bytesPerRow, bytes.size - index)
+        val hexStart = 10
+        val asciiStart = hexStart + (bytesPerRow * 3) + 2
+
+        val inHex = x >= hexStart && x < asciiStart
+        val inAscii = x >= asciiStart
+        val local = when {
+            inHex -> ((x - hexStart) / 3).coerceIn(0, bytesPerRow - 1)
+            inAscii -> (x - asciiStart).coerceIn(0, bytesPerRow - 1)
+            else -> null
+        } ?: return false
+
+        val targetIndex = index + local
+        if (targetIndex >= bytes.size || local >= sliceSize) return false
+
+        hexCursorIndex = targetIndex
+        asciiCursorIndex = targetIndex
+        return true
     }
 }
 

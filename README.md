@@ -1,6 +1,7 @@
 # TUI Code Editor
 
-![img.png](img.png)
+![img_2.png](img_2.png)
+![img_1.png](img_1.png)
 
 ## Objectives
 - Build a terminal-first code editor with modern ergonomics: split panes, tabs, guttered editing, syntax highlighting, and basic code intelligence.
@@ -32,3 +33,8 @@
 - Build artifact: `./gradlew fatJar` produces a self-contained `*-all.jar` with the manifest entrypoint.
 - Dependencies: JLine for terminal I/O, JGit for Git panel operations; add further libs deliberately to keep the footprint lean.
 - Current scaffolding: JLine-backed terminal input (`JLineTerminalInput`), ANSI renderer (`AnsiCanvasRenderer`), basic `EditorState` with viewport/visible lines, and a `UiRenderer` that draws the top bar, split panes, and status bar.
+
+
+![img_2.png](img_2.png)
+![img_1.png](img_1.png)
+![img.png](img.png)

@@ -19,6 +19,7 @@ import editor.ui.CodeEditorView
 import editor.ui.FileTreeView
 import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
+import java.nio.file.Path
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     fun redraw() {
@@ -93,8 +94,12 @@ private class SplitPanelsApp(
     private var focus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
     private val codeEditor = CodeEditorView(styleSheet)
-    private val hexViewer = BinaryHexView(styleSheet)
+    private val hexViewer = BinaryHexView(styleSheet).also { viewer ->
+        viewer.onRequestOpenLastText = { reopenLastText() }
+    }
     private val imageViewer = ImageViewerView(styleSheet)
+    private var lastTextPath: String? = null
+    private var lastTextDetection: MimeTypeResult? = null
     private val leftTabs = TabView(
         styleSheet = styleSheet,
         titles = listOf("Files", "Git", "Settings"),
@@ -217,7 +222,6 @@ private class SplitPanelsApp(
         } else if (!dragging && x != null && y != null) {
             val startX = splitter + 1
             if (x >= startX) {
-                // Keep current viewer focus for code/binary/image
                 val forwarded = event.alterCopy(
                     UIEvent(
                         kind = event.kind,
@@ -238,7 +242,7 @@ private class SplitPanelsApp(
                         raw = event.raw
                     )
                 )
-                return codeEditor.dispatch(forwarded)
+                return dispatchToRight(forwarded)
             }
         }
 
@@ -264,6 +268,8 @@ private class SplitPanelsApp(
             }
             MimeTypeCategory.TEXT -> {
                 codeEditor.openFile(path, detected)
+                lastTextPath = path
+                lastTextDetection = detected
                 focus = FocusTarget.CODE
             }
             MimeTypeCategory.BINARY, MimeTypeCategory.UNKNOWN -> {
@@ -271,6 +277,30 @@ private class SplitPanelsApp(
                 hexViewer.openFile(path, detected)
                 focus = FocusTarget.HEX
             }
+        }
+    }
+
+    private fun reopenLastText() {
+        val path = lastTextPath ?: return
+        val detection = lastTextDetection ?: mimeDetector.detectFile(Path.of(path))
+        lastTextDetection = detection
+        codeEditor.openFile(path, detection)
+        focus = FocusTarget.CODE
+    }
+
+    private fun dispatchToRight(event: UIEvent): Boolean {
+        val targetFocus = when (focus) {
+            FocusTarget.FILES -> FocusTarget.CODE
+            else -> focus
+        }
+        if (event.kind == "mouse_down") {
+            focus = targetFocus
+        }
+        return when (targetFocus) {
+            FocusTarget.CODE -> codeEditor.dispatch(event)
+            FocusTarget.HEX -> hexViewer.dispatch(event)
+            FocusTarget.IMAGE -> imageViewer.dispatch(event)
+            FocusTarget.FILES -> codeEditor.dispatch(event)
         }
     }
 
