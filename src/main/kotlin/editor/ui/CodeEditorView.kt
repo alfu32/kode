@@ -7,6 +7,7 @@ import editor.lib.TextBuffer
 import editor.lib.handleKeyForBuffer
 import editor.lib.handleMouseToBuffer
 import editor.lib.renderBuffer
+import editor.mime.MimeTypeResult
 import react.BaseComponent
 import react.StyleSet
 import react.StyleSheet
@@ -21,12 +22,13 @@ class CodeEditorView(
 
     private var filePath: String = ""
     private var mime: String? = null
+    private var language: String? = null
     private var scrollTop: Int = 0
     private var dragging = false
     private var lastCols: Int = 0
     private var lastRows: Int = 0
 
-    fun openFile(path: String, mime: String? = null) {
+    fun openFile(path: String, detection: MimeTypeResult? = null) {
         val content = try {
             File(path).readText()
         } catch (_: Exception) {
@@ -34,7 +36,8 @@ class CodeEditorView(
         }
         buffer.loadText(content)
         filePath = path
-        this.mime = mime
+        this.mime = detection?.mime
+        this.language = detection?.language
         scrollTop = 0
     }
 
@@ -55,7 +58,8 @@ class CodeEditorView(
         // Header bar with file path and mime
         canvas.applyStyle(headerStyle) {
             val mimeLabel = mime?.let { "[$it]" } ?: "[unknown]"
-            val label = "${filePath.ifEmpty { "[no file]" }} $mimeLabel"
+            val langLabel = language?.let { "· $it" } ?: ""
+            val label = "${filePath.ifEmpty { "[no file]" }} $mimeLabel $langLabel"
                 .take(cols)
             drawText(0, 0, label.padEnd(cols, ' '))
         }

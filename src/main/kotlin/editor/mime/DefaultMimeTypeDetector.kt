@@ -15,52 +15,38 @@ class DefaultMimeTypeDetector(
     private var byteLimit: Int = DEFAULT_LIMIT,
 ) : MimeTypeDetector {
 
-    private val extensionMap = ConcurrentHashMap<String, String>().apply {
-        putAll(
-            mapOf(
-                "txt" to "text/plain",
-                "html" to "text/html",
-                "htm" to "text/html",
-                "xml" to "text/xml",
-                "json" to "application/json",
-                "csv" to "text/csv",
-                "tsv" to "text/tab-separated-values",
-                "js" to "text/javascript",
-                "css" to "text/css",
-                "md" to "text/markdown",
-                "png" to "image/png",
-                "jpg" to "image/jpeg",
-                "jpeg" to "image/jpeg",
-                "gif" to "image/gif",
-                "webp" to "image/webp",
-                "bmp" to "image/bmp",
-                "tiff" to "image/tiff",
-                "svg" to "image/svg+xml",
-                "pdf" to "application/pdf",
-                "zip" to "application/zip",
-                "gz" to "application/gzip",
-                "tar" to "application/x-tar",
-                "rar" to "application/vnd.rar",
-                "7z" to "application/x-7z-compressed",
-                "mp3" to "audio/mpeg",
-                "wav" to "audio/wav",
-                "ogg" to "audio/ogg",
-                "mp4" to "video/mp4",
-                "webm" to "video/webm",
-                "mov" to "video/quicktime",
-                "avi" to "video/x-msvideo",
-                "jar" to "application/java-archive",
-                "apk" to "application/vnd.android.package-archive",
-                "epub" to "application/epub+zip",
-                "doc" to "application/msword",
-                "docx" to "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "ppt" to "application/vnd.ms-powerpoint",
-                "pptx" to "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                "xls" to "application/vnd.ms-excel",
-                "xlsx" to "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "wasm" to "application/wasm",
-            ),
+    private val extensionMap = ConcurrentHashMap<String, SampleMimeTable.Entry>().apply {
+        // Hints derived from repository samples.
+        putAll(SampleMimeTable.extensionToEntry)
+
+        // Common binaries and archives not covered by samples.
+        val misc = mapOf(
+            "zip" to "application/zip",
+            "gz" to "application/gzip",
+            "tar" to "application/x-tar",
+            "rar" to "application/vnd.rar",
+            "7z" to "application/x-7z-compressed",
+            "mp3" to "audio/mpeg",
+            "wav" to "audio/wav",
+            "ogg" to "audio/ogg",
+            "mp4" to "video/mp4",
+            "webm" to "video/webm",
+            "mov" to "video/quicktime",
+            "avi" to "video/x-msvideo",
+            "jar" to "application/java-archive",
+            "apk" to "application/vnd.android.package-archive",
+            "epub" to "application/epub+zip",
+            "doc" to "application/msword",
+            "docx" to "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "ppt" to "application/vnd.ms-powerpoint",
+            "pptx" to "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "xls" to "application/vnd.ms-excel",
+            "xlsx" to "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "wasm" to "application/wasm",
         )
+        misc.forEach { (ext, mime) ->
+            this[ext] = SampleMimeTable.Entry(language = "generic-$ext", extension = ".$ext", mime = mime)
+        }
     }
 
     override fun detect(bytes: ByteArray): MimeTypeResult {
@@ -70,9 +56,19 @@ class DefaultMimeTypeDetector(
         }
         // Fallback to guessing text vs binary if nothing matched.
         return if (looksLikeText(limited)) {
-            MimeTypeResult("text/plain", ".txt", MimeTypeResult.DetectionSource.FALLBACK)
+            MimeTypeResult(
+                mime = "text/plain",
+                extension = ".txt",
+                language = "plain-text",
+                source = MimeTypeResult.DetectionSource.FALLBACK
+            )
         } else {
-            MimeTypeResult(OCTET_STREAM, "", MimeTypeResult.DetectionSource.FALLBACK)
+            MimeTypeResult(
+                mime = OCTET_STREAM,
+                extension = "",
+                language = null,
+                source = MimeTypeResult.DetectionSource.FALLBACK
+            )
         }
     }
 
@@ -86,7 +82,7 @@ class DefaultMimeTypeDetector(
             val buffer = readBytes(input, byteLimit)
             val signatureResult = detect(buffer)
             if (signatureResult.source != MimeTypeResult.DetectionSource.FALLBACK) {
-                return signatureResult
+                return signatureResult.copy(language = nameResult.language ?: signatureResult.language)
             }
         }
 
@@ -96,6 +92,7 @@ class DefaultMimeTypeDetector(
             return MimeTypeResult(
                 mime = platformMime,
                 extension = nameResult.extension,
+                language = nameResult.language,
                 source = MimeTypeResult.DetectionSource.PLATFORM,
             )
         }
@@ -106,17 +103,27 @@ class DefaultMimeTypeDetector(
     override fun detectFilename(name: String): MimeTypeResult {
         val ext = name.substringAfterLast('.', missingDelimiterValue = "").let(::normalizeExtension)
         if (ext.isNotEmpty()) {
-            extensionMap[ext]?.let { mime ->
-                return MimeTypeResult(mime, ".$ext", MimeTypeResult.DetectionSource.EXTENSION)
+            extensionMap[ext]?.let { entry ->
+                return MimeTypeResult(
+                    mime = entry.mime,
+                    extension = entry.extension,
+                    language = entry.language,
+                    source = MimeTypeResult.DetectionSource.EXTENSION
+                )
             }
         }
-        return MimeTypeResult(OCTET_STREAM, if (ext.isEmpty()) "" else ".$ext", MimeTypeResult.DetectionSource.FALLBACK)
+        return MimeTypeResult(
+            mime = OCTET_STREAM,
+            extension = if (ext.isEmpty()) "" else ".$ext",
+            language = null,
+            source = MimeTypeResult.DetectionSource.FALLBACK
+        )
     }
 
     override fun registerExtension(extension: String, mime: String) {
         val normalized = normalizeExtension(extension)
         if (normalized.isNotEmpty()) {
-            extensionMap[normalized] = mime
+            extensionMap[normalized] = SampleMimeTable.Entry(language = "custom-$normalized", extension = ".$normalized", mime = mime)
         }
     }
 
@@ -124,7 +131,8 @@ class DefaultMimeTypeDetector(
         ext.removePrefix(".").lowercase(Locale.ROOT)
 
     private fun readBytes(input: InputStream, limit: Int): ByteArray {
-        val buffer = ByteArray(if (limit > 0) limit else DEFAULT_READ_SIZE)
+        val max = if (limit > 0) limit else DEFAULT_READ_SIZE
+        val buffer = ByteArray(max)
         val read = input.read(buffer)
         return if (read < 0) ByteArray(0) else buffer.copyOf(read)
     }
@@ -191,7 +199,12 @@ class DefaultMimeTypeDetector(
         val detector: (ByteArray) -> Boolean,
     ) {
         fun match(data: ByteArray): MimeTypeResult? =
-            if (detector(data)) MimeTypeResult(mime, extension, MimeTypeResult.DetectionSource.SIGNATURE) else null
+            if (detector(data)) MimeTypeResult(
+                mime = mime,
+                extension = extension,
+                language = null,
+                source = MimeTypeResult.DetectionSource.SIGNATURE
+            ) else null
     }
 
     companion object {

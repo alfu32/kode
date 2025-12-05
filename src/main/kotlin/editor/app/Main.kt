@@ -97,7 +97,8 @@ private class SplitPanelsApp(
                 styleSheet,
                 FileTree.newFileTree(System.getProperty("user.dir"))
             ) { entry, mime ->
-                val detected = mime ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath)).mime
+                val detected = mime?.let { editor.mime.MimeTypeResult(it, language = null) }
+                    ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath))
                 codeEditor.openFile(entry.fullPath, detected)
                 focus = FocusTarget.CODE
             },
