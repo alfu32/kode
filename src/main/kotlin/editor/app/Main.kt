@@ -13,8 +13,11 @@ import react.util.restoreStty
 import react.util.runCommand
 import editor.lib.FileTree
 import editor.mime.DefaultMimeTypeDetector
+import editor.mime.MimeTypeResult
 import editor.ui.CodeEditorView
 import editor.ui.FileTreeView
+import editor.ui.BinaryHexView
+import editor.ui.ImageViewerView
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     fun redraw() {
@@ -42,12 +45,12 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
                 needsRender = app.dispatch(event) || event.kind == "resize"
             }
 
-            //if (needsRender) {
+            if (needsRender) {
                 redraw()
                 needsRender = false
-            //} else {
-            //    Thread.sleep(idleSleepMillis)
-            //}
+            } else {
+                Thread.sleep(idleSleepMillis)
+            }
         }
     } finally {
 
@@ -89,6 +92,8 @@ private class SplitPanelsApp(
     private var focus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
     private val codeEditor = CodeEditorView(styleSheet)
+    private val hexViewer = BinaryHexView(styleSheet)
+    private val imageViewer = ImageViewerView(styleSheet)
     private val leftTabs = TabView(
         styleSheet = styleSheet,
         titles = listOf("Files", "Git", "Settings"),
@@ -97,10 +102,9 @@ private class SplitPanelsApp(
                 styleSheet,
                 FileTree.newFileTree(System.getProperty("user.dir"))
             ) { entry, mime ->
-                val detected = mime?.let { editor.mime.MimeTypeResult(it, language = null) }
+                val detected = mime?.let { MimeTypeResult(it, language = null) }
                     ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath))
-                codeEditor.openFile(entry.fullPath, detected)
-                focus = FocusTarget.CODE
+                openInViewer(entry.fullPath, detected)
             },
             PlaceholderPane(styleSheet, "Git"),
             PlaceholderPane(styleSheet, "Settings")
@@ -212,7 +216,7 @@ private class SplitPanelsApp(
         } else if (!dragging && x != null && y != null) {
             val startX = splitter + 1
             if (x >= startX) {
-                focus = FocusTarget.CODE
+                // Keep current viewer focus for code/binary/image
                 val forwarded = event.alterCopy(
                     UIEvent(
                         kind = event.kind,
@@ -241,6 +245,8 @@ private class SplitPanelsApp(
             return when (focus) {
                 FocusTarget.FILES -> leftTabs.dispatch(event)
                 FocusTarget.CODE -> codeEditor.dispatch(event)
+                FocusTarget.HEX -> hexViewer.dispatch(event)
+                FocusTarget.IMAGE -> imageViewer.dispatch(event)
             }
         }
 
@@ -248,6 +254,24 @@ private class SplitPanelsApp(
     }
 
     private fun isOnSplitter(x: Int): Boolean = x == clampWidth(leftWidth, lastCols.coerceAtLeast(1))
+
+    private fun openInViewer(path: String, detected: MimeTypeResult) {
+        when (detected.category) {
+            MimeTypeResult.Category.IMAGE -> {
+                imageViewer.openFile(path, detected)
+                focus = FocusTarget.IMAGE
+            }
+            MimeTypeResult.Category.TEXT -> {
+                codeEditor.openFile(path, detected)
+                focus = FocusTarget.CODE
+            }
+            MimeTypeResult.Category.BINARY, MimeTypeResult.Category.UNKNOWN -> {
+                // Unknown defaults to hex viewer.
+                hexViewer.openFile(path, detected)
+                focus = FocusTarget.HEX
+            }
+        }
+    }
 
     private fun clampWidth(value: Int, cols: Int): Int {
         val available = (cols - 1).coerceAtLeast(1) // leave a column for the splitter
@@ -284,11 +308,16 @@ private class SplitPanelsApp(
             width = width,
             height = height
         )
-        codeEditor.render(clipped)
+        when (focus) {
+            FocusTarget.CODE -> codeEditor.render(clipped)
+            FocusTarget.FILES -> codeEditor.render(clipped) // default to code view when no file selected
+            FocusTarget.HEX -> hexViewer.render(clipped)
+            FocusTarget.IMAGE -> imageViewer.render(clipped)
+        }
     }
 }
 
-private enum class FocusTarget { FILES, CODE }
+private enum class FocusTarget { FILES, CODE, HEX, IMAGE }
 
 private class PlaceholderPane(
     styleSheet: StyleSheet,

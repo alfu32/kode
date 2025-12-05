@@ -82,7 +82,12 @@ class DefaultMimeTypeDetector(
             val buffer = readBytes(input, byteLimit)
             val signatureResult = detect(buffer)
             if (signatureResult.source != MimeTypeResult.DetectionSource.FALLBACK) {
-                return signatureResult.copy(language = nameResult.language ?: signatureResult.language)
+                val mergedCategory = if (signatureResult.category != MimeTypeResult.Category.UNKNOWN)
+                    signatureResult.category else nameResult.category
+                return signatureResult.copy(
+                    language = nameResult.language ?: signatureResult.language,
+                    category = mergedCategory
+                )
             }
         }
 
@@ -93,6 +98,7 @@ class DefaultMimeTypeDetector(
                 mime = platformMime,
                 extension = nameResult.extension,
                 language = nameResult.language,
+                category = nameResult.category,
                 source = MimeTypeResult.DetectionSource.PLATFORM,
             )
         }
@@ -108,6 +114,7 @@ class DefaultMimeTypeDetector(
                     mime = entry.mime,
                     extension = entry.extension,
                     language = entry.language,
+                    category = entry.category(),
                     source = MimeTypeResult.DetectionSource.EXTENSION
                 )
             }
@@ -116,6 +123,7 @@ class DefaultMimeTypeDetector(
             mime = OCTET_STREAM,
             extension = if (ext.isEmpty()) "" else ".$ext",
             language = null,
+            category = MimeTypeResult.Category.BINARY,
             source = MimeTypeResult.DetectionSource.FALLBACK
         )
     }
