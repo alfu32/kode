@@ -1,12 +1,20 @@
 package editor.ui
 
-import editor.renderer.CanvasRenderer
 import editor.state.EditorState
+import editor.state.Focus
+import editor.state.LeftTab
+import editor.ui.components.FileTreeComponent
+import editor.ui.components.GitComponent
+import editor.ui.components.SettingsComponent
+import react.renderer.CanvasRenderer
 
 /**
  * Draws the high-level layout: top bar, split panes, status bar.
  */
 class UiRenderer(private val renderer: CanvasRenderer) {
+    private val fileTreeComponent = FileTreeComponent()
+    private val gitComponent = GitComponent()
+    private val settingsComponent = SettingsComponent()
 
     fun render(state: EditorState) {
         val layout = computeLayout(renderer.rows(), renderer.cols())
@@ -14,6 +22,12 @@ class UiRenderer(private val renderer: CanvasRenderer) {
 
         drawTop(layout)
         drawLeftPane(layout)
+        drawTabs(layout, state.leftTab)
+        when (state.leftTab) {
+            LeftTab.PROJECT -> fileTreeComponent.render(renderer, layout.left, state)
+            LeftTab.GIT -> gitComponent.render(renderer, layout.left, state)
+            LeftTab.SETTINGS -> settingsComponent.render(renderer, layout.left, state)
+        }
         drawRightPane(layout, state)
         drawStatus(layout, state)
 
@@ -31,14 +45,27 @@ class UiRenderer(private val renderer: CanvasRenderer) {
         renderer.setBackgroundColor(25, 28, 34)
         renderer.setColor(180, 180, 180)
         renderer.drawRect(layout.left.x, layout.left.y, layout.left.width, layout.left.height)
-        renderer.drawText(layout.left.x + 1, layout.left.y, "[Tabs] Project | Git | Settings")
+    }
+
+    private fun drawTabs(layout: Layout, active: LeftTab) {
+        val tabLine = buildString {
+            append(" ")
+            append(if (active == LeftTab.PROJECT) "[Project]" else " Project ")
+            append("  ")
+            append(if (active == LeftTab.GIT) "[Git]" else " Git ")
+            append("  ")
+            append(if (active == LeftTab.SETTINGS) "[Settings]" else " Settings ")
+        }
+        renderer.setBackgroundColor(35, 40, 50)
+        renderer.setColor(200, 210, 220)
+        renderer.drawText(layout.left.x + 1, layout.left.y, tabLine.take(layout.left.width - 2))
     }
 
     private fun drawRightPane(layout: Layout, state: EditorState) {
         renderer.setBackgroundColor(18, 18, 18)
         renderer.setColor(220, 220, 220)
         renderer.drawRect(layout.right.x, layout.right.y, layout.right.width, layout.right.height)
-        val visible = state.visibleLines(layout.right.height)
+        val visible = state.visibleLines(layout.right.height, layout.right.width)
         visible.forEachIndexed { idx, line ->
             val y = layout.right.y + idx
             renderer.drawText(layout.right.x, y, line.take(layout.right.width))

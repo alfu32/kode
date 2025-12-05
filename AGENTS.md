@@ -11,6 +11,7 @@
 - `./gradlew build` — compile, run tests, and assemble outputs to `build/`.
 - `./gradlew test` — execute the JUnit Platform suite (uses `kotlin("test")`).
 - `./gradlew clean` — remove build artifacts for a fresh compile.
+- `./gradlew fatJar` — build a self-contained executable JAR (classifier `-all`) with the manifest entrypoint.
 - Use the wrapper (`./gradlew`) to ensure Kotlin 2.2.x and Java 21 toolchain alignment as configured in `build.gradle.kts`.
 
 ## Coding Style & Naming Conventions
@@ -29,4 +30,4 @@
 - Use imperative, concise commit subjects (e.g., `Add cursor rendering loop`); conventional prefixes (`feat:`, `fix:`) are fine if they aid readability—history is currently minimal, so establish a clear standard now.
 - PRs should state what changed, why, and how to verify (list commands like `./gradlew test`); link issues when applicable and note follow-up tasks.
 - Include screenshots or terminal recordings for user-visible TUI changes; keep PRs focused and avoid bundling unrelated refactors.
-- With each functional change, update `README.md` to reflect objectives, architecture, and layout so docs stay in sync with the code.
+- With each functional change, update `README.md` to reflect objectives, architecture, layout, and build tasks so docs stay in sync with the code.

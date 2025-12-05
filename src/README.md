@@ -1,0 +1,3 @@
+what java tui framework can i use for a tui application that will support a wide variety of of terminals and support mouse events ( possibly over ssh ) Jline ?
+
+i want to integrate and develop my own custom components, a code editor that has its own generic text buffer, a color overla coming from a syntax highlighter based on textmate tmGrammar definitions, my experience is that any scroll box that i came across i needed to ignore because i needed more control, and i had to roll my own.

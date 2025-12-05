@@ -6,7 +6,7 @@ import java.io.InputStream
 /**
  * Minimal ANSI renderer with a simple back buffer for diffed output.
  */
-class AnsiCanvasRenderer(
+class JLineCanvasRenderer(
     private val input: InputStream = System.`in`,
     private val output: Appendable = System.out,
     initialCols: Int = 120,
@@ -24,6 +24,10 @@ class AnsiCanvasRenderer(
 
     override fun cols(): Int = currentCols
     override fun rows(): Int = currentRows
+    override fun resize(cols: Int, rows: Int) {
+        currentCols = cols
+        currentRows = rows
+    }
 
     override fun clear() {
         esc("2J")
@@ -62,6 +66,42 @@ class AnsiCanvasRenderer(
 
     override fun underline(enabled: Boolean) {
         esc(if (enabled) "4m" else "24m")
+    }
+
+    override fun resetAttributes() {
+        esc("0m")
+    }
+
+    override fun hideCursor() {
+        esc("?25l")
+    }
+
+    override fun showCursor() {
+        esc("?25h")
+    }
+
+    override fun enableMouseTracking() {
+        // Enable basic mouse tracking (press/release + motion)
+        frame.append("\u001b[?1000h")
+        frame.append("\u001b[?1003h")
+    }
+
+    override fun disableMouseTracking() {
+        frame.append("\u001b[?1000l")
+        frame.append("\u001b[?1003l")
+    }
+
+    override fun enterAlternateScreen() {
+        frame.append("\u001b[?1049h")
+    }
+
+    override fun leaveAlternateScreen() {
+        frame.append("\u001b[?1049l")
+    }
+
+    override fun shutdown() {
+        frame.setLength(0)
+        backBuffer.setLength(0)
     }
 
     override fun flush() {

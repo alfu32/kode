@@ -29,4 +29,5 @@ sealed class TerminalEvent {
 interface TerminalInput {
     fun poll(): TerminalEvent
     fun tryPoll(): TerminalEvent?
+    fun currentSize(): Pair<Int, Int>
 }
