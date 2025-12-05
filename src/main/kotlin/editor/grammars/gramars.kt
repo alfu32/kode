@@ -31,7 +31,7 @@ interface SyntaxProvider {
 class TmProvider(grammarDir: Path) : SyntaxProvider {
     private val registry = Registry()
     private val langById = mutableMapOf<String, IGrammar>() // language or scope -> grammar
-    private val extIndex = mutableMapOf<String, IGrammar>()  // extension (no dot) -> grammar
+    private val extIndex = mutableMapOf<String, Pair<String, IGrammar>>()  // extension (no dot) -> (language, grammar)
 
     init {
         loadGrammars(grammarDir)
@@ -50,7 +50,7 @@ class TmProvider(grammarDir: Path) : SyntaxProvider {
                 langById.putIfAbsent(grammar.scopeName, grammar)
                 grammar.fileTypes?.forEach { ext ->
                     val normalized = ext.removePrefix(".").lowercase(Locale.ROOT)
-                    extIndex.putIfAbsent(normalized, grammar)
+                    extIndex.putIfAbsent(normalized, langId to grammar)
                 }
             }
         }
@@ -77,7 +77,10 @@ class TmProvider(grammarDir: Path) : SyntaxProvider {
     }
 
     fun grammarForExtension(ext: String): IGrammar? =
-        extIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]
+        extIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]?.second
+
+    fun languageForExtension(ext: String): String? =
+        extIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]?.first
 
     private fun toTokens(result: ITokenizeLineResult<out Array<IToken>>, line: Int): List<Token> =
         result.tokens.map {

@@ -12,6 +12,7 @@ import react.util.enterRawMode
 import react.util.restoreStty
 import react.util.runCommand
 import editor.lib.FileTree
+import editor.grammars.TmProvider
 import editor.mime.DefaultMimeTypeDetector
 import editor.mime.MimeTypeCategory
 import editor.mime.MimeTypeResult
@@ -19,6 +20,8 @@ import editor.ui.CodeEditorView
 import editor.ui.FileTreeView
 import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
+import java.nio.file.Files
+import java.nio.file.Paths
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     fun redraw() {
@@ -70,7 +73,11 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
 }
 
 fun main() {
-    val styleSheet = StyleSheet.loadFromFiles(listOf("styles/app.css"))
+    val styleFiles = mutableListOf("styles/app.css")
+    if (Files.exists(Paths.get("grammars/tm-scopes.css"))) {
+        styleFiles += "grammars/tm-scopes.css"
+    }
+    val styleSheet = StyleSheet.loadFromFiles(styleFiles)
     val renderer = AnsiCanvasRenderer()
 
     val app = SplitPanelsApp(styleSheet) { renderer.requestExit() }
@@ -93,7 +100,7 @@ private class SplitPanelsApp(
     private var focus: FocusTarget = FocusTarget.CODE
     private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
-    private val tmProvider = editor.grammars.TmProvider(java.nio.file.Paths.get("grammars"))
+    private val tmProvider = TmProvider(Paths.get("grammars"))
     private val codeEditor = CodeEditorView(styleSheet)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
@@ -267,8 +274,8 @@ private class SplitPanelsApp(
                 focus = rightFocus
             }
             MimeTypeCategory.TEXT -> {
-                val grammarAvailable = isGrammarAvailable(path, detected)
-                codeEditor.openFile(path, detected, grammarAvailable)
+                val (grammarLang, grammarAvailable) = resolveGrammar(path, detected)
+                codeEditor.openFile(path, detected, grammarAvailable, grammarLang)
                 rightFocus = FocusTarget.CODE
                 focus = rightFocus
             }
@@ -306,12 +313,20 @@ private class SplitPanelsApp(
     }
 
     private fun isGrammarAvailable(path: String, detected: MimeTypeResult): Boolean {
-        detected.language?.let { if (tmProvider.languages().contains(it)) return true }
+        return resolveGrammar(path, detected).second
+    }
+
+    private fun resolveGrammar(path: String, detected: MimeTypeResult): Pair<String?, Boolean> {
+        detected.language?.let {
+            if (tmProvider.languages().contains(it)) return it to true
+        }
         val ext = path.substringAfterLast('.', missingDelimiterValue = "")
         if (ext.isNotEmpty()) {
-            tmProvider.grammarForExtension(ext)?.let { return true }
+            tmProvider.languageForExtension(ext)?.let { lang ->
+                return lang to true
+            }
         }
-        return false
+        return null to false
     }
 
     private inline fun CanvasRenderer.withStyle(style: react.StyleSet, block: CanvasRenderer.() -> Unit) {

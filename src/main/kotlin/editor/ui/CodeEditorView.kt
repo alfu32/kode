@@ -8,6 +8,7 @@ import editor.lib.handleKeyForBuffer
 import editor.lib.handleMouseToBuffer
 import editor.lib.renderBuffer
 import editor.mime.MimeTypeResult
+import editor.grammars.SyntaxProvider
 import react.BaseComponent
 import react.StyleSet
 import react.StyleSheet
@@ -18,19 +19,26 @@ import java.io.File
 
 class CodeEditorView(
     styleSheet: StyleSheet,
-    private val buffer: ITextBuffer = TextBuffer()
+    private val buffer: ITextBuffer = TextBuffer(),
+    private val syntaxProvider: SyntaxProvider? = null
 ) : BaseComponent(styleSheet) {
 
     private var filePath: String = ""
     private var mime: String? = null
     private var language: String? = null
     private var grammarAvailable: Boolean = false
+    private var grammarLanguage: String? = null
     private var scrollTop: Int = 0
     private var dragging = false
     private var lastCols: Int = 0
     private var lastRows: Int = 0
 
-    fun openFile(path: String, detection: MimeTypeResult? = null, grammarAvailable: Boolean = false) {
+    fun openFile(
+        path: String,
+        detection: MimeTypeResult? = null,
+        grammarAvailable: Boolean = false,
+        grammarLanguage: String? = null
+    ) {
         val content = try {
             File(path).readText()
         } catch (_: Exception) {
@@ -41,6 +49,7 @@ class CodeEditorView(
         this.mime = detection?.mime
         this.language = detection?.language
         this.grammarAvailable = grammarAvailable
+        this.grammarLanguage = grammarLanguage ?: detection?.language
         scrollTop = 0
     }
 
@@ -71,42 +80,44 @@ class CodeEditorView(
         val bodyRows = (rows - 1).coerceAtLeast(0)
         if (bodyRows == 0) return
 
+        val visibleLines = buffer.text().split("\n").drop(scrollTop).take(bodyRows)
+        val tokensByLine = if (grammarAvailable && syntaxProvider != null && grammarLanguage != null) {
+            syntaxProvider.tokensForLines(scrollTop, visibleLines, grammarLanguage!!).groupBy { it.line }
+        } else {
+            emptyMap()
+        }
         val gutterWidth = computeGutterWidth()
-        val contentCols = (cols - gutterWidth).coerceAtLeast(1)
-        val viewport = EditorViewport(0, scrollTop, contentCols, bodyRows)
-        val slice = buffer.viewportSlice(viewport, gutterWidth = gutterWidth)
-
         canvas.applyStyle(bodyStyle) {
-            // clear body area
             drawRect(0, 1, cols, bodyRows)
-            slice.lines.take(bodyRows).forEachIndexed { idx, line ->
+            visibleLines.forEachIndexed { idx, textLine ->
+                val lineNumber = scrollTop + idx
                 // gutter
                 canvas.applyStyle(gutterStyle) {
-                    val g = line.gutter.padEnd(gutterWidth, ' ').take(gutterWidth)
-                    drawText(0, 1 + idx, g)
+                    val g = (lineNumber + 1).toString().padStart(gutterWidth - 1, ' ') + " "
+                    drawText(0, 1 + idx, g.take(gutterWidth))
                 }
-                // body segments
-                var x = gutterWidth
-                line.segments.forEach { seg ->
-                    val segText = seg.text.take((cols - x).coerceAtLeast(0))
-                    if (segText.isEmpty()) return@forEach
-                    val style = if (seg.selected) selectionStyle else bodyStyle
-                    canvas.applyStyle(style) {
-                        drawText(x, 1 + idx, segText)
-                    }
-                    x += segText.length
-                    if (x >= cols) return@forEach
-                }
+                val contentCols = (cols - gutterWidth).coerceAtLeast(0)
+                if (contentCols <= 0) return@forEachIndexed
+                val tokens = tokensByLine[lineNumber] ?: emptyList()
+                renderLineWithTokens(
+                    canvas = this,
+                    text = textLine,
+                    y = 1 + idx,
+                    startX = gutterWidth,
+                    maxCols = contentCols,
+                    tokens = tokens,
+                    baseStyle = bodyStyle
+                )
             }
         }
 
-        slice.cursor?.let { cursor ->
-            val cx = (gutterWidth + cursor.column).coerceAtMost(cols - 1)
-            val cy = 1 + cursor.line
-            if (cy in 1 until rows) {
-                canvas.applyStyle(cursorStyle) {
-                    drawText(cx, cy, cursor.char)
-                }
+        val cursor = buffer.cursorPosition()
+        val cx = (gutterWidth + cursor.column).coerceAtMost(cols - 1)
+        val cy = 1 + (cursor.line - scrollTop)
+        if (cy in 1 until rows) {
+            val ch = visibleLines.getOrNull(cursor.line - scrollTop)?.getOrNull(cursor.column)?.toString() ?: " "
+            canvas.applyStyle(cursorStyle) {
+                drawText(cx, cy, ch)
             }
         }
     }
@@ -218,6 +229,53 @@ class CodeEditorView(
 
     private fun grammarLabel(): String {
         val lang = language ?: return ""
-        return if (grammarAvailable) " (grammar:$lang)" else " (grammar:none)"
+        return if (grammarAvailable) " (grammar:${grammarLanguage ?: lang})" else " (grammar:none)"
+    }
+
+    private fun scopeToStyleId(scope: String): String =
+        scope.replace(' ', '_').replace(":", "-").replace(",", "-")
+
+    private fun styleForToken(token: editor.grammars.Token, base: StyleSet): StyleSet {
+        val scope = token.scopes.lastOrNull() ?: return base
+        return styleSheet.getStyle(scopeToStyleId(scope)).withDefaults(base.fg, base.bg)
+    }
+
+    private fun renderLineWithTokens(
+        canvas: CanvasRenderer,
+        text: String,
+        y: Int,
+        startX: Int,
+        maxCols: Int,
+        tokens: List<editor.grammars.Token>,
+        baseStyle: StyleSet
+    ) {
+        if (tokens.isEmpty()) {
+            val clipped = text.take(maxCols)
+            canvas.applyStyle(baseStyle) { drawText(startX, y, clipped) }
+            return
+        }
+        var cursor = 0
+        val sorted = tokens.sortedBy { it.start }
+        sorted.forEach { tok ->
+            if (tok.start > cursor) {
+                val segment = text.substring(cursor, tok.start).take(maxCols - (cursor.coerceAtMost(maxCols)))
+                canvas.applyStyle(baseStyle) { drawText(startX + cursor, y, segment) }
+            }
+            val segStart = tok.start.coerceAtLeast(0)
+            val segEnd = tok.end.coerceAtMost(text.length)
+            if (segStart < segEnd && segStart < maxCols) {
+                val segment = text.substring(segStart, segEnd).take(maxCols - segStart)
+                val style = styleForToken(tok, baseStyle)
+                canvas.applyStyle(style) {
+                    drawText(startX + segStart, y, segment)
+                }
+            }
+            cursor = tok.end
+            if (cursor >= maxCols) return
+        }
+        if (cursor < text.length && cursor < maxCols) {
+            val tail = text.substring(cursor).take(maxCols - cursor)
+            canvas.applyStyle(baseStyle) { drawText(startX + cursor, y, tail) }
+        }
     }
 }
