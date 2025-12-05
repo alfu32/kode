@@ -13,7 +13,17 @@ object SampleMimeTable {
         val language: String,
         val extension: String, // with leading dot
         val mime: String,
-    )
+    ) {
+        fun category(): MimeTypeResult.Category {
+            val lower = mime.lowercase(Locale.ROOT)
+            return when {
+                lower.startsWith("image/") -> MimeTypeResult.Category.IMAGE
+                lower.startsWith("text/") -> MimeTypeResult.Category.TEXT
+                listOf("json", "xml", "yaml", "yml", "markdown", "asciidoc", "toml").any { lower.contains(it) } -> MimeTypeResult.Category.TEXT
+                else -> MimeTypeResult.Category.BINARY
+            }
+        }
+    }
 
     private val languageToExtension: List<Pair<String, String>> = listOf(
         "powerquery" to "pq",
