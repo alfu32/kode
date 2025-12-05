@@ -14,6 +14,12 @@ dependencies {
     implementation("org.jline:jline:3.27.1")
     // https://mvnrepository.com/artifact/org.eclipse.jgit/org.eclipse.jgit
     implementation("org.eclipse.jgit:org.eclipse.jgit:7.4.0.202509020913-r")
+    // https://mvnrepository.com/artifact/com.soywiz.korlibs.korim/korim
+    implementation("com.soywiz.korlibs.korim:korim:4.0.10")
+    // https://mvnrepository.com/artifact/com.soywiz.korlibs.korio/korio
+    implementation("com.soywiz.korlibs.korio:korio:4.0.10")
+    // https://mvnrepository.com/artifact/org.jetbrains.kotlinx/kotlinx-coroutines-core
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 }
 
 tasks.test {
