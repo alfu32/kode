@@ -34,15 +34,15 @@ data class FileTreeEntry(
 ) {
 
     fun detectType(): String? {
-        val path: Path = Path.of(fullPath)
-        // OS / JDK provider
-        val bySys = Files.probeContentType(path)?.let { return it }
-
-        // By name
-        val byName = URLConnection.guessContentTypeFromName(path.toString())?.let { return it }
-        val byBinary= Files.newInputStream(path).use { input ->
-            URLConnection.guessContentTypeFromStream(input)
-        }?.let { return it }
+        // val path: Path = Path.of(fullPath)
+        // // OS / JDK provider
+        // val bySys = Files.probeContentType(path)?.let { return it }
+//
+        // // By name
+        // val byName = URLConnection.guessContentTypeFromName(path.toString())?.let { return it }
+        // val byBinary= Files.newInputStream(path).use { input ->
+        //     URLConnection.guessContentTypeFromStream(input)
+        // }?.let { return it }
 
         return null
     }

@@ -1,30 +1,29 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Kotlin/JVM project targeting Java 21 (see `build.gradle.kts`); Gradle wrapper drives builds.
-- Core renderer/input code lives in `src/main/kotlin/react` (ANSI canvas, styles, UI events). Add new editor/panel modules alongside this package or in sibling packages if concerns grow.
-- Tests belong in `src/test/kotlin`, mirroring package names. Build outputs land in `build/`.
-- `README.md` describes the intended terminal UX and architecture; keep it aligned when you change layouts or subsystems.
+- Kotlin/JVM app (Kotlin 2.2, Java 21). Core TUI framework sits in `src/main/kotlin/react` (rendering, input, styles).
+- Editor domain lives in `src/main/kotlin/editor`: `app` (entry, layout), `ui` (panels: file tree, code editor, hex/image viewers), `lib` (text buffer, file tree contract), `mime` (detector). Shared styles are under `styles/`. Sample files for MIME tests are under `samples/`.
+- Tests go in `src/test/kotlin`, mirroring packages. Build artifacts emit to `build/`.
+- Keep `README.md` in sync when changing layout, focus handling, or viewer behavior.
 
 ## Build, Test, and Development Commands
-- `./gradlew build` — compile sources and run the full test suite.
-- `./gradlew test` — run tests only (JUnit Platform via `kotlin("test")`).
-- `./gradlew fatJar` — produce `build/libs/kt-tui-edit-all.jar` with dependencies; run via `java -jar build/libs/kt-tui-edit-all.jar`.
-- `./gradlew clean` — remove build outputs when you need a fresh build.
+- `GRADLE_USER_HOME=./.gradle-user ./gradlew build` — compile and run tests.
+- `GRADLE_USER_HOME=./.gradle-user ./gradlew test` — execute the test suite only.
+- `GRADLE_USER_HOME=./.gradle-user ./gradlew fatJar` — create `build/libs/kt-tui-edit-all.jar`; run with `java -jar build/libs/kt-tui-edit-all.jar`.
+- `GRADLE_USER_HOME=./.gradle-user ./gradlew clean` — clear build outputs. Avoid editing the wrapper scripts.
 
 ## Coding Style & Naming Conventions
-- Follow Kotlin official style: 4-space indentation, trailing commas where helpful, prefer expression bodies for simple functions, and explicit visibility for non-public APIs.
-- Keep packages lowercase (e.g., `react.ui`), classes in `PascalCase`, functions/properties in `camelCase`, and constants in `UPPER_SNAKE_CASE`.
-- Limit new dependencies; current footprint is JLine for terminal I/O and JGit for Git panel work.
-- Prefer small, testable components (renderer, buffer, input parsing) over monoliths; keep rendering/layout constants centralized for reuse.
+- Follow Kotlin official style: 4-space indents, expression bodies for one-liners, explicit visibility for non-public APIs. Keep packages lowercase; classes in `PascalCase`, functions/properties in `camelCase`, constants in `UPPER_SNAKE_CASE`.
+- Favor composable components: rendering logic in `react`, domain logic in `editor/lib`, and view wiring in `editor/ui`. Keep state changes deterministic to avoid flicker in the renderer.
+- Extend the MIME table with explicit entries (category + mime + language) rather than inference; place updates in `editor/mime/SampleMimeTable.kt`.
 
 ## Testing Guidelines
-- Testing uses Kotlin test on JUnit Platform. Name suites `*Test` (e.g., `AnsiCanvasRendererTest`) and mirror the source package.
-- Cover buffer mutations, renderer diffing, input parsing, and panel state changes; favor deterministic data over real terminal I/O.
-- Run `./gradlew test` before sending a PR; add regression cases when fixing bugs.
+- Tests use Kotlin test on JUnit Platform. Name suites `*Test` (e.g., `TextBufferTest`, `DefaultMimeTypeDetectorTest`) and mirror source packages.
+- Cover buffer mutations, focus/dispatch flows, diff rendering, MIME detection, and viewer routing (code/image/hex). Use fixtures from `samples/` where possible.
+- Run `GRADLE_USER_HOME=./.gradle-user ./gradlew test` before submitting changes; add regression cases for input/focus bugs.
 
 ## Commit & Pull Request Guidelines
-- Match the existing short format `type(scope)` (e.g., `refactor(vdom)`, `feat(buffer)`), imperative and lowercase.
-- Commit often with focused changes; avoid mixing refactors with feature work when possible.
-- Pull requests should include: a brief summary of user-facing/editor-visible changes, linked issue (if any), notes on testing performed, and screenshots/asciinema snippets when altering layout or rendering.
-- Keep diffs small and comment tricky logic (buffer edge cases, render diff rules) to aid review.
+- Prefer concise, imperative messages; existing history leans toward `type(scope): subject` (e.g., `feat(editor): add hex viewer`).
+- Keep commits focused (no mixed refactor + feature). Include tests or rationale when skipping them.
+- PRs should state user-visible changes, linked issues, test results, and terminal screenshots/gifs when altering layout, focus, or rendering behavior.
+- Highlight tricky logic (focus arbitration, canvas diffing, MIME lookup) with short comments to ease review.

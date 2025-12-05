@@ -13,6 +13,7 @@ import react.util.restoreStty
 import react.util.runCommand
 import editor.lib.FileTree
 import editor.mime.DefaultMimeTypeDetector
+import editor.mime.MimeTypeCategory
 import editor.mime.MimeTypeResult
 import editor.ui.CodeEditorView
 import editor.ui.FileTreeView
@@ -256,16 +257,16 @@ private class SplitPanelsApp(
     private fun isOnSplitter(x: Int): Boolean = x == clampWidth(leftWidth, lastCols.coerceAtLeast(1))
 
     private fun openInViewer(path: String, detected: MimeTypeResult) {
-        when (detected.category) {
-            MimeTypeResult.Category.IMAGE -> {
+        when (detected.mimeTypeCategory) {
+            MimeTypeCategory.IMAGE -> {
                 imageViewer.openFile(path, detected)
                 focus = FocusTarget.IMAGE
             }
-            MimeTypeResult.Category.TEXT -> {
+            MimeTypeCategory.TEXT -> {
                 codeEditor.openFile(path, detected)
                 focus = FocusTarget.CODE
             }
-            MimeTypeResult.Category.BINARY, MimeTypeResult.Category.UNKNOWN -> {
+            MimeTypeCategory.BINARY, MimeTypeCategory.UNKNOWN -> {
                 // Unknown defaults to hex viewer.
                 hexViewer.openFile(path, detected)
                 focus = FocusTarget.HEX

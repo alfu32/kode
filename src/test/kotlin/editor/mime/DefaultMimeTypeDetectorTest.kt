@@ -15,7 +15,7 @@ class DefaultMimeTypeDetectorTest {
         val result = detector.detectFilename("example.json")
         assertEquals("application/json", result.mime)
         assertEquals(".json", result.extension)
-        assertEquals(MimeTypeResult.DetectionSource.EXTENSION, result.source)
+        assertEquals(MimeTypeDetectionSource.EXTENSION, result.source)
     }
 
     @Test
@@ -27,7 +27,7 @@ class DefaultMimeTypeDetectorTest {
         val result = detector.detect(pngHeader)
         assertEquals("image/png", result.mime)
         assertEquals(".png", result.extension)
-        assertEquals(MimeTypeResult.DetectionSource.SIGNATURE, result.source)
+        assertEquals(MimeTypeDetectionSource.SIGNATURE, result.source)
     }
 
     @Test
@@ -49,7 +49,7 @@ class DefaultMimeTypeDetectorTest {
         val result = detector.detectFilename("sample.foo")
         assertEquals("application/x-foo", result.mime)
         assertEquals(".foo", result.extension)
-        assertEquals(MimeTypeResult.DetectionSource.EXTENSION, result.source)
+        assertEquals(MimeTypeDetectionSource.EXTENSION, result.source)
     }
 
     @Test
@@ -58,7 +58,7 @@ class DefaultMimeTypeDetectorTest {
         val result = detector.detect(text)
         assertEquals("text/plain", result.mime)
         assertEquals(".txt", result.extension)
-        assertEquals(MimeTypeResult.DetectionSource.FALLBACK, result.source)
+        assertEquals(MimeTypeDetectionSource.FALLBACK, result.source)
         assertTrue(result.mime.contains("text"))
     }
 }

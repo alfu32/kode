@@ -18,40 +18,6 @@ class DefaultMimeTypeDetector(
     private val extensionMap = ConcurrentHashMap<String, SampleMimeTable.Entry>().apply {
         // Hints derived from repository samples.
         putAll(SampleMimeTable.extensionToEntry)
-
-        // Common binaries and archives not covered by samples.
-        val misc = mapOf(
-            "zip" to "application/zip",
-            "gz" to "application/gzip",
-            "tar" to "application/x-tar",
-            "rar" to "application/vnd.rar",
-            "7z" to "application/x-7z-compressed",
-            "mp3" to "audio/mpeg",
-            "wav" to "audio/wav",
-            "ogg" to "audio/ogg",
-            "mp4" to "video/mp4",
-            "webm" to "video/webm",
-            "mov" to "video/quicktime",
-            "avi" to "video/x-msvideo",
-            "jar" to "application/java-archive",
-            "apk" to "application/vnd.android.package-archive",
-            "epub" to "application/epub+zip",
-            "doc" to "application/msword",
-            "docx" to "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "ppt" to "application/vnd.ms-powerpoint",
-            "pptx" to "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "xls" to "application/vnd.ms-excel",
-            "xlsx" to "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "wasm" to "application/wasm",
-        )
-        misc.forEach { (ext, mime) ->
-            this[ext] = SampleMimeTable.Entry(
-                language = "generic-$ext",
-                extension = ".$ext",
-                mime = mime,
-                category = categoryForMime(mime)
-            )
-        }
     }
 
     override fun detect(bytes: ByteArray): MimeTypeResult {
@@ -65,35 +31,35 @@ class DefaultMimeTypeDetector(
                 mime = "text/plain",
                 extension = ".txt",
                 language = "plain-text",
-                category = categoryForMime("text/plain"),
-                source = MimeTypeResult.DetectionSource.FALLBACK
+                mimeTypeCategory = categoryForMime("text/plain"),
+                source = MimeTypeDetectionSource.FALLBACK
             )
         } else {
             MimeTypeResult(
                 mime = OCTET_STREAM,
                 extension = "",
                 language = null,
-                category = categoryForMime(OCTET_STREAM),
-                source = MimeTypeResult.DetectionSource.FALLBACK
+                mimeTypeCategory = categoryForMime(OCTET_STREAM),
+                source = MimeTypeDetectionSource.FALLBACK
             )
         }
     }
 
     override fun detectFile(path: Path): MimeTypeResult {
         val nameResult = detectFilename(path.fileName.toString())
-        if (nameResult.source != MimeTypeResult.DetectionSource.FALLBACK) {
+        if (nameResult.source != MimeTypeDetectionSource.FALLBACK) {
             return nameResult
         }
 
         Files.newInputStream(path).use { input ->
             val buffer = readBytes(input, byteLimit)
             val signatureResult = detect(buffer)
-            if (signatureResult.source != MimeTypeResult.DetectionSource.FALLBACK) {
-                val mergedCategory = if (signatureResult.category != MimeTypeResult.Category.UNKNOWN)
-                    signatureResult.category else nameResult.category
+            if (signatureResult.source != MimeTypeDetectionSource.FALLBACK) {
+                val mergedMimeTypeCategory = if (signatureResult.mimeTypeCategory != MimeTypeCategory.UNKNOWN)
+                    signatureResult.mimeTypeCategory else nameResult.mimeTypeCategory
                 return signatureResult.copy(
                     language = nameResult.language ?: signatureResult.language,
-                    category = mergedCategory
+                    mimeTypeCategory = mergedMimeTypeCategory
                 )
             }
         }
@@ -105,34 +71,36 @@ class DefaultMimeTypeDetector(
                 mime = platformMime,
                 extension = nameResult.extension,
                 language = nameResult.language,
-                category = nameResult.category,
-                source = MimeTypeResult.DetectionSource.PLATFORM,
+                mimeTypeCategory = nameResult.mimeTypeCategory,
+                source = MimeTypeDetectionSource.PLATFORM,
             )
         }
 
-        return nameResult.copy(source = MimeTypeResult.DetectionSource.FALLBACK)
+        return nameResult.copy(source = MimeTypeDetectionSource.FALLBACK)
     }
 
     override fun detectFilename(name: String): MimeTypeResult {
         val ext = name.substringAfterLast('.', missingDelimiterValue = "").let(::normalizeExtension)
-        if (ext.isNotEmpty()) {
-            extensionMap[ext]?.let { entry ->
-                return MimeTypeResult(
-                    mime = entry.mime,
-                    extension = entry.extension,
-                    language = entry.language,
-                    category = entry.category,
-                    source = MimeTypeResult.DetectionSource.EXTENSION
-                )
-            }
-        }
-        return MimeTypeResult(
+        val default = MimeTypeResult(
             mime = OCTET_STREAM,
             extension = if (ext.isEmpty()) "" else ".$ext",
             language = null,
-            category = MimeTypeResult.Category.BINARY,
-            source = MimeTypeResult.DetectionSource.FALLBACK
+            mimeTypeCategory = MimeTypeCategory.BINARY,
+            source = MimeTypeDetectionSource.FALLBACK
         )
+        return if (ext.isNotEmpty()) {
+            extensionMap[ext]?.let { entry ->
+                MimeTypeResult(
+                    mime = entry.mime,
+                    extension = entry.extension,
+                    language = entry.language,
+                    mimeTypeCategory = entry.mimeTypeCategory,
+                    source = MimeTypeDetectionSource.EXTENSION
+                )
+            } ?: default
+        } else {
+            default
+        }
     }
 
     override fun registerExtension(extension: String, mime: String) {
@@ -142,7 +110,7 @@ class DefaultMimeTypeDetector(
                 language = "custom-$normalized",
                 extension = ".$normalized",
                 mime = mime,
-                category = categoryForMime(mime)
+                mimeTypeCategory = categoryForMime(mime)
             )
         }
     }
@@ -223,8 +191,8 @@ class DefaultMimeTypeDetector(
                 mime = mime,
                 extension = extension,
                 language = null,
-                category = categoryForMime(mime),
-                source = MimeTypeResult.DetectionSource.SIGNATURE
+                mimeTypeCategory = categoryForMime(mime),
+                source = MimeTypeDetectionSource.SIGNATURE
             ) else null
     }
 
@@ -233,13 +201,13 @@ class DefaultMimeTypeDetector(
         const val DEFAULT_LIMIT: Int = 3072
         private const val DEFAULT_READ_SIZE: Int = 4096
 
-        private fun categoryForMime(mime: String): MimeTypeResult.Category {
+        private fun categoryForMime(mime: String): MimeTypeCategory {
             val lower = mime.lowercase(Locale.ROOT)
             return when {
-                lower.startsWith("image/") -> MimeTypeResult.Category.IMAGE
-                lower.startsWith("text/") -> MimeTypeResult.Category.TEXT
-                listOf("json", "xml", "yaml", "yml", "markdown", "asciidoc", "toml").any { lower.contains(it) } -> MimeTypeResult.Category.TEXT
-                else -> MimeTypeResult.Category.BINARY
+                lower.startsWith("image/") -> MimeTypeCategory.IMAGE
+                lower.startsWith("text/") -> MimeTypeCategory.TEXT
+                listOf("json", "xml", "yaml", "yml", "markdown", "asciidoc", "toml").any { lower.contains(it) } -> MimeTypeCategory.TEXT
+                else -> MimeTypeCategory.BINARY
             }
         }
     }

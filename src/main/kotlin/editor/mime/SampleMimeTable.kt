@@ -3,9 +3,8 @@ package editor.mime
 import java.util.Locale
 
 /**
- * Extension-to-MIME hints derived from the repository's samples folder.
- * This is intentionally simple: it maps filename extensions to a best-effort
- * MIME and records the associated language name from the sample.
+ * Hardcoded extension → MIME + category table derived from samples and common binaries/images.
+ * This avoids runtime inference so categories can be curated explicitly.
  */
 object SampleMimeTable {
 
@@ -13,368 +12,270 @@ object SampleMimeTable {
         val language: String,
         val extension: String, // with leading dot
         val mime: String,
-        val category: MimeTypeResult.Category,
+        val mimeTypeCategory: MimeTypeCategory,
     )
 
-    private val languageToExtension: List<Pair<String, String>> = listOf(
-        "powerquery" to "pq",
-        "apl" to "apl",
-        "erb" to "erb",
-        "elixir" to "ex",
-        "java" to "java",
-        "asm" to "asm",
-        "c" to "c",
-        "diff" to "diff",
-        "codeql" to "ql",
-        "crystal" to "cr",
-        "desktop" to "desktop",
-        "cairo" to "cairo",
-        "mdc" to "mdc",
-        "handlebars" to "hbs",
-        "vyper" to "vy",
-        "vue" to "vue",
-        "toml" to "toml",
-        "glimmer-ts" to "gts",
-        "clojure" to "clj",
-        "hjson" to "hjson",
-        "coq" to "v",
-        "shellsession" to "shellsession",
-        "hack" to "hack",
-        "latex" to "tex",
-        "go" to "go",
-        "cobol" to "cob",
-        "cypher" to "cypher",
-        "bibtex" to "bib",
-        "fortran-fixed-form" to "f",
-        "applescript" to "applescript",
-        "prisma" to "prisma",
-        "hy" to "hy",
-        "riscv" to "s",
-        "wasm" to "wasm",
-        "jison" to "jison",
-        "tsv" to "tsv",
-        "marko" to "marko",
-        "glsl" to "glsl",
-        "awk" to "awk",
-        "mermaid" to "mmd",
-        "vhdl" to "vhdl",
-        "json5" to "json5",
-        "fish" to "fish",
-        "turtle" to "ttl",
-        "less" to "less",
-        "dotenv" to "env",
-        "postcss" to "pcss",
-        "luau" to "luau",
-        "d" to "d",
-        "julia" to "jl",
-        "jsonnet" to "jsonnet",
-        "solidity" to "sol",
-        "asciidoc" to "adoc",
-        "tcl" to "tcl",
-        "lua" to "lua",
-        "viml" to "vim",
-        "qmldir" to "qmldir",
-        "gleam" to "gleam",
-        "reg" to "reg",
-        "yaml" to "yaml",
-        "blade" to "blade.php",
-        "regexp" to "regexp",
-        "bicep" to "bicep",
-        "vb" to "vb",
-        "matlab" to "m",
-        "angular-ts" to "ts",
-        "swift" to "swift",
-        "stata" to "do",
-        "cmake" to "cmake",
-        "ini" to "ini",
-        "razor" to "cshtml",
-        "sdbl" to "sdbl",
-        "actionscript-3" to "as",
-        "typescript" to "ts",
-        "soy" to "soy",
-        "r" to "r",
-        "po" to "po",
-        "python" to "py",
-        "coffee" to "coffee",
-        "plsql" to "pls",
-        "cue" to "cue",
-        "abap" to "abap",
-        "csv" to "csv",
-        "dart" to "dart",
-        "cadence" to "cdc",
-        "kdl" to "kdl",
-        "nim" to "nim",
-        "raku" to "raku",
-        "berry" to "be",
-        "clarity" to "clar",
-        "jinja" to "jinja",
-        "ruby" to "rb",
-        "pkl" to "pkl",
-        "wikitext" to "wiki",
-        "prolog" to "prolog",
-        "verilog" to "v",
-        "elm" to "elm",
-        "sas" to "sas",
-        "jssm" to "jssm",
-        "logo" to "logo",
-        "gdshader" to "gdshader",
-        "javascript" to "js",
-        "systemd" to "service",
-        "v" to "v",
-        "css" to "css",
-        "nginx" to "conf",
-        "qml" to "qml",
-        "perl" to "pl",
-        "ssh-config" to "sshconfig",
-        "wolfram" to "wl",
-        "fsharp" to "fs",
-        "puppet" to "pp",
-        "nextflow" to "nf",
-        "jsonc" to "jsonc",
-        "beancount" to "beancount",
-        "cpp" to "cpp",
-        "emacs-lisp" to "el",
-        "racket" to "rkt",
-        "svelte" to "svelte",
-        "typst" to "typ",
-        "fortran-free-form" to "f90",
-        "graphql" to "graphql",
-        "ada" to "adb",
-        "glimmer-js" to "gjs",
-        "docker" to "dockerfile",
-        "codeowners" to "codeowners",
-        "jsx" to "jsx",
-        "edge" to "edge",
-        "stylus" to "styl",
-        "rel" to "rel",
-        "gherkin" to "feature",
-        "objective-c" to "m",
-        "scala" to "scala",
-        "move" to "move",
-        "gnuplot" to "gp",
-        "hlsl" to "hlsl",
-        "scss" to "scss",
-        "proto" to "proto",
-        "kotlin" to "kt",
-        "gdresource" to "tres",
-        "sql" to "sql",
-        "xml" to "xml",
-        "rust" to "rs",
-        "nushell" to "nu",
-        "php" to "php",
-        "ara" to "ara",
-        "tasl" to "tasl",
-        "rst" to "rst",
-        "gdscript" to "gd",
-        "pascal" to "pas",
-        "haskell" to "hs",
-        "shaderlab" to "shader",
-        "zenscript" to "zs",
-        "haml" to "haml",
-        "dream-maker" to "dm",
-        "system-verilog" to "sv",
-        "lean" to "lean",
-        "nix" to "nix",
-        "erlang" to "erl",
-        "vue-vine" to "vine",
-        "ts-tags" to "tags",
-        "apex" to "cls",
-        "vala" to "vala",
-        "kusto" to "kql",
-        "tex" to "tex",
-        "bsl" to "bsl",
-        "haxe" to "hx",
-        "talonscript" to "talon",
-        "zig" to "zig",
-        "apache" to "conf",
-        "sass" to "sass",
-        "groovy" to "groovy",
-        "templ" to "templ",
-        "hxml" to "hxml",
-        "astro" to "astro",
-        "ballerina" to "bal",
-        "log" to "log",
-        "openscad" to "scad",
-        "bat" to "bat",
-        "shellscript" to "sh",
-        "rosmsg" to "msg",
-        "twig" to "twig",
-        "polar" to "polar",
-        "narrat" to "narrat",
-        "pug" to "pug",
-        "genie" to "gs",
-        "wenyan" to "wy",
-        "markdown" to "md",
-        "jsonl" to "jsonl",
-        "llvm" to "ll",
-        "hurl" to "hurl",
-        "fennel" to "fnl",
-        "make" to "mk",
-        "hcl" to "hcl",
-        "html" to "html",
-        "dax" to "dax",
-        "imba" to "imba",
-        "purescript" to "purs",
-        "angular-html" to "html",
-        "sparql" to "rq",
-        "objective-cpp" to "mm",
-        "qss" to "qss",
-        "typespec" to "tsp",
-        "ocaml" to "ml",
-        "csharp" to "cs",
-        "tsx" to "tsx",
-        "terraform" to "tf",
-        "json" to "json",
-        "wit" to "wit",
-        "splunk" to "spl",
-        "scheme" to "scm",
-        "xsl" to "xsl",
-        "smalltalk" to "st",
-        "liquid" to "liquid",
-        "vue-html" to "html",
-        "common-lisp" to "lisp",
-        "wgsl" to "wgsl",
-        "mdx" to "mdx",
-        "fluent" to "ftl",
-        "powershell" to "ps1",
-        "mipsasm" to "s",
-        "http" to "http",
-        "mojo" to "mojo",
+    val entries: List<Entry> = listOf(
+        // text editable
+        Entry(language="abap",extension=".abap",mime="text/abap",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="actionscript-3",extension=".as",mime="text/actionscript-3",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="ada",extension=".adb",mime="text/ada",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="angular-html",extension=".html",mime="text/angular-html",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="angular-ts",extension=".ts",mime="text/angular-ts",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="apache",extension=".conf",mime="text/apache",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="apex",extension=".cls",mime="text/apex",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="apl",extension=".apl",mime="text/apl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="applescript",extension=".applescript",mime="text/applescript",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="ara",extension=".ara",mime="text/ara",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="asciidoc",extension=".adoc",mime="text/asciidoc",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="asm",extension=".asm",mime="text/asm",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="astro",extension=".astro",mime="text/astro",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="awk",extension=".awk",mime="text/awk",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="ballerina",extension=".bal",mime="text/ballerina",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="bat",extension=".bat",mime="text/bat",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="beancount",extension=".beancount",mime="text/beancount",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="berry",extension=".be",mime="text/berry",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="bibtex",extension=".bib",mime="text/bibtex",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="bicep",extension=".bicep",mime="text/bicep",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="blade",extension=".blade.php",mime="text/blade",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="bsl",extension=".bsl",mime="text/bsl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="cadence",extension=".cdc",mime="text/cadence",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="cairo",extension=".cairo",mime="text/cairo",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="clarity",extension=".clar",mime="text/clarity",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="clojure",extension=".clj",mime="text/clojure",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="cmake",extension=".cmake",mime="text/cmake",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="cobol",extension=".cob",mime="text/cobol",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="codeowners",extension=".codeowners",mime="text/codeowners",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="codeql",extension=".ql",mime="text/codeql",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="coffee",extension=".coffee",mime="text/coffee",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="common-lisp",extension=".lisp",mime="text/common-lisp",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="coq",extension=".v",mime="text/coq",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="cpp",extension=".cpp",mime="text/cpp",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="crystal",extension=".cr",mime="text/crystal",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="c",extension=".c",mime="text/c",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="csharp",extension=".cs",mime="text/csharp",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="css",extension=".css",mime="text/css",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="csv",extension=".csv",mime="text/csv",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="cue",extension=".cue",mime="text/cue",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="cypher",extension=".cypher",mime="text/cypher",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="dart",extension=".dart",mime="text/dart",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="dax",extension=".dax",mime="text/dax",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="desktop",extension=".desktop",mime="text/desktop",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="diff",extension=".diff",mime="text/diff",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="docker",extension=".dockerfile",mime="text/docker",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="dotenv",extension=".env",mime="text/dotenv",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="dream-maker",extension=".dm",mime="text/dream-maker",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="d",extension=".d",mime="text/d",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="edge",extension=".edge",mime="text/edge",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="elixir",extension=".ex",mime="text/elixir",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="elm",extension=".elm",mime="text/elm",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="emacs-lisp",extension=".el",mime="text/emacs-lisp",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="erb",extension=".erb",mime="text/erb",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="erlang",extension=".erl",mime="text/erlang",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="fennel",extension=".fnl",mime="text/fennel",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="fish",extension=".fish",mime="text/fish",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="fluent",extension=".ftl",mime="text/fluent",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="fortran-fixed-form",extension=".f",mime="text/fortran-fixed-form",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="fortran-free-form",extension=".f90",mime="text/fortran-free-form",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="fsharp",extension=".fs",mime="text/fsharp",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="gdresource",extension=".tres",mime="text/gdresource",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="gdscript",extension=".gd",mime="text/gdscript",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="gdshader",extension=".gdshader",mime="text/gdshader",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="genie",extension=".gs",mime="text/genie",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="gherkin",extension=".feature",mime="text/gherkin",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="gleam",extension=".gleam",mime="text/gleam",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="glimmer-js",extension=".gjs",mime="text/glimmer-js",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="glimmer-ts",extension=".gts",mime="text/glimmer-ts",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="glsl",extension=".glsl",mime="text/glsl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="gnuplot",extension=".gp",mime="text/gnuplot",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="go",extension=".go",mime="text/go",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="groovy",extension=".gradle.build",mime="text/groovy",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="graphql",extension=".graphql",mime="text/graphql",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="groovy",extension=".groovy",mime="text/groovy",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="hack",extension=".hack",mime="text/hack",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="haml",extension=".haml",mime="text/haml",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="handlebars",extension=".hbs",mime="text/handlebars",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="haskell",extension=".hs",mime="text/haskell",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="haxe",extension=".hx",mime="text/haxe",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="hcl",extension=".hcl",mime="text/hcl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="hjson",extension=".hjson",mime="text/hjson",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="hlsl",extension=".hlsl",mime="text/hlsl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="html",extension=".html",mime="text/html",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="http",extension=".http",mime="text/http",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="hurl",extension=".hurl",mime="text/hurl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="hxml",extension=".hxml",mime="text/hxml",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="hy",extension=".hy",mime="text/hy",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="imba",extension=".imba",mime="text/imba",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="ini",extension=".ini",mime="text/ini",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="java",extension=".java",mime="text/java",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="javascript",extension=".js",mime="text/javascript",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="jinja",extension=".jinja",mime="text/jinja",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="jison",extension=".jison",mime="text/jison",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="json5",extension=".json5",mime="text/json5",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="jsonc",extension=".jsonc",mime="text/jsonc",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="jsonl",extension=".jsonl",mime="text/jsonl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="jsonnet",extension=".jsonnet",mime="text/jsonnet",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="json",extension=".json",mime="text/json",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="jssm",extension=".jssm",mime="text/jssm",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="jsx",extension=".jsx",mime="text/jsx",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="julia",extension=".jl",mime="text/julia",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="kdl",extension=".kdl",mime="text/kdl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="kotlin",extension=".kt",mime="text/kotlin",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="kotlin-script",extension=".kts",mime="text/kotlin-script",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="kusto",extension=".kql",mime="text/kusto",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="latex",extension=".tex",mime="text/latex",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="lean",extension=".lean",mime="text/lean",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="less",extension=".less",mime="text/less",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="liquid",extension=".liquid",mime="text/liquid",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="llvm",extension=".ll",mime="text/llvm",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="logo",extension=".logo",mime="text/logo",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="log",extension=".log",mime="text/log",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="lua",extension=".lua",mime="text/lua",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="luau",extension=".luau",mime="text/luau",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="make",extension=".Makefile",mime="text/make",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="make",extension=".mk",mime="text/make",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="markdown",extension=".md",mime="text/markdown",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="marko",extension=".marko",mime="text/marko",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="matlab",extension=".m",mime="text/matlab",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="mdc",extension=".mdc",mime="text/mdc",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="mdx",extension=".mdx",mime="text/mdx",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="mermaid",extension=".mmd",mime="text/mermaid",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="mipsasm",extension=".s",mime="text/mipsasm",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="mojo",extension=".mojo",mime="text/mojo",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="move",extension=".move",mime="text/move",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="narrat",extension=".narrat",mime="text/narrat",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="nextflow",extension=".nf",mime="text/nextflow",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="nginx",extension=".conf",mime="text/nginx",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="nim",extension=".nim",mime="text/nim",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="nix",extension=".nix",mime="text/nix",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="nushell",extension=".nu",mime="text/nushell",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="objective-cpp",extension=".mm",mime="text/objective-cpp",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="objective-c",extension=".m",mime="text/objective-c",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="ocaml",extension=".ml",mime="text/ocaml",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="openscad",extension=".scad",mime="text/openscad",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="pascal",extension=".pas",mime="text/pascal",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="perl",extension=".pl",mime="text/perl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="php",extension=".php",mime="text/php",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="pkl",extension=".pkl",mime="text/pkl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="plsql",extension=".pls",mime="text/plsql",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="polar",extension=".polar",mime="text/polar",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="po",extension=".po",mime="text/po",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="postcss",extension=".pcss",mime="text/postcss",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="powerquery",extension=".pq",mime="text/powerquery",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="powershell",extension=".ps1",mime="text/powershell",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="prisma",extension=".prisma",mime="text/prisma",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="prolog",extension=".prolog",mime="text/prolog",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="proto",extension=".proto",mime="text/proto",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="pug",extension=".pug",mime="text/pug",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="puppet",extension=".pp",mime="text/puppet",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="purescript",extension=".purs",mime="text/purescript",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="python",extension=".py",mime="text/python",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="qmldir",extension=".qmldir",mime="text/qmldir",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="qml",extension=".qml",mime="text/qml",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="qss",extension=".qss",mime="text/qss",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="racket",extension=".rkt",mime="text/racket",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="raku",extension=".raku",mime="text/raku",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="razor",extension=".cshtml",mime="text/razor",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="regexp",extension=".regexp",mime="text/regexp",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="reg",extension=".reg",mime="text/reg",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="rel",extension=".rel",mime="text/rel",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="riscv",extension=".s",mime="text/riscv",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="rosmsg",extension=".msg",mime="text/rosmsg",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="r",extension=".r",mime="text/r",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="rst",extension=".rst",mime="text/rst",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="ruby",extension=".rb",mime="text/ruby",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="rust",extension=".rs",mime="text/rust",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="sas",extension=".sas",mime="text/sas",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="sass",extension=".sass",mime="text/sass",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="scala",extension=".scala",mime="text/scala",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="scheme",extension=".scm",mime="text/scheme",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="scss",extension=".scss",mime="text/scss",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="sdbl",extension=".sdbl",mime="text/sdbl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="shaderlab",extension=".shader",mime="text/shaderlab",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="shellscript",extension=".sh",mime="text/shellscript",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="shellsession",extension=".shellsession",mime="text/shellsession",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="smalltalk",extension=".st",mime="text/smalltalk",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="solidity",extension=".sol",mime="text/solidity",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="soy",extension=".soy",mime="text/soy",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="sparql",extension=".rq",mime="text/sparql",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="splunk",extension=".spl",mime="text/splunk",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="sql",extension=".sql",mime="text/sql",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="ssh-config",extension=".sshconfig",mime="text/ssh-config",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="stata",extension=".do",mime="text/stata",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="stylus",extension=".styl",mime="text/stylus",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="svelte",extension=".svelte",mime="text/svelte",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="swift",extension=".swift",mime="text/swift",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="systemd",extension=".service",mime="text/systemd",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="system-verilog",extension=".sv",mime="text/system-verilog",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="talonscript",extension=".talon",mime="text/talonscript",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="tasl",extension=".tasl",mime="text/tasl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="tcl",extension=".tcl",mime="text/tcl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="templ",extension=".templ",mime="text/templ",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="terraform",extension=".tf",mime="text/terraform",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="tex",extension=".tex",mime="text/tex",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="toml",extension=".toml",mime="text/toml",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="ts-tags",extension=".tags",mime="text/ts-tags",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="tsv",extension=".tsv",mime="text/tsv",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="tsx",extension=".tsx",mime="text/tsx",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="turtle",extension=".ttl",mime="text/turtle",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="twig",extension=".twig",mime="text/twig",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="typescript",extension=".ts",mime="text/typescript",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="typespec",extension=".tsp",mime="text/typespec",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="typst",extension=".typ",mime="text/typst",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="vala",extension=".vala",mime="text/vala",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="vb",extension=".vb",mime="text/vb",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="verilog",extension=".v",mime="text/verilog",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="vhdl",extension=".vhdl",mime="text/vhdl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="viml",extension=".vim",mime="text/viml",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="v",extension=".v",mime="text/v",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="vue-html",extension=".html",mime="text/vue-html",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="vue",extension=".vue",mime="text/vue",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="vue-vine",extension=".vine",mime="text/vue-vine",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="vyper",extension=".vy",mime="text/vyper",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="wasm",extension=".wasm",mime="text/wasm",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="wenyan",extension=".wy",mime="text/wenyan",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="wgsl",extension=".wgsl",mime="text/wgsl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="wikitext",extension=".wiki",mime="text/wikitext",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="wit",extension=".wit",mime="text/wit",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="wolfram",extension=".wl",mime="text/wolfram",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="xml",extension=".xml",mime="text/xml",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="xsl",extension=".xsl",mime="text/xsl",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="yaml",extension=".yaml",mime="text/yaml",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="zenscript",extension=".zs",mime="text/zenscript",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="zig",extension=".zig",mime="text/zig",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry("svg", ".svg", "image/svg+xml", MimeTypeCategory.TEXT),
+// images
+        Entry("png", ".png", "image/png", MimeTypeCategory.IMAGE),
+        Entry("jpg", ".jpg", "image/jpeg", MimeTypeCategory.IMAGE),
+        Entry("jpeg", ".jpeg", "image/jpeg", MimeTypeCategory.IMAGE),
+        Entry("gif", ".gif", "image/gif", MimeTypeCategory.IMAGE),
+        Entry("bmp", ".bmp", "image/bmp", MimeTypeCategory.IMAGE),
+        Entry("webp", ".webp", "image/webp", MimeTypeCategory.IMAGE),
+// binary
+        Entry("pdf", ".pdf", "application/pdf", MimeTypeCategory.BINARY),
+        Entry("zip", ".zip", "application/zip", MimeTypeCategory.BINARY),
+        Entry("gz", ".gz", "application/gzip", MimeTypeCategory.BINARY),
+        Entry("tar", ".tar", "application/x-tar", MimeTypeCategory.BINARY),
+        Entry("rar", ".rar", "application/vnd.rar", MimeTypeCategory.BINARY),
+        Entry("7z", ".7z", "application/x-7z-compressed", MimeTypeCategory.BINARY),
+        Entry("wasm", ".wasm", "application/wasm", MimeTypeCategory.BINARY),
+
+        Entry("mp3","mp3","audio/mpeg", MimeTypeCategory.BINARY),
+        Entry("wav","wav","audio/wav", MimeTypeCategory.BINARY),
+        Entry("ogg","ogg","audio/ogg", MimeTypeCategory.BINARY),
+        Entry("mp4","mp4","video/mp4", MimeTypeCategory.BINARY),
+        Entry("webm","webm","video/webm", MimeTypeCategory.BINARY),
+        Entry("mov","mov","video/quicktime", MimeTypeCategory.BINARY),
+        Entry("avi","avi","video/x-msvideo", MimeTypeCategory.BINARY),
+        Entry("jar","jar","application/java-archive", MimeTypeCategory.BINARY),
+        Entry("apk","apk","application/vnd.android.package-archive", MimeTypeCategory.BINARY),
+        Entry("epub","epub","application/epub+zip", MimeTypeCategory.BINARY),
+        Entry("doc","doc","application/msword", MimeTypeCategory.BINARY),
+        Entry("docx","docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document", MimeTypeCategory.BINARY),
+        Entry("ppt","ppt","application/vnd.ms-powerpoint", MimeTypeCategory.BINARY),
+        Entry("pptx","pptx","application/vnd.openxmlformats-officedocument.presentationml.presentation", MimeTypeCategory.BINARY),
+        Entry("xls","xls","application/vnd.ms-excel", MimeTypeCategory.BINARY),
+        Entry("xlsx","xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", MimeTypeCategory.BINARY),
     )
-
-    val entries: List<Entry> = buildEntries()
-    val extensionToEntry: Map<String, Entry> = buildExtensionMap(entries)
-    val extensionToMime: Map<String, String> = extensionToEntry.mapValues { it.value.mime }
-
-    private fun buildEntries(): List<Entry> =
-        languageToExtension.map { (language, extRaw) ->
-            val normalizedExt = extRaw.removePrefix(".")
-            val mime = guessMime(language, normalizedExt)
-            Entry(
-                language = language,
-                extension = ".$normalizedExt",
-                mime = mime,
-                category = inferCategory(normalizedExt, mime),
-            )
-        }
-
-    private fun buildExtensionMap(entries: List<Entry>): Map<String, Entry> {
-        val map = mutableMapOf<String, Entry>()
-        for (entry in entries) {
-            val key = entry.extension.removePrefix(".").lowercase(Locale.ROOT)
-            val existing = map[key]
-            if (existing == null) {
-                map[key] = entry
-            } else if (existing.mime == entry.mime) {
-                // Same MIME, keep existing entry.
-                continue
-            } else {
-                // Multiple languages share this extension; prefer a generic MIME.
-                val mime = guessGenericMime(key)
-                map[key] = Entry(
-                    language = "generic-$key",
-                    extension = entry.extension,
-                    mime = mime,
-                    category = inferCategory(key, mime),
-                )
-            }
-        }
-        return map
-    }
-
-    private fun guessMime(language: String, ext: String): String {
-        val lower = ext.lowercase(Locale.ROOT)
-        return when (lower) {
-            "html", "htm" -> "text/html"
-            "css" -> "text/css"
-            "js", "jsx" -> "text/javascript"
-            "ts" -> "text/typescript"
-            "tsx" -> "text/x-typescript"
-            "json", "jsonc", "jsonl", "json5", "jsonnet" -> "application/json"
-            "md", "mdx", "mdc" -> "text/markdown"
-            "adoc", "asciidoc" -> "text/asciidoc"
-            "xml", "xsl" -> "application/xml"
-            "yaml", "yml" -> "application/x-yaml"
-            "toml" -> "application/toml"
-            "env" -> "text/x-env"
-            "ini" -> "text/x-ini"
-            "sql" -> "application/sql"
-            "graphql" -> "application/graphql"
-            "proto" -> "text/x-protobuf"
-            "tf", "hcl" -> "application/hcl"
-            "cmake" -> "text/x-cmake"
-            "dockerfile" -> "text/x-dockerfile"
-            "cs" -> "text/x-csharp"
-            "kt" -> "text/x-kotlin"
-            "kts" -> "text/x-kotlin"
-            "java" -> "text/x-java-source"
-            "go" -> "text/x-go"
-            "rs" -> "text/x-rust"
-            "py" -> "text/x-python"
-            "rb" -> "text/x-ruby"
-            "php" -> "application/x-php"
-            "pl", "pm" -> "text/x-perl"
-            "sh", "bash", "zsh", "fish" -> "text/x-shellscript"
-            "ps1" -> "text/powershell"
-            "tsv" -> "text/tab-separated-values"
-            "csv" -> "text/csv"
-            "ts" -> "text/typescript"
-            "sass" -> "text/x-sass"
-            "scss" -> "text/x-scss"
-            "less" -> "text/x-less"
-            "styl" -> "text/x-stylus"
-            "vue" -> "text/x-vue"
-            "svelte" -> "text/x-svelte"
-            "vue-html" -> "text/html"
-            "vue-vine" -> "text/x-vue"
-            "wasm" -> "application/wasm"
-            "png" -> "image/png"
-            "jpg", "jpeg" -> "image/jpeg"
-            "gif" -> "image/gif"
-            "svg" -> "image/svg+xml"
-            "pdf" -> "application/pdf"
-            "conf" -> "text/plain"
-            "log" -> "text/plain"
-            "http" -> "message/http"
-            else -> "text/x-$language"
-        }
-    }
-
-    private fun guessGenericMime(ext: String): String =
-        when (ext.lowercase(Locale.ROOT)) {
-            "m" -> "text/plain"
-            "s" -> "text/x-asm"
-            "v" -> "text/plain"
-            else -> "text/plain"
-        }
-
-    private fun inferCategory(ext: String, mime: String): MimeTypeResult.Category {
-        val clean = ext.removePrefix(".").lowercase(Locale.ROOT)
-        val override = categoryOverrides[clean]
-        if (override != null) return override
-        val lower = mime.lowercase(Locale.ROOT)
-        return when {
-            lower.startsWith("image/") -> MimeTypeResult.Category.IMAGE
-            lower.startsWith("text/") -> MimeTypeResult.Category.TEXT
-            listOf("json", "xml", "yaml", "yml", "markdown", "asciidoc", "toml").any { lower.contains(it) } -> MimeTypeResult.Category.TEXT
-            else -> MimeTypeResult.Category.BINARY
-        }
-    }
-
-    private val categoryOverrides: Map<String, MimeTypeResult.Category> = mapOf(
-        "png" to MimeTypeResult.Category.IMAGE,
-        "jpg" to MimeTypeResult.Category.IMAGE,
-        "jpeg" to MimeTypeResult.Category.IMAGE,
-        "gif" to MimeTypeResult.Category.IMAGE,
-        "bmp" to MimeTypeResult.Category.IMAGE,
-        "webp" to MimeTypeResult.Category.IMAGE,
-        "svg" to MimeTypeResult.Category.IMAGE,
-        "pdf" to MimeTypeResult.Category.BINARY,
-        "zip" to MimeTypeResult.Category.BINARY,
-        "gz" to MimeTypeResult.Category.BINARY,
-        "tar" to MimeTypeResult.Category.BINARY,
-        "rar" to MimeTypeResult.Category.BINARY,
-        "7z" to MimeTypeResult.Category.BINARY,
-        "wasm" to MimeTypeResult.Category.BINARY,
-    )
+    val extensionToEntry: Map<String, Entry> = entries.associateBy { it.extension.removePrefix(".").lowercase(Locale.ROOT) }
 }
