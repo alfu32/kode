@@ -28,12 +28,49 @@ class ImageViewerView(
     private var filePath: String = ""
     private var mime: String? = null
     private var grayThreshold: Double = 0.2
+    private var scatterThreshold: Double = 1600.0
     private var targetWidth: Int = 60
     private var ascii: List<String> = emptyList()
     private var needsRender: Boolean = false
+    private var imageDirty: Boolean = false
     private var srcWidth: Int = 0
     private var srcHeight: Int = 0
     private var useBraille: Boolean = false
+    private val sliders = listOf(
+        SliderControl(
+            label = "Width",
+            minVal = 8.0,
+            maxVal = 200.0,
+            onChange = { needsRender = true },
+            onRelease = { value ->
+                targetWidth = value.toInt().coerceAtLeast(8)
+                imageDirty = true
+                needsRender = true
+            }
+        ),
+        SliderControl(
+            label = "Gray",
+            minVal = 0.0,
+            maxVal = 1.0,
+            onChange = { needsRender = true },
+            onRelease = { value ->
+                grayThreshold = value.coerceIn(0.0, 1.0)
+                imageDirty = true
+                needsRender = true
+            }
+        ),
+        SliderControl(
+            label = "Contrast",
+            minVal = 0.0,
+            maxVal = 8000.0,
+            onChange = { needsRender = true },
+            onRelease = { value ->
+                scatterThreshold = value
+                imageDirty = true
+                needsRender = true
+            }
+        )
+    )
 
     fun openFile(path: String, detection: MimeTypeResult? = null) {
         filePath = path
@@ -41,6 +78,7 @@ class ImageViewerView(
         ascii = emptyList()
         loadMetadata()
         needsRender = true
+        imageDirty = true
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -65,16 +103,14 @@ class ImageViewerView(
         canvas.applyStyle(bodyStyle) {
             drawRect(0, 1, cols, bodyRows)
             ensureAscii(cols, bodyRows)
-            val sliderWidth = (cols - 2).coerceAtLeast(0)
-            val sliderRows = 2
-            drawText(1, 1, "Width: ${targetWidth}".padEnd(sliderWidth, ' '))
-            drawText(1, 2, "Gray: ${"%.2f".format(grayThreshold)}  Mode: ${if (useBraille) "Braille" else "Blocks"}".padEnd(sliderWidth, ' '))
-            // Button on the right to toggle mode
-            val buttonLabel = "[ Toggle mode ]"
-            val btnX = (cols - buttonLabel.length - 1).coerceAtLeast(1)
-            canvas.applyStyle(buttonStyle) {
-                drawText(btnX, 1, buttonLabel.take(cols - btnX))
+            val sliderRows = sliders.size
+            if (!sliders[0].isDragging()) sliders[0].setValueSilently(targetWidth.toDouble())
+            if (!sliders[1].isDragging()) sliders[1].setValueSilently(grayThreshold)
+            if (!sliders[2].isDragging()) sliders[2].setValueSilently(scatterThreshold)
+            sliders.forEachIndexed { idx, slider ->
+                slider.render(canvas, 1 + idx, cols)
             }
+            lastButtonRegion = renderButton(canvas, 1, cols, buttonStyle, "[ Toggle mode ]")
             val availableRows = bodyRows - sliderRows
             if (availableRows <= 0) return
             ascii.take(availableRows).forEachIndexed { idx, line ->
@@ -90,15 +126,18 @@ class ImageViewerView(
                 val key = event.key?.lowercase() ?: return false
                 val prevWidth = targetWidth
                 val prevGray = grayThreshold
+                val prevContrast = scatterThreshold
                 when (key) {
                     "left" -> targetWidth = (targetWidth - 4).coerceAtLeast(8)
                     "right" -> targetWidth = min(targetWidth + 4, (event.cols ?: targetWidth + 4))
                     "up" -> grayThreshold = (grayThreshold + 0.05).coerceAtMost(1.0)
                     "down" -> grayThreshold = (grayThreshold - 0.05).coerceAtLeast(0.0)
+                    "c" -> scatterThreshold = (scatterThreshold + 200).coerceAtMost(8000.0)
+                    "x" -> scatterThreshold = (scatterThreshold - 200).coerceAtLeast(0.0)
                     "b" -> useBraille = !useBraille
                     else -> return false
                 }
-                if (prevWidth != targetWidth || prevGray != grayThreshold) {
+                if (prevWidth != targetWidth || prevGray != grayThreshold || prevContrast != scatterThreshold) {
                     needsRender = true
                     return true
                 }
@@ -110,53 +149,72 @@ class ImageViewerView(
             "mouse_down" -> {
                 val x = event.x ?: return false
                 val y = event.y ?: return false
-                if (y == 1 || y == 2) {
-                    // Check button hit
-                    val buttonLabel = "[ Toggle mode ]"
-                    val btnX = (event.cols ?: buttonLabel.length) - buttonLabel.length - 1
-                    if (x >= btnX && x < btnX + buttonLabel.length && y == 1) {
-                        useBraille = !useBraille
-                        needsRender = true
-                        return true
-                    }
-                    val isWidth = y == 1
-                    val sliderRange = (event.cols ?: targetWidth + 2) - 2
-                    val ratio = (x - 1).toDouble() / sliderRange.toDouble().coerceAtLeast(1.0)
-                    if (isWidth) {
-                        targetWidth = max(8, (ratio * (sliderRange)).toInt())
-                    } else {
-                        grayThreshold = ratio.coerceIn(0.0, 1.0)
-                    }
+                if (lastButtonRegion?.contains(x, y) == true) {
+                    useBraille = !useBraille
                     needsRender = true
                     return true
                 }
+                sliders.forEach { slider ->
+                    if (slider.onMouseDown(x, y)) return true
+                }
             }
-            "resize" -> {
-                needsRender = true
-                return true
+            "mouse_move" -> {
+                sliders.forEach { slider ->
+                    if (slider.onMouseMove(event.x, event.y)) {
+                        needsRender = true
+                        return true
+                    }
+                }
+            }
+            "mouse_up" -> {
+                var released = false
+                sliders.forEach { slider ->
+                    if (slider.onMouseUp()) {
+                        released = true
+                    }
+                }
+                if (released) {
+                    needsRender = true
+                    return true
+                }
             }
         }
         return false
     }
 
+    private data class ButtonRegion(val row: Int, val start: Int, val end: Int) {
+        fun contains(x: Int, y: Int): Boolean = y == row && x in start..end
+    }
+
+    private var lastButtonRegion: ButtonRegion? = null
+
+    private fun renderButton(canvas: CanvasRenderer, row: Int, cols: Int, style: StyleSet, label: String): ButtonRegion? {
+        val btnX = (cols - label.length - 1).coerceAtLeast(1)
+        canvas.applyStyle(style) {
+            drawText(btnX, row, label.take(cols - btnX))
+        }
+        return ButtonRegion(row, btnX, (btnX + label.length - 1).coerceAtMost(cols - 1))
+    }
+
     private fun ensureAscii(cols: Int, bodyRows: Int) {
-        if (!needsRender || filePath.isEmpty()) return
-        val sliderRows = 2
+        if (!imageDirty || filePath.isEmpty()) return
+        val sliderRows = 3
         val availableRows = bodyRows - sliderRows
         if (availableRows <= 0) return
         val width = min(targetWidth, cols.coerceAtLeast(8))
-        val height = computeHeight(width, availableRows)
+        val height = computeHeight(width)
         val rendered = runCatching {
             val renderer = if (useBraille) brailleRenderer else asciiRenderer
             renderer.imageToAscii(
                 path = filePath,
                 outWidth = width,
                 outHeight = height,
-                grayThreshold = grayThreshold
+                grayThreshold = grayThreshold,
+                scatterThreshold = scatterThreshold
             )
         }.getOrElse { "[image render failed: ${it.message}]" }
         ascii = rendered.split("\n")
-        needsRender = false
+        imageDirty = false
     }
 
     private fun renderAnsiLine(
@@ -223,13 +281,12 @@ class ImageViewerView(
         canvas.resetAttributes()
     }
 
-    private fun computeHeight(width: Int, maxRows: Int): Int {
+    private fun computeHeight(width: Int): Int {
         if (srcWidth > 0 && srcHeight > 0) {
-            // Adjust for terminal cell aspect (~2:1 height vs width).
             val ratioHeight = (srcHeight.toDouble() * width.toDouble() / srcWidth.toDouble() / 2.0)
-            return ratioHeight.toInt().coerceIn(4, maxRows)
+            return ratioHeight.toInt().coerceAtLeast(4)
         }
-        return maxRows.coerceAtLeast(4)
+        return 4
     }
 
     private fun loadMetadata() {
@@ -243,6 +300,77 @@ class ImageViewerView(
         }.onFailure {
             srcWidth = 0
             srcHeight = 0
+        }
+    }
+}
+
+private class SliderControl(
+    val label: String,
+    private val minVal: Double,
+    private val maxVal: Double,
+    private val onChange: (Double) -> Unit,
+    private val onRelease: (Double) -> Unit
+) {
+    var value: Double = minVal
+    private var row: Int = 0
+    private var startX: Int = 0
+    private var endX: Int = 0
+    private var dragging: Boolean = false
+
+    fun render(canvas: CanvasRenderer, row: Int, cols: Int) {
+        this.row = row
+        val trackLen = (cols - label.length - 8).coerceAtLeast(10)
+        startX = label.length + 2
+        endX = startX + trackLen - 1
+        val ratio = ((value - minVal) / (maxVal - minVal)).coerceIn(0.0, 1.0)
+        val indicatorPos = startX + (ratio * (trackLen - 1)).toInt().coerceIn(0, trackLen - 1)
+        val track = CharArray(trackLen) { '─' }
+        if (indicatorPos in startX..endX) {
+            track[indicatorPos - startX] = '█'
+        }
+        val text = "$label: ".padEnd(startX, ' ') + "[" + String(track) + "]"
+        canvas.drawText(0, row, text.take(cols))
+    }
+
+    fun onMouseDown(x: Int?, y: Int?): Boolean {
+        if (x == null || y == null) return false
+        if (y != row) return false
+        updateValueFromX(x)
+        dragging = true
+        return true
+    }
+
+    fun onMouseMove(x: Int?, y: Int?): Boolean {
+        if (!dragging) return false
+        if (x == null) return false
+        updateValueFromX(x)
+        onChange(value)
+        return true
+    }
+
+    fun onMouseUp(): Boolean {
+        val wasDragging = dragging
+        dragging = false
+        if (wasDragging) {
+            onRelease(value)
+        }
+        return wasDragging
+    }
+
+    fun isDragging(): Boolean = dragging
+
+    fun setValueSilently(v: Double) {
+        value = v.coerceIn(minVal, maxVal)
+    }
+
+    private fun updateValueFromX(x: Int) {
+        val clamped = x.coerceIn(startX, endX)
+        val len = (endX - startX).coerceAtLeast(1)
+        val ratio = (clamped - startX).toDouble() / len.toDouble()
+        val newValue = minVal + (maxVal - minVal) * ratio
+        if (newValue != value) {
+            value = newValue
+            onChange(value)
         }
     }
 }

@@ -9,13 +9,15 @@ class BrailleAsciiImageRenderer : AsciiImageRenderer {
         path: String,
         outWidth: Int,
         outHeight: Int,
-        grayThreshold: Double
+        grayThreshold: Double,
+        scatterThreshold: Double
     ): String = runBlocking {
         val bmp = localVfs(path).readBitmap()
         AsciiCore.pixelsToBraille(
             outWidth = outWidth,
             outHeight = outHeight,
             grayThreshold = grayThreshold,
+            scatterThreshold = scatterThreshold,
             srcWidth = bmp.width,
             srcHeight = bmp.height
         ) { x, y ->

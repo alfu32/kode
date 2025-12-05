@@ -21,6 +21,7 @@ object AsciiCore {
         outWidth: Int,
         outHeight: Int,
         grayThreshold: Double = 0.0,
+        scatterThreshold: Double = 1600.0,
         srcWidth: Int,
         srcHeight: Int,
         pixelAt: (x: Int, y: Int) -> Int
@@ -79,7 +80,6 @@ object AsciiCore {
                     .coerceIn(0, RAMP.size - 1)
 
                 // Contrast only if the region is visually scattered.
-                val scatterThreshold = 1600.0 // roughly variance of luminance > (40^2)
                 val fgColor = if (variance > scatterThreshold) {
                     val factor = if (meanLum > 128) 0.6 else 1.4
                     val fr = (avgR * factor).roundToInt().coerceIn(0, 255)
@@ -109,6 +109,7 @@ object AsciiCore {
         outWidth: Int,
         outHeight: Int,
         grayThreshold: Double = 0.0,
+        scatterThreshold: Double = 1600.0,
         srcWidth: Int,
         srcHeight: Int,
         pixelAt: (x: Int, y: Int) -> Int
@@ -173,7 +174,6 @@ object AsciiCore {
                 val meanLum = lumSum / samples.coerceAtLeast(1)
                 val variance = (lumSqSum / samples.coerceAtLeast(1)) - (meanLum * meanLum)
 
-                val scatterThreshold = 1600.0
                 val fgColor = if (variance > scatterThreshold) {
                     val factor = if (meanLum > 128) 0.6 else 1.4
                     val fr = (avgR * factor).roundToInt().coerceIn(0, 255)
