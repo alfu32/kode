@@ -23,6 +23,8 @@ class CodeEditorView(
     private var mime: String? = null
     private var scrollTop: Int = 0
     private var dragging = false
+    private var lastCols: Int = 0
+    private var lastRows: Int = 0
 
     fun openFile(path: String, mime: String? = null) {
         val content = try {
@@ -39,15 +41,22 @@ class CodeEditorView(
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        val headerStyle = styleSheet.getStyle("code-header")
-        val bodyStyle = styleSheet.getStyle("code-body")
-        val gutterStyle = styleSheet.getStyle("code-gutter")
+        lastCols = cols
+        lastRows = rows
+        val headerStyle = styleSheet.getStyle("code-header").withDefaults()
+        val baseBody = styleSheet.getStyle("code-body").withDefaults()
+        val gutterStyle = styleSheet.getStyle("code-gutter").withDefaults(baseBody.fg, baseBody.bg)
         val selectionStyle = styleSheet.getStyle("code-selection")
+            .withDefaults(fg = baseBody.bg ?: gutterStyle.bg, bg = baseBody.fg ?: gutterStyle.fg)
         val cursorStyle = styleSheet.getStyle("code-cursor")
+            .withDefaults(fg = baseBody.bg ?: gutterStyle.bg, bg = baseBody.fg ?: gutterStyle.fg)
+        val bodyStyle = baseBody
 
         // Header bar with file path and mime
         canvas.applyStyle(headerStyle) {
-            val label = (filePath.ifEmpty { "[no file]" } + (mime?.let { " ($it)" } ?: "")).take(cols)
+            val mimeLabel = mime?.let { "[$it]" } ?: "[unknown]"
+            val label = "${filePath.ifEmpty { "[no file]" }} $mimeLabel"
+                .take(cols)
             drawText(0, 0, label.padEnd(cols, ' '))
         }
 
@@ -55,7 +64,8 @@ class CodeEditorView(
         if (bodyRows == 0) return
 
         val gutterWidth = computeGutterWidth()
-        val viewport = EditorViewport(0, scrollTop, cols - gutterWidth, bodyRows)
+        val contentCols = (cols - gutterWidth).coerceAtLeast(1)
+        val viewport = EditorViewport(0, scrollTop, contentCols, bodyRows)
         val slice = buffer.viewportSlice(viewport, gutterWidth = gutterWidth)
 
         canvas.applyStyle(bodyStyle) {
@@ -94,7 +104,7 @@ class CodeEditorView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
-        val rows = event.rows ?: (scrollTop + 1)
+        val rows = (event.rows ?: lastRows).coerceAtLeast(1)
         val bodyRows = (rows - 1).coerceAtLeast(0)
 
         when (event.kind) {
@@ -176,7 +186,7 @@ class CodeEditorView(
                 shift = event.shift,
                 meta = event.meta,
                 focusId = event.focusId,
-                cols = event.cols,
+                cols = event.cols ?: (gutterWidth + (event.cols ?: 0)),
                 rows = event.rows,
                 raw = event.raw
             )
@@ -195,7 +205,7 @@ class CodeEditorView(
 
     private fun computeGutterWidth(): Int {
         val digits = buffer.totalLines().coerceAtLeast(1).toString().length
-        return digits + 2 // number + space + safety
+        return (digits + 2).coerceAtMost(12) // number + space; cap to avoid overrun
     }
 }
 
@@ -205,3 +215,12 @@ private inline fun CanvasRenderer.applyStyle(style: StyleSet, block: CanvasRende
     block()
     resetAttributes()
 }
+
+private fun StyleSet.withDefaults(fg: react.Color?, bg: react.Color?): StyleSet {
+    val s = this.copy()
+    if (s.fg == null) s.fg = fg
+    if (s.bg == null) s.bg = bg
+    return s
+}
+
+private fun StyleSet.withDefaults(): StyleSet = withDefaults(fg, bg)

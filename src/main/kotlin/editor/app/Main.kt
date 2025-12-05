@@ -41,12 +41,12 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
                 needsRender = app.dispatch(event) || event.kind == "resize"
             }
 
-            if (needsRender) {
+            //if (needsRender) {
                 redraw()
                 needsRender = false
-            } else {
-                Thread.sleep(idleSleepMillis)
-            }
+            //} else {
+            //    Thread.sleep(idleSleepMillis)
+            //}
         }
     } finally {
 
@@ -82,6 +82,8 @@ private class SplitPanelsApp(
     private var leftRatio = 0.5
     private var lastCols = 0
     private var lastRows = 0
+    private var rightWidthState = 0
+    private var rightHeightState = 0
     private val minPanelWidth = 8
     private var focus: FocusTarget = FocusTarget.CODE
     private val codeEditor = CodeEditorView(styleSheet)
@@ -117,6 +119,9 @@ private class SplitPanelsApp(
         val leftStyle = styleSheet.getStyle("sidebar")
         val rightStyle = styleSheet.getStyle("main-area")
         val splitterStyle = styleSheet.getStyle("splitter")
+
+        rightWidthState = rightWidth
+        rightHeightState = rows
 
         canvas.withStyle(leftStyle) {
             if (splitterX > 0) {
@@ -219,8 +224,8 @@ private class SplitPanelsApp(
                         shift = event.shift,
                         meta = event.meta,
                         focusId = event.focusId,
-                        cols = event.cols ?: lastCols - startX,
-                        rows = event.rows ?: lastRows,
+                        cols = rightWidthState.coerceAtLeast(0),
+                        rows = rightHeightState.coerceAtLeast(0),
                         raw = event.raw
                     )
                 )

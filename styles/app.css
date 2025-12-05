@@ -140,3 +140,24 @@ button {
     bg: #ffbf55;
     fg: #0f1424;
 }
+
+code-header {
+    bg: #3f4e7e;
+    fg: #b6b9c5;
+}
+code-body {
+    bg: #1a2237;
+    fg: #b6b9c5;
+}
+code-gutter {
+    bg: #3f4e7e;
+    fg: #b6b9c5;
+}
+code-selection {
+    bg: #3f4e7e;
+    fg: #b6b9c5;
+}
+code-cursor {
+    bg: #3f4e7e;
+    fg: #b6b9c5;
+}
