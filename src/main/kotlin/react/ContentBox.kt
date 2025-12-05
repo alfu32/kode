@@ -27,6 +27,9 @@ class ContentBox(
         right = Math.max(right,b.right)
     }
 
+    fun width(): Int = if (isEmpty) 0 else right - left + 1
+    fun height(): Int = if (isEmpty) 0 else bottom - top + 1
+
     fun movedBy(offsetX: Int, offsetY: Int) : ContentBox{
         top+=offsetY
         left+=offsetX
