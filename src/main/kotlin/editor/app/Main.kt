@@ -12,6 +12,7 @@ import react.util.enterRawMode
 import react.util.restoreStty
 import react.util.runCommand
 import editor.lib.FileTree
+import editor.mime.DefaultMimeTypeDetector
 import editor.ui.CodeEditorView
 import editor.ui.FileTreeView
 
@@ -86,6 +87,7 @@ private class SplitPanelsApp(
     private var rightHeightState = 0
     private val minPanelWidth = 8
     private var focus: FocusTarget = FocusTarget.CODE
+    private val mimeDetector = DefaultMimeTypeDetector()
     private val codeEditor = CodeEditorView(styleSheet)
     private val leftTabs = TabView(
         styleSheet = styleSheet,
@@ -95,7 +97,8 @@ private class SplitPanelsApp(
                 styleSheet,
                 FileTree.newFileTree(System.getProperty("user.dir"))
             ) { entry, mime ->
-                codeEditor.openFile(entry.fullPath, mime)
+                val detected = mime ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath)).mime
+                codeEditor.openFile(entry.fullPath, detected)
                 focus = FocusTarget.CODE
             },
             PlaceholderPane(styleSheet, "Git"),
