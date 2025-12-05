@@ -3,6 +3,9 @@ package editor.ui
 import editor.lib.AsciiImageRenderer
 import editor.lib.KorimAsciiImageRenderer
 import editor.mime.MimeTypeResult
+import korlibs.image.format.readBitmap
+import korlibs.io.file.std.localVfs
+import kotlinx.coroutines.runBlocking
 import react.BaseComponent
 import react.StyleSet
 import react.StyleSheet
@@ -25,11 +28,14 @@ class ImageViewerView(
     private var targetWidth: Int = 60
     private var ascii: List<String> = emptyList()
     private var needsRender: Boolean = false
+    private var srcWidth: Int = 0
+    private var srcHeight: Int = 0
 
     fun openFile(path: String, detection: MimeTypeResult? = null) {
         filePath = path
         mime = detection?.mime
         ascii = emptyList()
+        loadMetadata()
         needsRender = true
     }
 
@@ -58,7 +64,7 @@ class ImageViewerView(
             val availableRows = bodyRows - sliderRows
             if (availableRows <= 0) return
             ascii.take(availableRows).forEachIndexed { idx, line ->
-                drawText(0, 1 + sliderRows + idx, line)
+                drawText(0, 1 + sliderRows + idx, line.take(cols))
             }
         }
     }
@@ -110,8 +116,8 @@ class ImageViewerView(
         val sliderRows = 2
         val availableRows = bodyRows - sliderRows
         if (availableRows <= 0) return
-        val width = targetWidth.coerceIn(8, cols.coerceAtLeast(8))
-        val height = availableRows.coerceAtLeast(4)
+        val width = min(targetWidth, cols.coerceAtLeast(8))
+        val height = computeHeight(width, availableRows)
         val rendered = runCatching {
             asciiRenderer.imageToAscii(
                 path = filePath,
@@ -122,6 +128,29 @@ class ImageViewerView(
         }.getOrElse { "[image render failed: ${it.message}]" }
         ascii = rendered.split("\n")
         needsRender = false
+    }
+
+    private fun computeHeight(width: Int, maxRows: Int): Int {
+        if (srcWidth > 0 && srcHeight > 0) {
+            // ASCII cell aspect ~ 6:2 (3:1). Adjust height accordingly.
+            val ratioHeight = (srcHeight.toDouble() * width.toDouble() / srcWidth.toDouble() / 3.0)
+            return ratioHeight.toInt().coerceIn(4, maxRows)
+        }
+        return maxRows.coerceAtLeast(4)
+    }
+
+    private fun loadMetadata() {
+        if (filePath.isEmpty()) return
+        runCatching {
+            runBlocking {
+                val bmp = localVfs(filePath).readBitmap()
+                srcWidth = bmp.width
+                srcHeight = bmp.height
+            }
+        }.onFailure {
+            srcWidth = 0
+            srcHeight = 0
+        }
     }
 }
 
