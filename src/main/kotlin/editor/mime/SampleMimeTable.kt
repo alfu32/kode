@@ -13,17 +13,8 @@ object SampleMimeTable {
         val language: String,
         val extension: String, // with leading dot
         val mime: String,
-    ) {
-        fun category(): MimeTypeResult.Category {
-            val lower = mime.lowercase(Locale.ROOT)
-            return when {
-                lower.startsWith("image/") -> MimeTypeResult.Category.IMAGE
-                lower.startsWith("text/") -> MimeTypeResult.Category.TEXT
-                listOf("json", "xml", "yaml", "yml", "markdown", "asciidoc", "toml").any { lower.contains(it) } -> MimeTypeResult.Category.TEXT
-                else -> MimeTypeResult.Category.BINARY
-            }
-        }
-    }
+        val category: MimeTypeResult.Category,
+    )
 
     private val languageToExtension: List<Pair<String, String>> = listOf(
         "powerquery" to "pq",
@@ -258,10 +249,12 @@ object SampleMimeTable {
     private fun buildEntries(): List<Entry> =
         languageToExtension.map { (language, extRaw) ->
             val normalizedExt = extRaw.removePrefix(".")
+            val mime = guessMime(language, normalizedExt)
             Entry(
                 language = language,
                 extension = ".$normalizedExt",
-                mime = guessMime(language, normalizedExt),
+                mime = mime,
+                category = inferCategory(normalizedExt, mime),
             )
         }
 
@@ -277,10 +270,12 @@ object SampleMimeTable {
                 continue
             } else {
                 // Multiple languages share this extension; prefer a generic MIME.
+                val mime = guessGenericMime(key)
                 map[key] = Entry(
                     language = "generic-$key",
                     extension = entry.extension,
-                    mime = guessGenericMime(key),
+                    mime = mime,
+                    category = inferCategory(key, mime),
                 )
             }
         }
@@ -352,4 +347,34 @@ object SampleMimeTable {
             "v" -> "text/plain"
             else -> "text/plain"
         }
+
+    private fun inferCategory(ext: String, mime: String): MimeTypeResult.Category {
+        val clean = ext.removePrefix(".").lowercase(Locale.ROOT)
+        val override = categoryOverrides[clean]
+        if (override != null) return override
+        val lower = mime.lowercase(Locale.ROOT)
+        return when {
+            lower.startsWith("image/") -> MimeTypeResult.Category.IMAGE
+            lower.startsWith("text/") -> MimeTypeResult.Category.TEXT
+            listOf("json", "xml", "yaml", "yml", "markdown", "asciidoc", "toml").any { lower.contains(it) } -> MimeTypeResult.Category.TEXT
+            else -> MimeTypeResult.Category.BINARY
+        }
+    }
+
+    private val categoryOverrides: Map<String, MimeTypeResult.Category> = mapOf(
+        "png" to MimeTypeResult.Category.IMAGE,
+        "jpg" to MimeTypeResult.Category.IMAGE,
+        "jpeg" to MimeTypeResult.Category.IMAGE,
+        "gif" to MimeTypeResult.Category.IMAGE,
+        "bmp" to MimeTypeResult.Category.IMAGE,
+        "webp" to MimeTypeResult.Category.IMAGE,
+        "svg" to MimeTypeResult.Category.IMAGE,
+        "pdf" to MimeTypeResult.Category.BINARY,
+        "zip" to MimeTypeResult.Category.BINARY,
+        "gz" to MimeTypeResult.Category.BINARY,
+        "tar" to MimeTypeResult.Category.BINARY,
+        "rar" to MimeTypeResult.Category.BINARY,
+        "7z" to MimeTypeResult.Category.BINARY,
+        "wasm" to MimeTypeResult.Category.BINARY,
+    )
 }

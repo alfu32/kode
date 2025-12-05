@@ -45,7 +45,12 @@ class DefaultMimeTypeDetector(
             "wasm" to "application/wasm",
         )
         misc.forEach { (ext, mime) ->
-            this[ext] = SampleMimeTable.Entry(language = "generic-$ext", extension = ".$ext", mime = mime)
+            this[ext] = SampleMimeTable.Entry(
+                language = "generic-$ext",
+                extension = ".$ext",
+                mime = mime,
+                category = categoryForMime(mime)
+            )
         }
     }
 
@@ -60,6 +65,7 @@ class DefaultMimeTypeDetector(
                 mime = "text/plain",
                 extension = ".txt",
                 language = "plain-text",
+                category = categoryForMime("text/plain"),
                 source = MimeTypeResult.DetectionSource.FALLBACK
             )
         } else {
@@ -67,6 +73,7 @@ class DefaultMimeTypeDetector(
                 mime = OCTET_STREAM,
                 extension = "",
                 language = null,
+                category = categoryForMime(OCTET_STREAM),
                 source = MimeTypeResult.DetectionSource.FALLBACK
             )
         }
@@ -114,7 +121,7 @@ class DefaultMimeTypeDetector(
                     mime = entry.mime,
                     extension = entry.extension,
                     language = entry.language,
-                    category = entry.category(),
+                    category = entry.category,
                     source = MimeTypeResult.DetectionSource.EXTENSION
                 )
             }
@@ -131,7 +138,12 @@ class DefaultMimeTypeDetector(
     override fun registerExtension(extension: String, mime: String) {
         val normalized = normalizeExtension(extension)
         if (normalized.isNotEmpty()) {
-            extensionMap[normalized] = SampleMimeTable.Entry(language = "custom-$normalized", extension = ".$normalized", mime = mime)
+            extensionMap[normalized] = SampleMimeTable.Entry(
+                language = "custom-$normalized",
+                extension = ".$normalized",
+                mime = mime,
+                category = categoryForMime(mime)
+            )
         }
     }
 
@@ -211,6 +223,7 @@ class DefaultMimeTypeDetector(
                 mime = mime,
                 extension = extension,
                 language = null,
+                category = categoryForMime(mime),
                 source = MimeTypeResult.DetectionSource.SIGNATURE
             ) else null
     }
@@ -219,5 +232,15 @@ class DefaultMimeTypeDetector(
         const val OCTET_STREAM: String = "application/octet-stream"
         const val DEFAULT_LIMIT: Int = 3072
         private const val DEFAULT_READ_SIZE: Int = 4096
+
+        private fun categoryForMime(mime: String): MimeTypeResult.Category {
+            val lower = mime.lowercase(Locale.ROOT)
+            return when {
+                lower.startsWith("image/") -> MimeTypeResult.Category.IMAGE
+                lower.startsWith("text/") -> MimeTypeResult.Category.TEXT
+                listOf("json", "xml", "yaml", "yml", "markdown", "asciidoc", "toml").any { lower.contains(it) } -> MimeTypeResult.Category.TEXT
+                else -> MimeTypeResult.Category.BINARY
+            }
+        }
     }
 }
