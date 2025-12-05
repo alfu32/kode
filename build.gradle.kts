@@ -41,6 +41,51 @@ tasks.test {
 kotlin {
     jvmToolchain(21)
 }
+
+tasks.register("generateTmScopes") {
+    group = "tools"
+    description = "Extract TextMate scopes from grammars/*.json into grammars/tm-scopes.css"
+    val outputFile = project.layout.projectDirectory.file("grammars/tm-scopes.css")
+    inputs.files(fileTree("grammars") { include("*.json") })
+    outputs.file(outputFile)
+    doLast {
+        val grammarsDir = project.layout.projectDirectory.dir("grammars")
+        val scopes = linkedSetOf<String>()
+        grammarsDir.asFile.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.forEach { file ->
+            if (file.name == "package.json") return@forEach
+            val text = file.readText()
+            try {
+                val json = groovy.json.JsonSlurper().parseText(text)
+                fun walk(node: Any?) {
+                    when (node) {
+                        is Map<*, *> -> {
+                            node["name"]?.let { if (it is String) scopes += it }
+                            (node["patterns"] as? List<*>)?.forEach(::walk)
+                            (node["repository"] as? Map<*, *>)?.values?.forEach(::walk)
+                            listOf("captures", "beginCaptures", "endCaptures").forEach { key ->
+                                (node[key] as? Map<*, *>)?.values?.forEach(::walk)
+                            }
+                        }
+                        is List<*> -> node.forEach(::walk)
+                    }
+                }
+                walk(json)
+            } catch (e: Exception) {
+                logger.warn("Skipping ${file.name}: ${e.message}")
+            }
+        }
+        val css = buildString {
+            scopes.toSortedSet().forEach { scope ->
+                val selector = "." + scope.replace(' ', '_').replace(":", "-").replace(",", "-")
+                append(selector).append(" {\n")
+                append("  fg: #2125f8;\n")
+                append("}\n\n")
+            }
+        }
+        outputFile.asFile.writeText(css)
+        println("Wrote ${outputFile.asFile} with ${scopes.size} scopes")
+    }
+}
 /**
  * Build a self-contained executable JAR (fat / uber JAR).
  */

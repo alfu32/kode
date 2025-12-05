@@ -84,7 +84,7 @@ private class SplitPanelsApp(
 ) : BaseComponent(styleSheet) {
     private var dragging = false
     private var leftWidth = -1
-    private var leftRatio = 0.5
+    private var leftRatio = 0.3
     private var lastCols = 0
     private var lastRows = 0
     private var rightWidthState = 0
