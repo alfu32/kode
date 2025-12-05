@@ -9,6 +9,7 @@ import org.eclipse.tm4e.core.registry.Registry
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.util.Locale
 
 // ### Minimal Kotlin façade
 
@@ -30,6 +31,7 @@ interface SyntaxProvider {
 class TmProvider(grammarDir: Path) : SyntaxProvider {
     private val registry = Registry()
     private val langById = mutableMapOf<String, IGrammar>() // language or scope -> grammar
+    private val extIndex = mutableMapOf<String, IGrammar>()  // extension (no dot) -> grammar
 
     init {
         loadGrammars(grammarDir)
@@ -46,6 +48,10 @@ class TmProvider(grammarDir: Path) : SyntaxProvider {
                 val langId = path.fileName.toString().removeSuffix(".json")
                 langById.putIfAbsent(langId, grammar)
                 langById.putIfAbsent(grammar.scopeName, grammar)
+                grammar.fileTypes?.forEach { ext ->
+                    val normalized = ext.removePrefix(".").lowercase(Locale.ROOT)
+                    extIndex.putIfAbsent(normalized, grammar)
+                }
             }
         }
     }
@@ -69,6 +75,9 @@ class TmProvider(grammarDir: Path) : SyntaxProvider {
         }
         return out
     }
+
+    fun grammarForExtension(ext: String): IGrammar? =
+        extIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]
 
     private fun toTokens(result: ITokenizeLineResult<out Array<IToken>>, line: Int): List<Token> =
         result.tokens.map {

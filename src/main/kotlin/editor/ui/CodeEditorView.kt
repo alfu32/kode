@@ -8,7 +8,6 @@ import editor.lib.handleKeyForBuffer
 import editor.lib.handleMouseToBuffer
 import editor.lib.renderBuffer
 import editor.mime.MimeTypeResult
-import editor.grammars.SyntaxProvider
 import react.BaseComponent
 import react.StyleSet
 import react.StyleSheet
@@ -19,19 +18,19 @@ import java.io.File
 
 class CodeEditorView(
     styleSheet: StyleSheet,
-    private val buffer: ITextBuffer = TextBuffer(),
-    private val syntaxProvider: SyntaxProvider? = null
+    private val buffer: ITextBuffer = TextBuffer()
 ) : BaseComponent(styleSheet) {
 
     private var filePath: String = ""
     private var mime: String? = null
     private var language: String? = null
+    private var grammarAvailable: Boolean = false
     private var scrollTop: Int = 0
     private var dragging = false
     private var lastCols: Int = 0
     private var lastRows: Int = 0
 
-    fun openFile(path: String, detection: MimeTypeResult? = null) {
+    fun openFile(path: String, detection: MimeTypeResult? = null, grammarAvailable: Boolean = false) {
         val content = try {
             File(path).readText()
         } catch (_: Exception) {
@@ -41,6 +40,7 @@ class CodeEditorView(
         filePath = path
         this.mime = detection?.mime
         this.language = detection?.language
+        this.grammarAvailable = grammarAvailable
         scrollTop = 0
     }
 
@@ -218,7 +218,6 @@ class CodeEditorView(
 
     private fun grammarLabel(): String {
         val lang = language ?: return ""
-        val available = syntaxProvider?.languages()?.contains(lang) ?: false
-        return if (available) " (grammar:$lang)" else " (grammar:none)"
+        return if (grammarAvailable) " (grammar:$lang)" else " (grammar:none)"
     }
 }

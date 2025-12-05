@@ -12,7 +12,6 @@ import react.util.enterRawMode
 import react.util.restoreStty
 import react.util.runCommand
 import editor.lib.FileTree
-import editor.grammars.TmProvider
 import editor.mime.DefaultMimeTypeDetector
 import editor.mime.MimeTypeCategory
 import editor.mime.MimeTypeResult
@@ -20,7 +19,6 @@ import editor.ui.CodeEditorView
 import editor.ui.FileTreeView
 import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
-import java.nio.file.Paths
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     fun redraw() {
@@ -95,8 +93,8 @@ private class SplitPanelsApp(
     private var focus: FocusTarget = FocusTarget.CODE
     private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
-    private val tmProvider = TmProvider(Paths.get("grammars"))
-    private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = tmProvider)
+    private val tmProvider = editor.grammars.TmProvider(java.nio.file.Paths.get("grammars"))
+    private val codeEditor = CodeEditorView(styleSheet)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val leftTabs = TabView(
@@ -269,7 +267,8 @@ private class SplitPanelsApp(
                 focus = rightFocus
             }
             MimeTypeCategory.TEXT -> {
-                codeEditor.openFile(path, detected)
+                val grammarAvailable = isGrammarAvailable(path, detected)
+                codeEditor.openFile(path, detected, grammarAvailable)
                 rightFocus = FocusTarget.CODE
                 focus = rightFocus
             }
@@ -304,6 +303,15 @@ private class SplitPanelsApp(
         val minLeft = minPanelWidth.coerceAtMost(available)
         val maxLeft = (cols - minPanelWidth - 1).coerceAtLeast(minLeft)
         return value.coerceIn(minLeft, maxLeft)
+    }
+
+    private fun isGrammarAvailable(path: String, detected: MimeTypeResult): Boolean {
+        detected.language?.let { if (tmProvider.languages().contains(it)) return true }
+        val ext = path.substringAfterLast('.', missingDelimiterValue = "")
+        if (ext.isNotEmpty()) {
+            tmProvider.grammarForExtension(ext)?.let { return true }
+        }
+        return false
     }
 
     private inline fun CanvasRenderer.withStyle(style: react.StyleSet, block: CanvasRenderer.() -> Unit) {
