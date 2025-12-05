@@ -6,7 +6,8 @@ import editor.state.LeftTab
 import editor.state.buffer.TextBuffer
 import editor.terminal.enterRawMode
 import editor.terminal.restoreStty
-import editor.ui.UiRenderer
+import editor.ui.DomUiRenderer
+import react.StyleSheet
 import react.renderer.AnsiCanvasRenderer
 import org.github.alfu32.ktx.lib.FileTree
 import react.UIEvent
@@ -28,7 +29,8 @@ fun main() {
     val tree = FileTree.newFileTree(System.getProperty("user.dir"))
     var state = EditorState(buffer = buffer, filePath = "scratch.txt", fileTree = tree)
     val renderer = AnsiCanvasRenderer()
-    val uiRenderer = UiRenderer(renderer)
+    val styleSheet = StyleSheet() // extend to load from files if available
+    val uiRenderer = DomUiRenderer(renderer, styleSheet)
 
     val savedStty = enterRawMode()
     renderer.enterAlternateScreen()
