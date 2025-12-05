@@ -1,0 +1,142 @@
+default {
+    fg: #b6b9c5;
+    bg: #0f1424;
+}
+
+root {
+    bg: #0f1424;
+    fg: #b6b9c5;
+}
+
+header {
+    fg: #243250;
+    bg: #7383cf;
+}
+
+sidebar {
+    fg: #b6b9c5;
+    bg: #181d2c;
+}
+
+main-area {
+    bg: #0f1424;
+    fg: #b6b9c5;
+}
+
+splitter {
+    bg: #0f1424;
+    fg: #202b4e;
+}
+
+content {
+    bg: #0f1424;
+    fg: #b6b9c5;
+}
+
+status {
+    bg: #1a1f30;
+    fg: #b6b9c5;
+}
+
+vertical-tabs-host {
+    bg: #3c4678;
+    fg: #b6b9c5;
+}
+
+tab-strip {
+    bg: #1c2133;
+    fg: #b6b9c5;
+}
+
+tab-button {
+    bg: #242c44;
+    fg: #a5b2ff;
+}
+tab-button:focus {
+    bg: #3c4678;
+    fg: #dedee4;
+}
+tab-button::selection {
+    bg: #3c4678;
+    fg: #dd9e00;
+}
+tab-button::selection:focus {
+    bg: #3c4678;
+    fg: #ffea95;
+}
+
+files-tab {
+    bg: #13192a;
+    fg: #b6b9c5;
+}
+
+notes-tab {
+    bg: #192033;
+    fg: #b6b9c5;
+}
+
+logs-tab {
+    bg: #1b2236;
+    fg: #b6b9c5;
+}
+
+file-entry {
+    bg: #1a2134;
+    fg: #b6b9c5;
+}
+file-entry:selected {
+    bg: #243250;
+    fg: #ffbf55;
+}
+
+vertical-scrollbar {
+    bg: #1f2942;
+}
+vertical-scrollbar:focus {
+    bg: #31406a;
+}
+
+scrollbar-track {
+    bg: #1f2942;
+    fg: #b6b9c5;
+}
+
+scrollbar-indicator {
+    bg: #2e3c61;
+    fg: #0b0f1b;
+}
+
+git-panel {
+    bg: #13192a;
+    fg: #b6b9c5;
+}
+
+git-header {
+    bg: #191f31;
+    fg: #f0a030;
+}
+
+git-status {
+    bg: #1a2133;
+    fg: #b6b9c5;
+}
+
+git-message-label {
+    bg: #161c2d;
+    fg: #b6b9c5;
+}
+
+textarea {
+    bg: #1a2237;
+    fg: #b6b9c5;
+}
+
+git-commits {
+    bg: #141b2d;
+    fg: #b6b9c5;
+}
+
+button {
+    bg: #ffbf55;
+    fg: #0f1424;
+}

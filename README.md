@@ -1,5 +1,7 @@
 # TUI Code Editor
 
+![img.png](img.png)
+
 ## Objectives
 - Build a terminal-first code editor with modern ergonomics: split panes, tabs, guttered editing, syntax highlighting, and basic code intelligence.
 - Maintain broad terminal compatibility (SSH-friendly) while supporting mouse, resize, and keyboard navigation.
