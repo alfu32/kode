@@ -113,7 +113,7 @@ class CodeEditorView(
             }
             "mouse_up" -> {
                 dragging = false
-                return false
+                return true
             }
             "mouse_move" -> {
                 if (!dragging) return false
@@ -128,12 +128,19 @@ class CodeEditorView(
                     ensureCursorVisible(rows)
                     return true
                 }
+                val beforeCursor = buffer.cursorPosition()
+                val beforeSelection = if (buffer.hasSelection()) buffer.selectionText() else null
+                val beforeText = buffer.text()
                 val changed = handleKeyForBuffer(buffer, event, singleLine = false)
+                val afterCursor = buffer.cursorPosition()
+                val afterSelection = if (buffer.hasSelection()) buffer.selectionText() else null
+                val moved = beforeCursor != afterCursor || beforeSelection != afterSelection
+                val textChanged = beforeText != buffer.text()
                 ensureCursorVisible(rows)
-                return changed
+                return changed || moved || textChanged
             }
         }
-        return false
+        return true
     }
 
     private fun ensureCursorVisible(totalRows: Int) {
