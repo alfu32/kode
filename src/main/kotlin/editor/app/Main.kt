@@ -12,6 +12,7 @@ import react.util.enterRawMode
 import react.util.restoreStty
 import react.util.runCommand
 import editor.lib.FileTree
+import editor.grammars.TmProvider
 import editor.mime.DefaultMimeTypeDetector
 import editor.mime.MimeTypeCategory
 import editor.mime.MimeTypeResult
@@ -19,6 +20,7 @@ import editor.ui.CodeEditorView
 import editor.ui.FileTreeView
 import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
+import java.nio.file.Paths
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     fun redraw() {
@@ -93,7 +95,8 @@ private class SplitPanelsApp(
     private var focus: FocusTarget = FocusTarget.CODE
     private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
-    private val codeEditor = CodeEditorView(styleSheet)
+    private val tmProvider = TmProvider(Paths.get("grammars"))
+    private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = tmProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val leftTabs = TabView(
