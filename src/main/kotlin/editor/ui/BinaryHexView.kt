@@ -24,8 +24,6 @@ class BinaryHexView(
     private var hexCursorIndex: Int = 0
     private var asciiCursorIndex: Int = 0
 
-    var onRequestOpenLastText: (() -> Unit)? = null
-
     fun openFile(path: String, detection: MimeTypeResult? = null) {
         filePath = path
         mime = detection?.mime
@@ -112,9 +110,7 @@ class BinaryHexView(
         val bodyRows = max(1, (event.rows ?: 0) - 1)
         when (event.kind) {
             "mouse_down" -> {
-                val clicked = handleClick(event)
-                onRequestOpenLastText?.invoke()
-                return clicked
+                return handleClick(event)
             }
             "mouse_scroll" -> {
                 val delta = event.scrollDelta ?: return false
