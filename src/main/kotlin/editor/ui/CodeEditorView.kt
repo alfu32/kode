@@ -8,6 +8,7 @@ import editor.lib.handleKeyForBuffer
 import editor.lib.handleMouseToBuffer
 import editor.lib.renderBuffer
 import editor.mime.MimeTypeResult
+import editor.grammars.SyntaxProvider
 import react.BaseComponent
 import react.StyleSet
 import react.StyleSheet
@@ -18,7 +19,8 @@ import java.io.File
 
 class CodeEditorView(
     styleSheet: StyleSheet,
-    private val buffer: ITextBuffer = TextBuffer()
+    private val buffer: ITextBuffer = TextBuffer(),
+    private val syntaxProvider: SyntaxProvider? = null
 ) : BaseComponent(styleSheet) {
 
     private var filePath: String = ""
@@ -59,7 +61,8 @@ class CodeEditorView(
         // Header bar with file path and mime
         canvas.applyStyle(headerStyle) {
             val mimeLabel = mime?.let { "[$it]" } ?: "[unknown]"
-            val langLabel = language?.let { "· $it" } ?: ""
+            val grammarInfo = grammarLabel()
+            val langLabel = language?.let { "· $it$grammarInfo" } ?: grammarInfo
             val label = "${filePath.ifEmpty { "[no file]" }} $mimeLabel $langLabel"
                 .take(cols)
             drawText(0, 0, label.padEnd(cols, ' '))
@@ -211,5 +214,11 @@ class CodeEditorView(
     private fun computeGutterWidth(): Int {
         val digits = buffer.totalLines().coerceAtLeast(1).toString().length
         return (digits + 2).coerceAtMost(12) // number + space; cap to avoid overrun
+    }
+
+    private fun grammarLabel(): String {
+        val lang = language ?: return ""
+        val available = syntaxProvider?.languages()?.contains(lang) ?: false
+        return if (available) " (grammar:$lang)" else " (grammar:none)"
     }
 }
