@@ -64,7 +64,7 @@ class ImageViewerView(
             val availableRows = bodyRows - sliderRows
             if (availableRows <= 0) return
             ascii.take(availableRows).forEachIndexed { idx, line ->
-                drawText(0, 1 + sliderRows + idx, line.take(cols))
+                renderAnsiLine(this, 0, 1 + sliderRows + idx, line, cols)
             }
         }
     }
@@ -130,10 +130,53 @@ class ImageViewerView(
         needsRender = false
     }
 
+    private fun renderAnsiLine(canvas: CanvasRenderer, startX: Int, y: Int, line: String, maxCols: Int) {
+        var fg: react.Color? = null
+        var col = 0
+        val sb = StringBuilder()
+        var idx = 0
+        fun flush() {
+            if (sb.isNotEmpty()) {
+                fg?.let { canvas.setColor(it.r, it.g, it.b) }
+                canvas.drawText(startX + col - sb.length, y, sb.toString())
+                sb.clear()
+            }
+        }
+        while (idx < line.length && col < maxCols) {
+            val ch = line[idx]
+            if (ch == '\u001B' && idx + 1 < line.length && line[idx + 1] == '[') {
+                val end = line.indexOf('m', idx + 2)
+                if (end > idx) {
+                    flush()
+                    val codes = line.substring(idx + 2, end).split(';')
+                    when {
+                        codes.size >= 5 && codes[0] == "38" && codes[1] == "2" -> {
+                            val r = codes.getOrNull(2)?.toIntOrNull() ?: 255
+                            val g = codes.getOrNull(3)?.toIntOrNull() ?: 255
+                            val b = codes.getOrNull(4)?.toIntOrNull() ?: 255
+                            fg = react.Color(r, g, b)
+                        }
+                        codes.size == 1 && codes[0] == "0" -> fg = null
+                    }
+                    idx = end + 1
+                    continue
+                }
+            }
+            sb.append(ch)
+            col++
+            if (sb.length >= 32) {
+                flush()
+            }
+            idx++
+        }
+        flush()
+        canvas.resetAttributes()
+    }
+
     private fun computeHeight(width: Int, maxRows: Int): Int {
         if (srcWidth > 0 && srcHeight > 0) {
-            // ASCII cell aspect ~ 6:2 (3:1). Adjust height accordingly.
-            val ratioHeight = (srcHeight.toDouble() * width.toDouble() / srcWidth.toDouble() / 3.0)
+            // Adjust for terminal cell aspect (~2:1 height vs width).
+            val ratioHeight = (srcHeight.toDouble() * width.toDouble() / srcWidth.toDouble() / 2.0)
             return ratioHeight.toInt().coerceIn(4, maxRows)
         }
         return maxRows.coerceAtLeast(4)
