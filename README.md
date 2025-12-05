@@ -1,7 +1,9 @@
 # TUI Code Editor
 
-![img_2.png](img_2.png)
-![img_1.png](img_1.png)
+
+![img_5.png](img_5.png)
+![img_4.png](img_4.png)
+![img_3.png](img_3.png)
 
 ## Objectives
 - Build a terminal-first editor workspace with split panes, tabs, and multiple viewers (code, hex, image) selected by MIME.
@@ -29,7 +31,9 @@
 - Dependencies: JLine for terminal I/O, JGit for Git panel, Korim/Korio + coroutines for image loading, and internal StyleSet/Renderer helpers for consistent styling.
 - Keep README aligned when adding viewers, sliders, or detector changes; style names live in `styles/app.css` (e.g., `slider-track`, `slider-indicator`, `image-*`, `code-*`).
 
-
+![img_5.png](img_5.png)
+![img_4.png](img_4.png)
+![img_3.png](img_3.png)
 ![img_2.png](img_2.png)
 ![img_1.png](img_1.png)
 ![img.png](img.png)

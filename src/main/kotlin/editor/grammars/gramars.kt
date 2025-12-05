@@ -37,18 +37,28 @@ class TmProvider(grammarDir: Path) : SyntaxProvider {
 
     private fun loadGrammars(dir: Path) {
         if (!Files.isDirectory(dir)) return
+        val loaded = mutableMapOf<Path, IGrammar>()
+
+        // Load aliases from package.json if present.
+        parsePackageJson(dir).forEach { entry ->
+            val path = dir.resolve(entry.path).normalize()
+            if (!Files.exists(path)) return@forEach
+            val grammar = loaded.getOrPut(path) { registry.addGrammar(IGrammarSource.fromFile(path)) ?: return@forEach }
+            langById[entry.language] = grammar
+            langById.putIfAbsent(entry.scopeName, grammar)
+        }
+
+        // Fallback: load all top-level *.json grammars.
         Files.list(dir).use { files ->
-            files.filter { it.toString().endsWith(".json") }.forEach { path ->
-                runCatching {
-                    val source = IGrammarSource.fromFile(path)
-                    val grammar = registry.addGrammar(source)
-                    grammar?.let {
-                        val langId = path.fileName.toString().removeSuffix(".json")
-                        langById[langId] = it
-                        langById.putIfAbsent(it.scopeName, it)
-                    }
+            files.filter { it.toString().endsWith(".json") && it.fileName.toString() != "package.json" }
+                .forEach { path ->
+                    val grammar = loaded.getOrPut(path) {
+                        registry.addGrammar(IGrammarSource.fromFile(path))
+                    } ?: return@forEach
+                    val langId = path.fileName.toString().removeSuffix(".json")
+                    langById.putIfAbsent(langId, grammar)
+                    langById.putIfAbsent(grammar.scopeName, grammar)
                 }
-            }
         }
     }
 
@@ -87,4 +97,24 @@ class TmProvider(grammarDir: Path) : SyntaxProvider {
     companion object {
         private val DEFAULT_TIMEOUT: Duration = Duration.ofMillis(50)
     }
+}
+
+private data class PkgLanguage(val language: String, val scopeName: String, val path: String)
+
+private fun parsePackageJson(dir: Path): List<PkgLanguage> {
+    val pkg = dir.resolve("package.json")
+    if (!Files.exists(pkg)) return emptyList()
+    val text = runCatching { Files.readString(pkg) }.getOrDefault("")
+    if (text.isEmpty()) return emptyList()
+    val regex = Regex(
+        "\\{[^}]*\"language\"\\s*:\\s*\"([^\"]+)\"[^}]*\"scopeName\"\\s*:\\s*\"([^\"]+)\"[^}]*\"path\"\\s*:\\s*\"([^\"]+)\"[^}]*}",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    return regex.findAll(text).map { m ->
+        PkgLanguage(
+            language = m.groupValues[1],
+            scopeName = m.groupValues[2],
+            path = m.groupValues[3]
+        )
+    }.toList()
 }
