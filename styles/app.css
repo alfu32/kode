@@ -161,6 +161,14 @@ code-cursor {
     fg: #3f4e7e;
     bg: #b6b9c5;
 }
+slider-track {
+    bg: #3f4e7e;
+    fg: #b6b9c5;
+}
+slider-indicator {
+    bg: #b6b9c5;
+    fg: #b6b9c5;
+}
 
 image-header {
     bg: #3f4e7e;

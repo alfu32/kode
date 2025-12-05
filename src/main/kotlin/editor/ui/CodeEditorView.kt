@@ -13,6 +13,7 @@ import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
+import react.Color
 import java.io.File
 
 class CodeEditorView(
@@ -212,19 +213,3 @@ class CodeEditorView(
         return (digits + 2).coerceAtMost(12) // number + space; cap to avoid overrun
     }
 }
-
-private inline fun CanvasRenderer.applyStyle(style: StyleSet, block: CanvasRenderer.() -> Unit) {
-    style.bg?.let { setBackgroundColor(it.r, it.g, it.b) }
-    style.fg?.let { setColor(it.r, it.g, it.b) }
-    block()
-    resetAttributes()
-}
-
-private fun StyleSet.withDefaults(fg: react.Color?, bg: react.Color?): StyleSet {
-    val s = this.copy()
-    if (s.fg == null) s.fg = fg
-    if (s.bg == null) s.bg = bg
-    return s
-}
-
-private fun StyleSet.withDefaults(): StyleSet = withDefaults(fg, bg)

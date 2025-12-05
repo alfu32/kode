@@ -8,12 +8,11 @@ import korlibs.image.format.readBitmap
 import korlibs.io.file.std.localVfs
 import kotlinx.coroutines.runBlocking
 import react.BaseComponent
-import react.Color
 import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
-import kotlin.math.max
+import react.Color
 import kotlin.math.min
 
 /**
@@ -38,6 +37,7 @@ class ImageViewerView(
     private var useBraille: Boolean = false
     private val sliders = listOf(
         SliderControl(
+            styleSheet = styleSheet,
             label = "Width",
             minVal = 8.0,
             maxVal = 200.0,
@@ -49,6 +49,7 @@ class ImageViewerView(
             }
         ),
         SliderControl(
+            styleSheet = styleSheet,
             label = "Gray",
             minVal = 0.0,
             maxVal = 1.0,
@@ -60,6 +61,7 @@ class ImageViewerView(
             }
         ),
         SliderControl(
+            styleSheet = styleSheet,
             label = "Contrast",
             minVal = 0.0,
             maxVal = 8000.0,
@@ -108,11 +110,11 @@ class ImageViewerView(
             if (!sliders[1].isDragging()) sliders[1].setValueSilently(grayThreshold)
             if (!sliders[2].isDragging()) sliders[2].setValueSilently(scatterThreshold)
             sliders.forEachIndexed { idx, slider ->
-                slider.render(canvas, 1 + idx, cols)
+                slider.renderAt(canvas, 1 + idx, cols)
             }
             lastButtonRegion = renderButton(canvas, 1, cols, buttonStyle, "[ Toggle mode ]")
             val availableRows = bodyRows - sliderRows
-            if (availableRows <= 0) return
+            if (availableRows <= 0) return@applyStyle
             ascii.take(availableRows).forEachIndexed { idx, line ->
                 renderAnsiLine(this, 0, 1 + sliderRows + idx, line, cols, defaultFg, defaultBg)
             }
@@ -304,87 +306,3 @@ class ImageViewerView(
     }
 }
 
-private class SliderControl(
-    val label: String,
-    private val minVal: Double,
-    private val maxVal: Double,
-    private val onChange: (Double) -> Unit,
-    private val onRelease: (Double) -> Unit
-) {
-    var value: Double = minVal
-    private var row: Int = 0
-    private var startX: Int = 0
-    private var endX: Int = 0
-    private var dragging: Boolean = false
-
-    fun render(canvas: CanvasRenderer, row: Int, cols: Int) {
-        this.row = row
-        val trackLen = (cols - label.length - 8).coerceAtLeast(10)
-        startX = label.length + 2
-        endX = startX + trackLen - 1
-        val ratio = ((value - minVal) / (maxVal - minVal)).coerceIn(0.0, 1.0)
-        val indicatorPos = startX + (ratio * (trackLen - 1)).toInt().coerceIn(0, trackLen - 1)
-        val track = CharArray(trackLen) { '─' }
-        if (indicatorPos in startX..endX) {
-            track[indicatorPos - startX] = '█'
-        }
-        val text = "$label: ".padEnd(startX, ' ') + "[" + String(track) + "]"
-        canvas.drawText(0, row, text.take(cols))
-    }
-
-    fun onMouseDown(x: Int?, y: Int?): Boolean {
-        if (x == null || y == null) return false
-        if (y != row) return false
-        updateValueFromX(x)
-        dragging = true
-        return true
-    }
-
-    fun onMouseMove(x: Int?, y: Int?): Boolean {
-        if (!dragging) return false
-        if (x == null) return false
-        updateValueFromX(x)
-        onChange(value)
-        return true
-    }
-
-    fun onMouseUp(): Boolean {
-        val wasDragging = dragging
-        dragging = false
-        if (wasDragging) {
-            onRelease(value)
-        }
-        return wasDragging
-    }
-
-    fun isDragging(): Boolean = dragging
-
-    fun setValueSilently(v: Double) {
-        value = v.coerceIn(minVal, maxVal)
-    }
-
-    private fun updateValueFromX(x: Int) {
-        val clamped = x.coerceIn(startX, endX)
-        val len = (endX - startX).coerceAtLeast(1)
-        val ratio = (clamped - startX).toDouble() / len.toDouble()
-        val newValue = minVal + (maxVal - minVal) * ratio
-        if (newValue != value) {
-            value = newValue
-            onChange(value)
-        }
-    }
-}
-
-private inline fun CanvasRenderer.applyStyle(style: StyleSet, block: CanvasRenderer.() -> Unit) {
-    style.bg?.let { setBackgroundColor(it.r, it.g, it.b) }
-    style.fg?.let { setColor(it.r, it.g, it.b) }
-    block()
-    resetAttributes()
-}
-
-private fun StyleSet.withDefaults(fg: react.Color? = this.fg, bg: react.Color? = this.bg): StyleSet {
-    val copy = this.copy()
-    if (copy.fg == null) copy.fg = fg
-    if (copy.bg == null) copy.bg = bg
-    return copy
-}

@@ -233,17 +233,3 @@ class BinaryHexView(
         return if (c in 32..126) c.toChar().toString() else "."
     }
 }
-
-private inline fun CanvasRenderer.applyStyle(style: StyleSet, block: CanvasRenderer.() -> Unit) {
-    style.bg?.let { setBackgroundColor(it.r, it.g, it.b) }
-    style.fg?.let { setColor(it.r, it.g, it.b) }
-    block()
-    resetAttributes()
-}
-
-private fun StyleSet.withDefaults(fg: react.Color? = this.fg, bg: react.Color? = this.bg): StyleSet {
-    val copy = this.copy()
-    if (copy.fg == null) copy.fg = fg
-    if (copy.bg == null) copy.bg = bg
-    return copy
-}

@@ -40,6 +40,13 @@ interface CanvasRenderer {
     fun isRunning(): Boolean
     fun requestExit()
     fun shutdown()
+
+    fun applyStyle(style: StyleSet, block: CanvasRenderer.() -> Unit) {
+        style.bg?.let { setBackgroundColor(it.r, it.g, it.b) }
+        style.fg?.let { setColor(it.r, it.g, it.b) }
+        block()
+        resetAttributes()
+    }
 }
 
 class Draw(val renderer: CanvasRenderer) {

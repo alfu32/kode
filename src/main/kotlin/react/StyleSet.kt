@@ -55,6 +55,14 @@ data class StyleSet(
     operator fun get(key: String): String? {
         return this.extended[key]
     }
+
+    fun withDefaults(fg: Color? = this.fg, bg: Color? = this.bg): StyleSet {
+        val copy = this.copy()
+        if (copy.fg == null) copy.fg = fg
+        if (copy.bg == null) copy.bg = bg
+        return copy
+    }
+
     companion object {
         fun parse(def: String): StyleSet {
             val style = StyleSet()
@@ -88,4 +96,3 @@ data class StyleSet(
         }
     }
 }
-
