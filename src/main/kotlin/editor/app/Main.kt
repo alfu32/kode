@@ -91,6 +91,7 @@ private class SplitPanelsApp(
     private var rightHeightState = 0
     private val minPanelWidth = 8
     private var focus: FocusTarget = FocusTarget.CODE
+    private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
     private val codeEditor = CodeEditorView(styleSheet)
     private val hexViewer = BinaryHexView(styleSheet)
@@ -148,10 +149,12 @@ private class SplitPanelsApp(
             }
         }
 
+        val viewerToRender = if (focus == FocusTarget.FILES) rightFocus else focus
+
         canvas.withStyle(rightStyle) {
             if (rightWidth > 0) {
                 drawRect(splitterX + 1, 0, rightWidth, rows)
-                renderRightPane(this, splitterX + 1, rows, rightWidth, cols)
+                renderRightPane(this, splitterX + 1, rows, rightWidth, cols, viewerToRender)
             }
         }
 
@@ -259,34 +262,38 @@ private class SplitPanelsApp(
         when (detected.mimeTypeCategory) {
             MimeTypeCategory.IMAGE -> {
                 imageViewer.openFile(path, detected)
-                focus = FocusTarget.IMAGE
+                rightFocus = FocusTarget.IMAGE
+                focus = rightFocus
             }
             MimeTypeCategory.TEXT -> {
                 codeEditor.openFile(path, detected)
-                focus = FocusTarget.CODE
+                rightFocus = FocusTarget.CODE
+                focus = rightFocus
             }
             MimeTypeCategory.BINARY, MimeTypeCategory.UNKNOWN -> {
                 // Unknown defaults to hex viewer.
                 hexViewer.openFile(path, detected)
-                focus = FocusTarget.HEX
+                rightFocus = FocusTarget.HEX
+                focus = rightFocus
             }
         }
     }
 
     private fun dispatchToRight(event: UIEvent): Boolean {
-        val targetFocus = when (focus) {
-            FocusTarget.FILES -> FocusTarget.CODE
-            else -> focus
-        }
-        if (event.kind == "mouse_down") {
+        val targetFocus = if (focus == FocusTarget.FILES) rightFocus else focus
+        if (event.kind == "mouse_down" || event.kind == "mouse_up" || event.kind == "mouse_move") {
             focus = targetFocus
         }
-        return when (targetFocus) {
+        val handled = when (targetFocus) {
             FocusTarget.CODE -> codeEditor.dispatch(event)
             FocusTarget.HEX -> hexViewer.dispatch(event)
             FocusTarget.IMAGE -> imageViewer.dispatch(event)
             FocusTarget.FILES -> codeEditor.dispatch(event)
         }
+        if (handled && targetFocus != FocusTarget.FILES) {
+            rightFocus = targetFocus
+        }
+        return handled
     }
 
     private fun clampWidth(value: Int, cols: Int): Int {
@@ -315,7 +322,7 @@ private class SplitPanelsApp(
         leftTabs.render(clipped)
     }
 
-    private fun renderRightPane(canvas: CanvasRenderer, startX: Int, height: Int, width: Int, totalCols: Int) {
+    private fun renderRightPane(canvas: CanvasRenderer, startX: Int, height: Int, width: Int, totalCols: Int, viewer: FocusTarget) {
         if (height <= 0 || width <= 0) return
         val clipped = ClippedCanvasRenderer(
             base = canvas,
@@ -324,11 +331,11 @@ private class SplitPanelsApp(
             width = width,
             height = height
         )
-        when (focus) {
+        when (viewer) {
             FocusTarget.CODE -> codeEditor.render(clipped)
-            FocusTarget.FILES -> codeEditor.render(clipped) // default to code view when no file selected
             FocusTarget.HEX -> hexViewer.render(clipped)
             FocusTarget.IMAGE -> imageViewer.render(clipped)
+            FocusTarget.FILES -> codeEditor.render(clipped)
         }
     }
 }

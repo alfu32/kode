@@ -51,6 +51,19 @@ class BinaryHexView(
 
         val bodyRows = (rows - 1).coerceAtLeast(0)
         if (bodyRows == 0) return
+        if (bytes.isEmpty()) return
+
+        val maxIndex = (bytes.size - 1).coerceAtLeast(0)
+        hexCursorIndex = hexCursorIndex.coerceIn(0, maxIndex)
+        asciiCursorIndex = asciiCursorIndex.coerceIn(0, maxIndex)
+        val viewStartIndex = scrollRow * bytesPerRow
+        val viewEndIndex = viewStartIndex + (bodyRows * bytesPerRow)
+        if (hexCursorIndex !in viewStartIndex until viewEndIndex) {
+            hexCursorIndex = viewStartIndex.coerceAtMost(maxIndex)
+        }
+        if (asciiCursorIndex !in viewStartIndex until viewEndIndex) {
+            asciiCursorIndex = viewStartIndex.coerceAtMost(maxIndex)
+        }
 
         canvas.applyStyle(bodyStyle) {
             drawRect(0, 1, cols, bodyRows)
@@ -83,8 +96,8 @@ class BinaryHexView(
                 if (hexCursorIndex in rowStartIndex until rowStartIndex + slice.size) {
                     val local = hexCursorIndex - rowStartIndex
                     val hx = hexStart + (local * 3)
-                    if (hx < cols - 1) {
-                        val pair = String.format("%02X", slice[local].toInt() and 0xFF)
+                    val pair = String.format("%02X", slice[local].toInt() and 0xFF)
+                    if (hx < cols) {
                         canvas.applyStyle(cursorStyle) {
                             drawText(hx, 1 + row, pair.take(max(0, cols - hx)))
                         }
