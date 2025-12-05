@@ -24,9 +24,11 @@ class DomUiRenderer(
 ) {
     private val rootRenderer = RootRenderer(renderer, styleSheet)
     private var linearized: List<DOMNode> = emptyList()
+    private var rootNode: DOMNode? = null
 
     fun render(state: EditorState) {
         val root = buildTree(state)
+        rootNode = root
         val layout = layoutRoot(root, LayoutContext(renderer.cols(), renderer.rows()))
         applyAbsoluteLayout(root, 0, 0)
         linearized = collectVisible(root)
@@ -37,6 +39,23 @@ class DomUiRenderer(
         linearized.lastOrNull { node ->
             node.style.boundingBox().contains(x, y)
         }
+
+    fun dispatchToNode(node: DOMNode?, event: react.UIEvent) {
+        node ?: return
+        when (event.kind) {
+            "mouse_down" -> node.onMouseDown?.invoke(event)
+            "mouse_up" -> node.onMouseUp?.invoke(event)
+            "mouse_move" -> node.onMouseMove?.invoke(event)
+            "mouse_scroll" -> node.onMouseScroll?.invoke(event)
+            "key_down" -> node.onKeyDown?.invoke(event)
+            "key_up" -> node.onKeyUp?.invoke(event)
+            "resize" -> node.onResize?.invoke(event)
+        }
+    }
+
+    fun dispatchKey(event: react.UIEvent) {
+        dispatchToNode(rootNode, event)
+    }
 
     private fun buildTree(state: EditorState): DOMNode {
         val top = TopBar()

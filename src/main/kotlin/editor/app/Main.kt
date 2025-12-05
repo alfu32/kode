@@ -29,7 +29,7 @@ fun main() {
     val tree = FileTree.newFileTree(System.getProperty("user.dir"))
     var state = EditorState(buffer = buffer, filePath = "scratch.txt", fileTree = tree)
     val renderer = AnsiCanvasRenderer()
-    val styleSheet = StyleSheet() // extend to load from files if available
+    val styleSheet = StyleSheet() // TODO: load from css files
     val uiRenderer = DomUiRenderer(renderer, styleSheet)
 
     val savedStty = enterRawMode()
@@ -45,14 +45,13 @@ fun main() {
             when (event.kind) {
                 "resize" -> uiRenderer.render(state)
                 "key_down" -> {
-                    val layout = editor.ui.computeLayout(renderer.rows(), renderer.cols())
                     if (event.ctrl && event.key == "C") break
-                    state = handleKey(state, event.key.orEmpty(), layout)
+                    uiRenderer.dispatchKey(event)
                     uiRenderer.render(state)
                 }
                 "mouse_down", "mouse_up", "mouse_move", "mouse_scroll" -> {
-                    val layout = editor.ui.computeLayout(renderer.rows(), renderer.cols())
-                    state = handleMouse(state, event, layout)
+                    val hit = uiRenderer.hitTest(event.x ?: 0, event.y ?: 0)
+                    uiRenderer.dispatchToNode(hit, event)
                     uiRenderer.render(state)
                 }
                 else -> {
