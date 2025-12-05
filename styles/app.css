@@ -161,3 +161,12 @@ code-cursor {
     fg: #3f4e7e;
     bg: #b6b9c5;
 }
+
+image-header {
+    bg: #3f4e7e;
+    fg: #000000;
+}
+image-body {
+    bg: #3f4e7e;
+    fg: #000000;
+}
