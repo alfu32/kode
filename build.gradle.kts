@@ -1,5 +1,8 @@
+import java.io.File
+
 plugins {
     kotlin("jvm") version "2.2.20"
+    kotlin("plugin.serialization") version "2.2.20"
 }
 
 group = "org.github.alfu32.kte"
@@ -31,6 +34,7 @@ dependencies {
     // codex resume 019aef55-2d9e-77d0-9785-c3c47e6226c7
     implementation("org.eclipse:org.eclipse.tm4e.core:0.17.2-SNAPSHOT")
     implementation("org.eclipse:org.eclipse.tm4e:0.17.2-SNAPSHOT")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
 
 }
@@ -40,6 +44,178 @@ tasks.test {
 }
 kotlin {
     jvmToolchain(21)
+}
+
+val regexGrammarOutput = layout.buildDirectory.dir("generated/regex-grammars")
+val generatedGrammarSources = layout.buildDirectory.dir("generated/sources/regexGrammars")
+
+val generateRegexGrammarMaps = tasks.register("generateRegexGrammarMaps") {
+    group = "tools"
+    description = "Extract token-name -> regex maps from TextMate grammars into regex-grammars/*.json"
+    val outputDir = regexGrammarOutput.map { it.dir("regex-grammars").asFile }
+    inputs.files(fileTree("grammars") { include("*.json") })
+    outputs.dir(regexGrammarOutput)
+    doLast {
+        val grammarsDir = project.layout.projectDirectory.dir("grammars").asFile
+        val outDir = outputDir.get()
+        outDir.mkdirs()
+        val languages = mutableListOf<String>()
+        grammarsDir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.forEach { file ->
+            if (file.name == "package.json") return@forEach
+            val langId = file.name.removeSuffix(".json")
+            val text = file.readText()
+            try {
+                val parsed = groovy.json.JsonSlurper().parseText(text) as? Map<*, *> ?: return@forEach
+                val matches = linkedMapOf<String, MutableList<String>>()
+                val extensions = (parsed["fileTypes"] as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
+                fun addMatch(name: String?, match: String?) {
+                    if (name.isNullOrBlank() || match.isNullOrBlank()) return
+                    matches.getOrPut(name) { mutableListOf() }.add(match)
+                }
+                fun walk(node: Any?) {
+                    val map = node as? Map<*, *> ?: return
+                    val name = map["name"] as? String
+                    val match = map["match"] as? String
+                    addMatch(name, match)
+                    (map["patterns"] as? List<*>)?.forEach(::walk)
+                    (map["repository"] as? Map<*, *>)?.values?.forEach(::walk)
+                    listOf("captures", "beginCaptures", "endCaptures").forEach { key ->
+                        (map[key] as? Map<*, *>)?.values?.forEach(::walk)
+                    }
+                }
+                walk(parsed)
+                val combined = matches.mapValues { (_, list) ->
+                    list.distinct().joinToString("|") { "(?:$it)" }
+                }
+                val output = mapOf(
+                    "language" to langId,
+                    "extensions" to extensions,
+                    "tokens" to combined
+                )
+                val outFile = File(outDir, "$langId.json")
+                outFile.writeText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(output)))
+                languages += langId
+                logger.lifecycle("Generated regex grammar for $langId with ${combined.size} patterns")
+            } catch (e: Exception) {
+                logger.warn("Skipping ${file.name}: ${e.message}")
+            }
+        }
+        val indexFile = File(outDir, "index.json")
+        indexFile.writeText(
+            groovy.json.JsonOutput.prettyPrint(
+                groovy.json.JsonOutput.toJson(mapOf("languages" to languages.sorted()))
+            )
+        )
+        println("Regex grammar maps written to ${outDir.absolutePath}")
+    }
+}
+
+val generateRegexGrammarSources = tasks.register("generateRegexGrammarSources") {
+    group = "tools"
+    description = "Generate Kotlin sources for regex-based grammars under editor.grammars.generated"
+    val srcOut = generatedGrammarSources.map { it.dir("kotlin") }
+    inputs.dir(regexGrammarOutput)
+    outputs.dir(generatedGrammarSources)
+    dependsOn(generateRegexGrammarMaps)
+    doLast {
+        val inputDir = regexGrammarOutput.get().dir("regex-grammars").asFile
+        val outDir = srcOut.get().asFile
+        outDir.mkdirs()
+        val indexFile = File(inputDir, "index.json")
+        if (!indexFile.exists()) {
+            logger.warn("No regex grammar index found at ${indexFile.absolutePath}")
+            return@doLast
+        }
+        val index = groovy.json.JsonSlurper().parseText(indexFile.readText()) as? Map<*, *>
+        val languages = (index?.get("languages") as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
+        val packageDir = File(outDir, "editor/grammars/generated")
+        packageDir.mkdirs()
+        val providerFile = File(packageDir, "GeneratedRegexProvider.kt")
+        val entries = languages.mapNotNull { lang ->
+            val file = File(inputDir, "$lang.json")
+            if (!file.exists()) return@mapNotNull null
+            val obj = groovy.json.JsonSlurper().parseText(file.readText()) as? Map<*, *> ?: return@mapNotNull null
+            val tokens = obj["tokens"] as? Map<*, *> ?: emptyMap<Any, Any>()
+            val extensions = (obj["extensions"] as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
+            GeneratedEntry(lang, extensions, tokens.mapNotNull { (k, v) ->
+                val key = k?.toString() ?: return@mapNotNull null
+                val value = v?.toString() ?: return@mapNotNull null
+                key to value
+            }.toMap())
+        }
+        entries.forEach { entry ->
+            writeLanguageFile(packageDir, entry)
+        }
+        providerFile.writeText(renderProvider(entries))
+        logger.lifecycle("Generated ${entries.size} regex grammars into ${providerFile.absolutePath}")
+    }
+}
+
+data class GeneratedEntry(val language: String, val extensions: List<String>, val tokens: Map<String, String>)
+
+fun safeConstName(language: String): String =
+    language.uppercase()
+        .replace(Regex("[^A-Z0-9]+"), "_")
+        .trim('_')
+        .let { if (it.isBlank()) "LANG" else it }
+
+fun writeLanguageFile(packageDir: File, entry: GeneratedEntry) {
+    fun esc(raw: String): String = raw
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("$", "\\$")
+    val constName = safeConstName(entry.language)
+    val extList = entry.extensions.joinToString(", ") { "\"${esc(it)}\"" }
+    val tokenMap = entry.tokens.entries.joinToString(",\n        ") { "\"${esc(it.key)}\" to \"${esc(it.value)}\"" }
+    val file = File(packageDir, "${constName}.kt")
+    file.writeText(
+        """
+        package editor.grammars.generated
+
+        import editor.grammars.RegexGrammarDefinition
+
+        internal val ${constName}: RegexGrammarDefinition = RegexGrammarDefinition(
+            language = "${esc(entry.language)}",
+            extensions = listOf($extList),
+            tokens = mapOf(
+        $tokenMap
+            )
+        )
+        """.trimIndent()
+    )
+}
+
+fun renderProvider(entries: List<GeneratedEntry>): String {
+    fun esc(raw: String): String = raw
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("$", "\\$")
+    val registrations = entries.joinToString(",\n                ") { safeConstName(it.language) }
+    return """
+        package editor.grammars.generated
+
+        import editor.grammars.RegexGrammarDefinition
+        import editor.grammars.RegexSyntaxProvider
+
+        object GeneratedRegexProvider : RegexSyntaxProvider(
+            listOf(
+                $registrations
+            )
+        )
+    """.trimIndent()
+}
+
+sourceSets.main {
+    java.srcDir(generatedGrammarSources.map { it.dir("kotlin") })
+    resources.srcDir(regexGrammarOutput)
+}
+
+tasks.named("processResources") {
+    dependsOn(generateRegexGrammarMaps)
+}
+
+tasks.named("compileKotlin") {
+    dependsOn(generateRegexGrammarSources)
 }
 
 tasks.register("generateTmScopes") {

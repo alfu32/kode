@@ -12,7 +12,7 @@ import react.util.enterRawMode
 import react.util.restoreStty
 import react.util.runCommand
 import editor.lib.FileTree
-import editor.grammars.TmProvider
+import editor.grammars.generated.GeneratedRegexProvider
 import editor.mime.DefaultMimeTypeDetector
 import editor.mime.MimeTypeCategory
 import editor.mime.MimeTypeResult
@@ -100,8 +100,8 @@ private class SplitPanelsApp(
     private var focus: FocusTarget = FocusTarget.CODE
     private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
-    private val tmProvider = TmProvider(Paths.get("grammars"))
-    private val codeEditor = CodeEditorView(styleSheet)
+    private val regexProvider = GeneratedRegexProvider
+    private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val leftTabs = TabView(
@@ -317,12 +317,12 @@ private class SplitPanelsApp(
     }
 
     private fun resolveGrammar(path: String, detected: MimeTypeResult): Pair<String?, Boolean> {
-        detected.language?.let {
-            if (tmProvider.languages().contains(it)) return it to true
+        detected.language?.let { lang ->
+            if (regexProvider.languages().contains(lang)) return lang to true
         }
         val ext = path.substringAfterLast('.', missingDelimiterValue = "")
         if (ext.isNotEmpty()) {
-            tmProvider.languageForExtension(ext)?.let { lang ->
+            regexProvider.languageForExtension(ext)?.let { lang ->
                 return lang to true
             }
         }

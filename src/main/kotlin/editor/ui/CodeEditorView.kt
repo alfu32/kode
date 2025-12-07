@@ -31,7 +31,7 @@ class CodeEditorView(
     private var dragging = false
     private var lastCols: Int = 0
     private var lastRows: Int = 0
-    private val debugTokenColor = Color.from("#0000ff")
+    private val debugTokenColor = Color.from(0x9999ff)
 
     fun openFile(
         path: String,
@@ -243,6 +243,7 @@ class CodeEditorView(
         if (debugTokenColor != null) {
             val copy = base.copy()
             copy.fg = debugTokenColor
+            copy.textDecoration="bold"
             return copy
         }
         val scope = token.scopes.lastOrNull() ?: return base

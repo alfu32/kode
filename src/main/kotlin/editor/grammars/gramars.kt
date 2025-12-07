@@ -17,13 +17,15 @@ data class Token(
     val start: Int,
     val end: Int,
     val scopes: List<String>,
-    val line: Int
+    val line: Int,
+    val text: String = ""
 )
 
 interface SyntaxProvider {
     fun tokensForLine(lineNumber: Int, lineText: String, language: String): List<Token>
     fun tokensForLines(startLine: Int, lines: List<String>, language: String): List<Token>
     fun languages(): Set<String>
+    fun languageForExtension(ext: String): String?
 }
 
 // ### Loader and registry
@@ -61,7 +63,7 @@ class TmProvider(grammarDir: Path) : SyntaxProvider {
     override fun tokensForLine(lineNumber: Int, lineText: String, language: String): List<Token> {
         val grammar = langById[language] ?: return emptyList()
         val result = grammar.tokenizeLine(lineText, nullState(), DEFAULT_TIMEOUT)
-        return toTokens(result, lineNumber)
+        return toTokens(result, lineNumber, lineText)
     }
 
     override fun tokensForLines(startLine: Int, lines: List<String>, language: String): List<Token> {
@@ -71,7 +73,7 @@ class TmProvider(grammarDir: Path) : SyntaxProvider {
         lines.forEachIndexed { idx, line ->
             val res = grammar.tokenizeLine(line, state, DEFAULT_TIMEOUT)
             state = res.ruleStack
-            out += toTokens(res, startLine + idx)
+            out += toTokens(res, startLine + idx, line)
         }
         return out
     }
@@ -79,16 +81,25 @@ class TmProvider(grammarDir: Path) : SyntaxProvider {
     fun grammarForExtension(ext: String): IGrammar? =
         extIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]?.second
 
-    fun languageForExtension(ext: String): String? =
+    override fun languageForExtension(ext: String): String? =
         extIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]?.first
 
-    private fun toTokens(result: ITokenizeLineResult<out Array<IToken>>, line: Int): List<Token> =
+    private fun toTokens(
+        result: ITokenizeLineResult<out Array<IToken>>,
+        line: Int,
+        lineText: String?
+    ): List<Token> =
         result.tokens.map {
             Token(
                 start = it.startIndex,
                 end = it.endIndex,
                 scopes = it.scopes,
-                line = line
+                line = line,
+                text = lineText?.let { txt ->
+                    val safeStart = it.startIndex.coerceIn(0, txt.length)
+                    val safeEnd = it.endIndex.coerceIn(safeStart, txt.length)
+                    txt.substring(safeStart, safeEnd)
+                } ?: ""
             )
         }
 
