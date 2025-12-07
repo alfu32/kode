@@ -405,9 +405,7 @@ tasks.register<Copy>("distBundle") {
     description = "Bundle fat jar and generated grammar CSS into dist/"
     dependsOn("fatJar", generateRegexGrammarCss)
     val distDir = layout.projectDirectory.dir("dist")
-    from(layout.buildDirectory.file("libs/kt-tui-edit-all.jar")) {
-        into("")
-    }
+    from(layout.buildDirectory.file("libs/kt-tui-edit-all.jar"))
     from(regexGrammarCssOutput) {
         into("grammars-css")
     }

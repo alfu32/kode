@@ -49,7 +49,8 @@ open class RegexSyntaxProvider(
                     end = end,
                     scopes = listOf(group.qualifier),
                     line = startLine + idx,
-                    text = matcher.group(group.name) ?: ""
+                    text = matcher.group(group.name) ?: "",
+                    fg = colorForQualifier(group.qualifier)
                 )
             }
         }
@@ -101,5 +102,56 @@ open class RegexSyntaxProvider(
         val trimmed = regex.trim()
         val needsBoundary = trimmed.all { it.isLetterOrDigit() || it == '_' }
         return if (needsBoundary) "\\b(?:$trimmed)\\b" else trimmed
+    }
+
+    private fun colorForQualifier(qualifier: String): react.Color? {
+        val palette = mapOf(
+            "comment" to react.Color.from("#808080"),
+            "string" to react.Color.from("#6A8759"),
+            "regex" to react.Color.from("#C6794C"),
+            "number" to react.Color.from("#6897BB"),
+            "constant" to react.Color.from("#9876AA"),
+            "keyword" to react.Color.from("#CC7832"),
+            "operator" to react.Color.from("#A9B7C6"),
+            "punctuation" to react.Color.from("#A9B7C6"),
+            "tag" to react.Color.from("#E8BF6A"),
+            "attribute" to react.Color.from("#A5C261"),
+            "property" to react.Color.from("#A5C261"),
+            "type" to react.Color.from("#A9B7C6"),
+            "class" to react.Color.from("#A9B7C6"),
+            "interface" to react.Color.from("#A9B7C6"),
+            "function" to react.Color.from("#FFC66D"),
+            "method" to react.Color.from("#FFC66D"),
+            "variable" to react.Color.from("#A9B7C6"),
+            "parameter" to react.Color.from("#A9B7C6"),
+            "namespace" to react.Color.from("#A9B7C6"),
+            "module" to react.Color.from("#A9B7C6"),
+            "annotation" to react.Color.from("#BBB529"),
+            "decorator" to react.Color.from("#BBB529"),
+            "boolean" to react.Color.from("#CC7832")
+        )
+        val lower = qualifier.lowercase()
+        fun has(term: String) = lower.contains(term)
+        val key = when {
+            has("comment") -> "comment"
+            has("string") -> "string"
+            has("regex") -> "regex"
+            has("number") || has("numeric") -> "number"
+            has("keyword") -> "keyword"
+            has("boolean") -> "boolean"
+            has("constant") -> "constant"
+            has("annotation") || has("decorator") -> "annotation"
+            has("operator") -> "operator"
+            has("punctuation") || has("delimiter") || has("brace") || has("bracket") -> "punctuation"
+            has("function") || has("method") -> "function"
+            has("parameter") -> "parameter"
+            has("variable") || has("identifier") -> "variable"
+            has("attribute") || has("property") -> "attribute"
+            has("tag") || has("element") -> "tag"
+            has("type") || has("class") || has("interface") || has("enum") -> "type"
+            has("namespace") || has("module") || has("package") -> "namespace"
+            else -> null
+        }
+        return key?.let { palette[it] }
     }
 }

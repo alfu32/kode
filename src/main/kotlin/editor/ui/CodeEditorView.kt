@@ -241,9 +241,19 @@ class CodeEditorView(
         scope.replace(' ', '_').replace(":", "-").replace(",", "-")
 
     private fun styleForToken(token: editor.grammars.Token, base: StyleSet): StyleSet {
+        token.fg?.let { color ->
+            val copy = base.copy()
+            copy.fg = color
+            return copy
+        }
         val scope = token.scopes.lastOrNull() ?: return base
-        return localStyleSheet.getStyle(scopeToStyleId(scope)).withDefaults(base.fg, base.bg)
+        return cachedStyle(scope).withDefaults(base.fg, base.bg)
     }
+
+    private val styleCache = mutableMapOf<String, StyleSet>()
+
+    private fun cachedStyle(scope: String): StyleSet =
+        styleCache.getOrPut(scope) { localStyleSheet.getStyle(scopeToStyleId(scope)) }
 
     fun updateStyleSheet(styleSheet: StyleSheet) {
         this.localStyleSheet = styleSheet

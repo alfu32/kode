@@ -18,7 +18,8 @@ data class Token(
     val end: Int,
     val scopes: List<String>,
     val line: Int,
-    val text: String = ""
+    val text: String = "",
+    val fg: react.Color? = null
 )
 
 interface SyntaxProvider {
