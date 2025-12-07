@@ -399,3 +399,18 @@ tasks.register<Jar>("fatJar") {
         exclude("META-INF/*.kotlin_module")
     }
 }
+
+tasks.register<Copy>("distBundle") {
+    group = "distribution"
+    description = "Bundle fat jar and generated grammar CSS into dist/"
+    dependsOn("fatJar", generateRegexGrammarCss)
+    val distDir = layout.projectDirectory.dir("dist")
+    from(layout.buildDirectory.file("libs/kt-tui-edit-all.jar")) {
+        into("")
+    }
+    from(regexGrammarCssOutput) {
+        into("grammars-css")
+    }
+    into(distDir)
+    doFirst { distDir.asFile.mkdirs() }
+}

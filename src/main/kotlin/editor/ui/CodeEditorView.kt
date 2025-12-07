@@ -20,8 +20,7 @@ import java.nio.file.Path
 class CodeEditorView(
     styleSheet: StyleSheet,
     private val buffer: ITextBuffer = TextBuffer(),
-    private val syntaxProvider: SyntaxProvider? = null,
-    private val grammarStylesDir: java.nio.file.Path? = null
+    private val syntaxProvider: SyntaxProvider? = null
 ) : BaseComponent(styleSheet) {
 
     private var localStyleSheet: StyleSheet = styleSheet
@@ -52,7 +51,6 @@ class CodeEditorView(
         this.language = detection?.language
         this.grammarAvailable = grammarAvailable
         this.grammarLanguage = grammarLanguage ?: detection?.language
-        localStyleSheet = grammarCssForLanguage(this.grammarLanguage) ?: styleSheet
         scrollTop = 0
     }
 
@@ -247,28 +245,8 @@ class CodeEditorView(
         return localStyleSheet.getStyle(scopeToStyleId(scope)).withDefaults(base.fg, base.bg)
     }
 
-    private fun grammarCssForLanguage(lang: String?): StyleSheet? {
-        val dir: Path = grammarStylesDir ?: return null
-        val id = lang ?: return null
-        val cssPath = dir.resolve("$id.css")
-        if (!Files.isRegularFile(cssPath)) return null
-        val css = runCatching { Files.readString(cssPath) }.getOrNull() ?: return null
-        val extra = StyleSheet.parse(css)
-        return mergeStyleSheets(styleSheet, extra)
-    }
-
-    private fun mergeStyleSheets(base: StyleSheet, extra: StyleSheet): StyleSheet {
-        val default = base.defaultStyle.copy().also { it.mergeFrom(extra.defaultStyle) }
-        val rules = base.rules.mapValues { (_, v) ->
-            val clone = StyleSet()
-            clone.mergeFrom(v)
-            clone
-        }.toMutableMap()
-        extra.rules.forEach { (k, v) ->
-            val target = rules.getOrPut(k) { StyleSet() }
-            target.mergeFrom(v)
-        }
-        return StyleSheet(default, rules)
+    fun updateStyleSheet(styleSheet: StyleSheet) {
+        this.localStyleSheet = styleSheet
     }
 
     private fun renderLineWithTokens(

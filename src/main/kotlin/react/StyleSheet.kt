@@ -11,6 +11,20 @@ class StyleSheet(
     val rules: Map<String, StyleSet> = emptyMap()
 ) {
 
+    fun merge(other: StyleSheet): StyleSheet {
+        val mergedDefault = this.defaultStyle.copy().also { it.mergeFrom(other.defaultStyle) }
+        val mergedRules = this.rules.mapValues { (_, v) ->
+            val copy = StyleSet()
+            copy.mergeFrom(v)
+            copy
+        }.toMutableMap()
+        other.rules.forEach { (k, v) ->
+            val target = mergedRules.getOrPut(k) { StyleSet() }
+            target.mergeFrom(v)
+        }
+        return StyleSheet(mergedDefault, mergedRules)
+    }
+
     fun getStyle(styleId: String): StyleSet {
         return rules.filter { (key,style) ->
             key==styleId
