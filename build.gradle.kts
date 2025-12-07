@@ -48,6 +48,7 @@ kotlin {
 
 val regexGrammarOutput = layout.buildDirectory.dir("generated/regex-grammars")
 val generatedGrammarSources = layout.buildDirectory.dir("generated/sources/regexGrammars")
+val regexGrammarCssOutput = layout.buildDirectory.dir("generated/regex-grammars/css")
 
 val generateRegexGrammarMaps = tasks.register("generateRegexGrammarMaps") {
     group = "tools"
@@ -137,11 +138,13 @@ val generateRegexGrammarSources = tasks.register("generateRegexGrammarSources") 
             val obj = groovy.json.JsonSlurper().parseText(file.readText()) as? Map<*, *> ?: return@mapNotNull null
             val tokens = obj["tokens"] as? Map<*, *> ?: emptyMap<Any, Any>()
             val extensions = (obj["extensions"] as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
-            GeneratedEntry(lang, extensions, tokens.mapNotNull { (k, v) ->
-                val key = k?.toString() ?: return@mapNotNull null
-                val value = v?.toString() ?: return@mapNotNull null
-                key to value
-            }.toMap())
+            val tokenMap = mutableMapOf<String, String>()
+            tokens.forEach { (k, v) ->
+                val key = k?.toString() ?: return@forEach
+                val value = v?.toString() ?: return@forEach
+                tokenMap[key] = value
+            }
+            GeneratedEntry(lang, extensions, tokenMap)
         }
         entries.forEach { entry ->
             writeLanguageFile(packageDir, entry)
@@ -149,6 +152,39 @@ val generateRegexGrammarSources = tasks.register("generateRegexGrammarSources") 
         providerFile.writeText(renderProvider(entries))
         logger.lifecycle("Generated ${entries.size} regex grammars into ${providerFile.absolutePath}")
     }
+}
+
+val generateRegexGrammarCss = tasks.register("generateRegexGrammarCss") {
+    group = "tools"
+    description = "Generate Darcula-like CSS styles for each regex grammar"
+    val outputDir = regexGrammarCssOutput.map { it.asFile }
+    inputs.dir(regexGrammarOutput)
+    outputs.dir(regexGrammarCssOutput)
+    dependsOn(generateRegexGrammarMaps)
+    doLast {
+        val inputDir = regexGrammarOutput.get().dir("regex-grammars").asFile
+        val outDir = outputDir.get()
+        outDir.mkdirs()
+        val indexFile = File(inputDir, "index.json")
+        if (!indexFile.exists()) {
+            logger.warn("No regex grammar index found at ${indexFile.absolutePath}")
+            return@doLast
+        }
+        val index = groovy.json.JsonSlurper().parseText(indexFile.readText()) as? Map<*, *>
+        val languages = (index?.get("languages") as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList()
+        languages.forEach { lang ->
+            val jsonFile = File(inputDir, "$lang.json")
+            if (!jsonFile.exists()) return@forEach
+            val obj = groovy.json.JsonSlurper().parseText(jsonFile.readText()) as? Map<*, *> ?: return@forEach
+            val tokens = (obj["tokens"] as? Map<*, *>)?.keys?.mapNotNull { it?.toString() }?.toSet() ?: emptySet()
+            val css = buildLanguageCss(lang, tokens)
+            File(outDir, "$lang.css").writeText(css)
+        }
+        logger.lifecycle("Generated CSS styles for ${languages.size} grammars into ${outDir.absolutePath}")
+    }
+}
+generateRegexGrammarSources.configure {
+    mustRunAfter(generateRegexGrammarCss)
 }
 
 data class GeneratedEntry(val language: String, val extensions: List<String>, val tokens: Map<String, String>)
@@ -205,13 +241,75 @@ fun renderProvider(entries: List<GeneratedEntry>): String {
     """.trimIndent()
 }
 
+fun buildLanguageCss(language: String, qualifiers: Set<String>): String {
+    val palette = mapOf(
+        "comment" to "#808080",
+        "string" to "#6A8759",
+        "regex" to "#C6794C",
+        "number" to "#6897BB",
+        "constant" to "#9876AA",
+        "keyword" to "#CC7832",
+        "operator" to "#A9B7C6",
+        "punctuation" to "#A9B7C6",
+        "tag" to "#E8BF6A",
+        "attribute" to "#A5C261",
+        "property" to "#A5C261",
+        "type" to "#A9B7C6",
+        "class" to "#A9B7C6",
+        "interface" to "#A9B7C6",
+        "function" to "#FFC66D",
+        "method" to "#FFC66D",
+        "variable" to "#A9B7C6",
+        "parameter" to "#A9B7C6",
+        "namespace" to "#A9B7C6",
+        "module" to "#A9B7C6",
+        "annotation" to "#BBB529",
+        "decorator" to "#BBB529",
+        "boolean" to "#CC7832"
+    )
+    fun chooseColor(q: String): String {
+        val lower = q.lowercase()
+        fun has(term: String) = lower.contains(term)
+        return when {
+            has("comment") -> palette["comment"]!!
+            has("string") -> palette["string"]!!
+            has("regex") -> palette["regex"]!!
+            has("number") || has("numeric") -> palette["number"]!!
+            has("keyword") -> palette["keyword"]!!
+            has("boolean") -> palette["boolean"]!!
+            has("constant") -> palette["constant"]!!
+            has("annotation") || has("decorator") -> palette["annotation"]!!
+            has("operator") -> palette["operator"]!!
+            has("punctuation") || has("delimiter") || has("brace") || has("bracket") -> palette["punctuation"]!!
+            has("function") || has("method") -> palette["function"]!!
+            has("parameter") -> palette["parameter"]!!
+            has("variable") || has("identifier") -> palette["variable"]!!
+            has("attribute") || has("property") -> palette["attribute"]!!
+            has("tag") || has("element") -> palette["tag"]!!
+            has("type") || has("class") || has("interface") || has("enum") -> palette["type"]!!
+            has("namespace") || has("module") || has("package") -> palette["namespace"]!!
+            else -> "#b6b9c5"
+        }
+    }
+    fun toSelector(q: String): String =
+        q.replace(' ', '_').replace(":", "-").replace(",", "-").replace(".", "-")
+    val body = qualifiers.sorted().joinToString("\n\n") { q ->
+        val selector = toSelector(q)
+        val fg = chooseColor(q)
+        ".$selector {\n  fg: $fg;\n}\n"
+    }
+    return "/* Auto-generated Darcula-like colors for $language */\n$body\n"
+}
+
 sourceSets.main {
     java.srcDir(generatedGrammarSources.map { it.dir("kotlin") })
     resources.srcDir(regexGrammarOutput)
+    resources.srcDir(regexGrammarCssOutput)
 }
 
 tasks.named("processResources") {
     dependsOn(generateRegexGrammarMaps)
+    dependsOn(generateRegexGrammarCss)
 }
 
 tasks.named("compileKotlin") {

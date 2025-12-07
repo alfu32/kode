@@ -100,8 +100,15 @@ private class SplitPanelsApp(
     private var focus: FocusTarget = FocusTarget.CODE
     private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
+    private val grammarCssDir = java.nio.file.Paths.get(
+        System.getProperty("grammar.css.dir", "build/generated/regex-grammars/css")
+    )
     private val regexProvider = GeneratedRegexProvider
-    private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
+    private val codeEditor = CodeEditorView(
+        styleSheet,
+        syntaxProvider = regexProvider,
+        grammarStylesDir = grammarCssDir
+    )
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val leftTabs = TabView(

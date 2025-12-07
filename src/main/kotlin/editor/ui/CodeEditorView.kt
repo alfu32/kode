@@ -9,19 +9,22 @@ import editor.lib.handleMouseToBuffer
 import editor.mime.MimeTypeResult
 import editor.grammars.SyntaxProvider
 import react.BaseComponent
-import react.Color
 import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 
 class CodeEditorView(
     styleSheet: StyleSheet,
     private val buffer: ITextBuffer = TextBuffer(),
-    private val syntaxProvider: SyntaxProvider? = null
+    private val syntaxProvider: SyntaxProvider? = null,
+    private val grammarStylesDir: java.nio.file.Path? = null
 ) : BaseComponent(styleSheet) {
 
+    private var localStyleSheet: StyleSheet = styleSheet
     private var filePath: String = ""
     private var mime: String? = null
     private var language: String? = null
@@ -31,7 +34,6 @@ class CodeEditorView(
     private var dragging = false
     private var lastCols: Int = 0
     private var lastRows: Int = 0
-    private val debugTokenColor = Color.from(0x9999ff)
 
     fun openFile(
         path: String,
@@ -50,6 +52,7 @@ class CodeEditorView(
         this.language = detection?.language
         this.grammarAvailable = grammarAvailable
         this.grammarLanguage = grammarLanguage ?: detection?.language
+        localStyleSheet = grammarCssForLanguage(this.grammarLanguage) ?: styleSheet
         scrollTop = 0
     }
 
@@ -58,12 +61,12 @@ class CodeEditorView(
         val rows = canvas.rows().coerceAtLeast(1)
         lastCols = cols
         lastRows = rows
-        val headerStyle = styleSheet.getStyle("code-header").withDefaults()
-        val baseBody = styleSheet.getStyle("code-body").withDefaults()
-        val gutterStyle = styleSheet.getStyle("code-gutter").withDefaults(baseBody.fg, baseBody.bg)
-        val selectionStyle = styleSheet.getStyle("code-selection")
+        val headerStyle = localStyleSheet.getStyle("code-header").withDefaults()
+        val baseBody = localStyleSheet.getStyle("code-body").withDefaults()
+        val gutterStyle = localStyleSheet.getStyle("code-gutter").withDefaults(baseBody.fg, baseBody.bg)
+        val selectionStyle = localStyleSheet.getStyle("code-selection")
             .withDefaults(fg = baseBody.bg ?: gutterStyle.bg, bg = baseBody.fg ?: gutterStyle.fg)
-        val cursorStyle = styleSheet.getStyle("code-cursor")
+        val cursorStyle = localStyleSheet.getStyle("code-cursor")
             .withDefaults(fg = baseBody.bg ?: gutterStyle.bg, bg = baseBody.fg ?: gutterStyle.fg)
         val bodyStyle = baseBody
 
@@ -240,14 +243,32 @@ class CodeEditorView(
         scope.replace(' ', '_').replace(":", "-").replace(",", "-")
 
     private fun styleForToken(token: editor.grammars.Token, base: StyleSet): StyleSet {
-        if (debugTokenColor != null) {
-            val copy = base.copy()
-            copy.fg = debugTokenColor
-            copy.textDecoration="bold"
-            return copy
-        }
         val scope = token.scopes.lastOrNull() ?: return base
-        return styleSheet.getStyle(scopeToStyleId(scope)).withDefaults(base.fg, base.bg)
+        return localStyleSheet.getStyle(scopeToStyleId(scope)).withDefaults(base.fg, base.bg)
+    }
+
+    private fun grammarCssForLanguage(lang: String?): StyleSheet? {
+        val dir: Path = grammarStylesDir ?: return null
+        val id = lang ?: return null
+        val cssPath = dir.resolve("$id.css")
+        if (!Files.isRegularFile(cssPath)) return null
+        val css = runCatching { Files.readString(cssPath) }.getOrNull() ?: return null
+        val extra = StyleSheet.parse(css)
+        return mergeStyleSheets(styleSheet, extra)
+    }
+
+    private fun mergeStyleSheets(base: StyleSheet, extra: StyleSheet): StyleSheet {
+        val default = base.defaultStyle.copy().also { it.mergeFrom(extra.defaultStyle) }
+        val rules = base.rules.mapValues { (_, v) ->
+            val clone = StyleSet()
+            clone.mergeFrom(v)
+            clone
+        }.toMutableMap()
+        extra.rules.forEach { (k, v) ->
+            val target = rules.getOrPut(k) { StyleSet() }
+            target.mergeFrom(v)
+        }
+        return StyleSheet(default, rules)
     }
 
     private fun renderLineWithTokens(
