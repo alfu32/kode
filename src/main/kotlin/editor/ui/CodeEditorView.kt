@@ -1,20 +1,19 @@
 package editor.ui
 
-import editor.lib.EditorViewport
 import editor.lib.ITextBuffer
 import editor.lib.Position
+import editor.lib.SelectionRange
 import editor.lib.TextBuffer
 import editor.lib.handleKeyForBuffer
 import editor.lib.handleMouseToBuffer
-import editor.lib.renderBuffer
 import editor.mime.MimeTypeResult
 import editor.grammars.SyntaxProvider
 import react.BaseComponent
+import react.Color
 import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
-import react.Color
 import java.io.File
 
 class CodeEditorView(
@@ -32,6 +31,7 @@ class CodeEditorView(
     private var dragging = false
     private var lastCols: Int = 0
     private var lastRows: Int = 0
+    private val debugTokenColor = Color.from("#0000ff")
 
     fun openFile(
         path: String,
@@ -81,6 +81,7 @@ class CodeEditorView(
         if (bodyRows == 0) return
 
         val visibleLines = buffer.text().split("\n").drop(scrollTop).take(bodyRows)
+        val selection = buffer.selectionRange()
         val tokensByLine = if (grammarAvailable && syntaxProvider != null && grammarLanguage != null) {
             syntaxProvider.tokensForLines(scrollTop, visibleLines, grammarLanguage!!).groupBy { it.line }
         } else {
@@ -99,6 +100,7 @@ class CodeEditorView(
                 val contentCols = (cols - gutterWidth).coerceAtLeast(0)
                 if (contentCols <= 0) return@forEachIndexed
                 val tokens = tokensByLine[lineNumber] ?: emptyList()
+                val selectionCols = selectionRangeForLine(selection, lineNumber, textLine)
                 renderLineWithTokens(
                     canvas = this,
                     text = textLine,
@@ -106,7 +108,9 @@ class CodeEditorView(
                     startX = gutterWidth,
                     maxCols = contentCols,
                     tokens = tokens,
-                    baseStyle = bodyStyle
+                    baseStyle = bodyStyle,
+                    selection = selectionCols,
+                    selectionStyle = selectionStyle
                 )
             }
         }
@@ -236,6 +240,11 @@ class CodeEditorView(
         scope.replace(' ', '_').replace(":", "-").replace(",", "-")
 
     private fun styleForToken(token: editor.grammars.Token, base: StyleSet): StyleSet {
+        if (debugTokenColor != null) {
+            val copy = base.copy()
+            copy.fg = debugTokenColor
+            return copy
+        }
         val scope = token.scopes.lastOrNull() ?: return base
         return styleSheet.getStyle(scopeToStyleId(scope)).withDefaults(base.fg, base.bg)
     }
@@ -247,35 +256,97 @@ class CodeEditorView(
         startX: Int,
         maxCols: Int,
         tokens: List<editor.grammars.Token>,
-        baseStyle: StyleSet
+        baseStyle: StyleSet,
+        selection: IntRange?,
+        selectionStyle: StyleSet
     ) {
-        if (tokens.isEmpty()) {
-            val clipped = text.take(maxCols)
-            canvas.applyStyle(baseStyle) { drawText(startX, y, clipped) }
-            return
-        }
-        var cursor = 0
-        val sorted = tokens.sortedBy { it.start }
-        sorted.forEach { tok ->
-            if (tok.start > cursor) {
-                val segment = text.substring(cursor, tok.start).take(maxCols - (cursor.coerceAtMost(maxCols)))
-                canvas.applyStyle(baseStyle) { drawText(startX + cursor, y, segment) }
-            }
-            val segStart = tok.start.coerceAtLeast(0)
-            val segEnd = tok.end.coerceAtMost(text.length)
-            if (segStart < segEnd && segStart < maxCols) {
-                val segment = text.substring(segStart, segEnd).take(maxCols - segStart)
-                val style = styleForToken(tok, baseStyle)
-                canvas.applyStyle(style) {
-                    drawText(startX + segStart, y, segment)
+        if (maxCols <= 0) return
+        val baseSegments = buildSegments(text, tokens, baseStyle)
+        val withSelection = applySelection(baseSegments, selection, selectionStyle)
+        withSelection.forEach { seg ->
+            if (seg.start >= maxCols) return
+            val drawEnd = minOf(seg.end, maxCols, text.length)
+            if (drawEnd <= seg.start) return@forEach
+            val part = text.substring(seg.start, drawEnd)
+            if (part.isNotEmpty()) {
+                canvas.applyStyle(seg.style) {
+                    drawText(startX + seg.start, y, part)
                 }
             }
-            cursor = tok.end
-            if (cursor >= maxCols) return
         }
-        if (cursor < text.length && cursor < maxCols) {
-            val tail = text.substring(cursor).take(maxCols - cursor)
-            canvas.applyStyle(baseStyle) { drawText(startX + cursor, y, tail) }
+    }
+
+    private fun selectionRangeForLine(selection: SelectionRange?, lineIdx: Int, lineText: String): IntRange? {
+        selection ?: return null
+        if (lineIdx < selection.start.line || lineIdx > selection.end.line) return null
+        val lineLength = lineText.length
+        val startCol = if (lineIdx == selection.start.line) selection.start.column else 0
+        val endCol = if (lineIdx == selection.end.line) selection.end.column else lineLength
+        val start = startCol.coerceIn(0, lineLength)
+        val end = endCol.coerceIn(0, lineLength)
+        if (start >= end) return null
+        return start until end
+    }
+
+    private data class StyledSegment(val start: Int, val end: Int, val style: StyleSet)
+
+    private fun buildSegments(
+        text: String,
+        tokens: List<editor.grammars.Token>,
+        baseStyle: StyleSet
+    ): List<StyledSegment> {
+        if (text.isEmpty()) return emptyList()
+        if (tokens.isEmpty()) return listOf(StyledSegment(0, text.length, baseStyle))
+        val segments = mutableListOf<StyledSegment>()
+        var cursor = 0
+        tokens.sortedBy { it.start }.forEach { tok ->
+            val segStart = tok.start.coerceIn(0, text.length)
+            val segEnd = tok.end.coerceIn(0, text.length)
+            if (segStart > cursor) {
+                segments.add(StyledSegment(cursor, segStart, baseStyle))
+            }
+            if (segEnd > segStart) {
+                val style = styleForToken(tok, baseStyle)
+                segments.add(StyledSegment(segStart, segEnd, style))
+            }
+            cursor = maxOf(cursor, segEnd)
+            if (cursor >= text.length) return@forEach
         }
+        if (cursor < text.length) {
+            segments.add(StyledSegment(cursor, text.length, baseStyle))
+        }
+        return segments
+    }
+
+    private fun applySelection(
+        segments: List<StyledSegment>,
+        selection: IntRange?,
+        selectionStyle: StyleSet
+    ): List<StyledSegment> {
+        selection ?: return segments
+        if (segments.isEmpty()) return segments
+        val selStart = selection.first
+        val selEnd = selection.last + 1
+        if (selStart >= selEnd) return segments
+
+        val out = mutableListOf<StyledSegment>()
+        segments.forEach { seg ->
+            if (seg.end <= selStart || seg.start >= selEnd) {
+                out.add(seg)
+                return@forEach
+            }
+            if (seg.start < selStart) {
+                out.add(StyledSegment(seg.start, selStart, seg.style))
+            }
+            val selectedStart = maxOf(seg.start, selStart)
+            val selectedEnd = minOf(seg.end, selEnd)
+            if (selectedStart < selectedEnd) {
+                out.add(StyledSegment(selectedStart, selectedEnd, selectionStyle))
+            }
+            if (seg.end > selEnd) {
+                out.add(StyledSegment(selEnd, seg.end, seg.style))
+            }
+        }
+        return out
     }
 }

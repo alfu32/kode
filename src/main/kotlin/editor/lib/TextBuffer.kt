@@ -444,7 +444,7 @@ class TextBuffer : ITextBuffer {
     ===============================================================
     */
 
-    private fun selectionRange(): SelectionRange? {
+    override fun selectionRange(): SelectionRange? {
         val a = anchor ?: return null
         if (a.line == cursor.line && a.column == cursor.column) return null
 

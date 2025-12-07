@@ -47,6 +47,7 @@ interface ITextBuffer {
     fun startSelection(pos: Position)
     fun selectTo(pos: Position)
     fun hasSelection(): Boolean
+    fun selectionRange(): SelectionRange?
     fun clearSelection()
 
     fun viewportSlice(view: EditorViewport, gutterWidth: Int): ViewportSlice
