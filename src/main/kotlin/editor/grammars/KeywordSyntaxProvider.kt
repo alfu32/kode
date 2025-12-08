@@ -67,7 +67,11 @@ object KeywordSyntaxProvider : SyntaxProvider {
                 }
                 val lang = parts[0].trim()
                 val regex = parts[1].trim()
-                map[lang] = Pattern.compile(regex)
+                try {
+                    map[lang] = Pattern.compile(regex)
+                } catch (e: Exception) {
+                    throw IllegalArgumentException("Invalid regex for language '$lang': '$regex'", e)
+                }
             }
             return map
         } catch (e: Exception) {
