@@ -284,19 +284,24 @@ private class SplitPanelsApp(
                         raw = event.raw
                     )
                 )
-                return dispatchToRight(forwarded)
+                val handled = dispatchToRight(forwarded)
+                persistSession()
+                return handled
             }
         }
 
         if (event.kind == "key_down") {
-            return when (focus) {
+            val handled = when (focus) {
                 FocusTarget.FILES -> leftTabs.dispatch(event)
                 FocusTarget.CODE -> codeEditor.dispatch(event)
                 FocusTarget.HEX -> hexViewer.dispatch(event)
                 FocusTarget.IMAGE -> imageViewer.dispatch(event)
             }
+            persistSession()
+            return handled
         }
 
+        persistSession()
         return false
     }
 
@@ -361,6 +366,7 @@ private class SplitPanelsApp(
         if (handled && targetFocus != FocusTarget.FILES) {
             rightFocus = targetFocus
         }
+        persistSession()
         return handled
     }
 
@@ -400,7 +406,7 @@ private class SplitPanelsApp(
             editor = state ?: savedEditors[abs]
         )
         if (existingIdx >= 0) recentFiles[existingIdx] = entry else recentFiles.add(entry)
-        recentFiles = recentFiles.sortedByDescending { it.lastOpenedEpochMillis }.take(20).toMutableList()
+        recentFiles = recentFiles.sortedBy { it.path.lowercase() }.take(20).toMutableList()
         if (state != null) {
             savedEditors[abs] = state.copy(lastModifiedMillis = mtime)
         }
@@ -433,6 +439,7 @@ private class SplitPanelsApp(
         codeEditor.captureState(mtime)?.let { state ->
             val abs = sessionManager.toAbsolute(state.path)
             savedEditors[abs] = state.copy(lastModifiedMillis = mtime)
+            recordRecent(abs, state.copy(lastModifiedMillis = mtime))
         }
     }
 

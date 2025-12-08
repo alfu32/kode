@@ -30,7 +30,7 @@ class FilesTabView(
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(0)
         val recents = recentFilesProvider()
-        recentHeight = computeRecentHeight(recents, rows)
+        recentHeight = computeRecentHeight(rows)
         renderRecentList(canvas, recents, cols, recentHeight)
         val hasRecents = recentHeight > 0
         if (hasRecents) {
@@ -59,7 +59,7 @@ class FilesTabView(
     override fun dispatch(event: UIEvent): Boolean {
         val rows = event.rows ?: 0
         val recents = recentFilesProvider()
-        val headerRows = computeRecentHeight(recents, rows)
+        val headerRows = computeRecentHeight(rows)
         val hasRecents = headerRows > 0
         if (event.kind.startsWith("mouse")) {
             val y = event.y ?: return false
@@ -126,9 +126,8 @@ class FilesTabView(
         }
     }
 
-    private fun computeRecentHeight(recents: List<RecentFileEntry>, totalRows: Int): Int {
-        if (recents.isEmpty()) return 0
-        val target = (totalRows * 0.3).toInt().coerceAtLeast(2)
+    private fun computeRecentHeight(totalRows: Int): Int {
+        val target = (totalRows * 0.3).toInt().coerceAtLeast(3)
         return target.coerceAtMost(totalRows)
     }
 }
