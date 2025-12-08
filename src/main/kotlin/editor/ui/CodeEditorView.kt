@@ -48,6 +48,8 @@ class CodeEditorView(
             scrollTop = scrollTop,
             mime = mime,
             language = language,
+            grammarLanguage = grammarLanguage,
+            grammarAvailable = grammarAvailable,
             lastModifiedMillis = lastModifiedMillis
         )
     }
@@ -56,7 +58,8 @@ class CodeEditorView(
         filePath = state.path
         mime = state.mime
         language = state.language
-        grammarAvailable = false
+        grammarAvailable = state.grammarAvailable
+        grammarLanguage = state.grammarLanguage ?: state.language
         buffer.restoreState(state.buffer)
         scrollTop = state.scrollTop.coerceAtLeast(0)
     }

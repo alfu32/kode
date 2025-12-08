@@ -32,6 +32,8 @@ data class EditorSessionState(
     val scrollTop: Int = 0,
     val mime: String? = null,
     val language: String? = null,
+    val grammarLanguage: String? = null,
+    val grammarAvailable: Boolean = false,
     val lastModifiedMillis: Long? = null,
 )
 
