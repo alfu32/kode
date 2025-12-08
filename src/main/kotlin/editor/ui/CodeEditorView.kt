@@ -1,7 +1,6 @@
 package editor.ui
 
 import editor.lib.FoundToken
-import editor.lib.ITextBuffer
 import editor.lib.Position
 import editor.lib.SelectionRange
 import editor.lib.TextBuffer
@@ -10,8 +9,6 @@ import editor.lib.handleMouseToBuffer
 import editor.mime.MimeTypeResult
 import editor.grammars.SyntaxProvider
 import editor.app.EditorSessionState
-import editor.lib.PositionState
-import editor.lib.BufferPersistState
 import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSet
@@ -113,7 +110,7 @@ class CodeEditorView(
         val bodyStartRow = 1 + searchHeight
 
         // Header bar with file path and mime
-        canvas.applyStyle(headerStyle) {
+        canvas.withStyle(headerStyle) {
             val mimeLabel = mime?.let { "[$it]" } ?: "[unknown]"
             val grammarInfo = grammarLabel()
             val langLabel = language?.let { "· $it$grammarInfo" } ?: grammarInfo
@@ -148,12 +145,12 @@ class CodeEditorView(
         }
         val searchTokensByLine = buffer.foundTokens().groupBy { it.line }
         val gutterWidth = computeGutterWidth()
-        canvas.applyStyle(bodyStyle) {
+        canvas.withStyle(bodyStyle) {
             drawRect(0, bodyStartRow, cols, bodyRows)
             visibleLines.forEachIndexed { idx, textLine ->
                 val lineNumber = scrollTop + idx
                 // gutter
-                canvas.applyStyle(gutterStyle) {
+                canvas.withStyle(gutterStyle) {
                     val g = (lineNumber + 1).toString().padStart(gutterWidth - 1, ' ') + " "
                     drawText(0, bodyStartRow + idx, g.take(gutterWidth))
                 }
@@ -184,7 +181,7 @@ class CodeEditorView(
         val cy = bodyStartRow + (cursor.line - scrollTop)
         if (cy in bodyStartRow until rows) {
             val ch = visibleLines.getOrNull(cursor.line - scrollTop)?.getOrNull(cursor.column)?.toString() ?: " "
-            canvas.applyStyle(cursorStyle) {
+            canvas.withStyle(cursorStyle) {
                 drawText(cx, cy, ch)
             }
         }
@@ -426,7 +423,7 @@ class CodeEditorView(
             if (drawEnd <= seg.start) return@forEach
             val part = text.substring(seg.start, drawEnd)
             if (part.isNotEmpty()) {
-                canvas.applyStyle(seg.style) {
+                canvas.withStyle(seg.style) {
                     drawText(startX + seg.start, y, part)
                 }
             }

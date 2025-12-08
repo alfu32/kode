@@ -43,7 +43,7 @@ class FilesTabView(
             val separatorY = (recentHeight - 1).coerceAtLeast(0)
             if (separatorY < rows) {
                 val sepStyle = styleSheet.getStyle("splitter")
-                canvas.applyStyle(sepStyle) {
+                canvas.withStyle(sepStyle) {
                     drawText(0, separatorY, "-".repeat(cols))
                 }
             }
@@ -121,7 +121,7 @@ class FilesTabView(
         if (height <= 0 || cols <= 0 || recents.isEmpty()) return
         val lineStyle = styleSheet.getStyle("file-entry")
         val selectedStyle = styleSheet.getStyle("file-entry:selected")
-        canvas.applyStyle(lineStyle) {
+        canvas.withStyle(lineStyle) {
             val header = "Recent".take(cols).padEnd(cols, ' ')
             drawText(0, 0, header)
             val available = height - 1
@@ -130,7 +130,7 @@ class FilesTabView(
             slice.forEachIndexed { idx, entry ->
                 val isSelected = current != null && current == entry.path.trim()
                 val style = if (isSelected) selectedStyle else lineStyle
-                applyStyle(style) {
+                withStyle(style) {
                     val indicator = if (entry.dirty) "*" else "x"
                     val label = entry.path.take((cols - 2).coerceAtLeast(1))
                     val line = "$indicator $label".padEnd(cols, ' ')

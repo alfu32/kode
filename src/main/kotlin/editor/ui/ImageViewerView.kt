@@ -92,7 +92,7 @@ class ImageViewerView(
         val defaultFg = bodyStyle.fg ?: Color(0, 0, 0)
         val defaultBg = bodyStyle.bg ?: Color(255, 255, 255)
 
-        canvas.applyStyle(headerStyle) {
+        canvas.withStyle(headerStyle) {
             val mimeLabel = mime?.let { "[$it]" } ?: "[image]"
             val modeLabel = if (useBraille) "[braille]" else "[blocks]"
             val label = "${filePath.ifEmpty { "[no file]" }} $mimeLabel $modeLabel"
@@ -102,7 +102,7 @@ class ImageViewerView(
         val bodyRows = (rows - 1).coerceAtLeast(0)
         if (bodyRows == 0) return
 
-        canvas.applyStyle(bodyStyle) {
+        canvas.withStyle(bodyStyle) {
             drawRect(0, 1, cols, bodyRows)
             ensureAscii(cols, bodyRows)
             val sliderRows = sliders.size
@@ -114,7 +114,7 @@ class ImageViewerView(
             }
             lastButtonRegion = renderButton(canvas, 1, cols, buttonStyle, "[ Toggle mode ]")
             val availableRows = bodyRows - sliderRows
-            if (availableRows <= 0) return@applyStyle
+            if (availableRows <= 0) return@withStyle
             ascii.take(availableRows).forEachIndexed { idx, line ->
                 renderAnsiLine(this, 0, 1 + sliderRows + idx, line, cols, defaultFg, defaultBg)
             }
@@ -192,7 +192,7 @@ class ImageViewerView(
 
     private fun renderButton(canvas: CanvasRenderer, row: Int, cols: Int, style: StyleSet, label: String): ButtonRegion? {
         val btnX = (cols - label.length - 1).coerceAtLeast(1)
-        canvas.applyStyle(style) {
+        canvas.withStyle(style) {
             drawText(btnX, row, label.take(cols - btnX))
         }
         return ButtonRegion(row, btnX, (btnX + label.length - 1).coerceAtMost(cols - 1))

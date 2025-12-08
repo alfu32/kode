@@ -23,11 +23,6 @@ import editor.ui.GitPanelView
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Instant
-import editor.app.ProjectSessionManager
-import editor.app.RecentFileEntry
-import editor.app.EditorSessionState
-import editor.app.ProjectSession
-import editor.app.ViewerType
 import editor.lib.FileTree
 import editor.lib.JGitService
 import java.io.File
@@ -527,13 +522,6 @@ private class SplitPanelsApp(
             }
         }
         return null to false
-    }
-
-    private inline fun CanvasRenderer.withStyle(style: react.StyleSet, block: CanvasRenderer.() -> Unit) {
-        style.bg?.let { setBackgroundColor(it.r, it.g, it.b) }
-        style.fg?.let { setColor(it.r, it.g, it.b) }
-        block()
-        resetAttributes()
     }
 
     private fun renderLeftTabs(canvas: CanvasRenderer, width: Int, height: Int) {

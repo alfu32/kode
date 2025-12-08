@@ -34,12 +34,12 @@ class SliderControl(
             track[indicatorPos - startX] = '█'
         }
         val text = "$label: ".padEnd(startX, ' ') + "[" + String(track) + "]"
-        canvas.applyStyle(trackStyle) {
+        canvas.withStyle(trackStyle) {
             drawText(0, row, text.take(cols))
         }
         // Overlay indicator with its style if it sits inside the track.
         if (indicatorPos in startX..endX) {
-            canvas.applyStyle(indicatorStyle) {
+            canvas.withStyle(indicatorStyle) {
                 val idx = indicatorPos - startX
                 if (idx in track.indices) {
                     drawText(startX + idx + 1, row, String(charArrayOf(track[idx])))

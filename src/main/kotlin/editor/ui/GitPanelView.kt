@@ -56,12 +56,12 @@ class GitPanelView(
         val branch = runCatching { git.currentBranch() }.getOrDefault("(no repo)")
         val lineStyle = styleSheet.getStyle("file-entry")
         val selectedStyle = styleSheet.getStyle("file-entry:selected")
-        canvas.applyStyle(lineStyle) {
+        canvas.withStyle(lineStyle) {
             drawText(0, 0, ("Branch: $branch").take(cols).padEnd(cols, ' '))
             val visible = (height - 1).coerceAtLeast(0)
             statusEntries.take(visible).forEachIndexed { idx, entry ->
                 val style = if (idx == selectedStatusIdx) selectedStyle else lineStyle
-                applyStyle(style) {
+                withStyle(style) {
                     val stageFlag = if (entry.staged) "[S]" else "[ ]"
                     val label = "$stageFlag ${entry.code.padEnd(3)} ${entry.path}".take(cols).padEnd(cols, ' ')
                     drawText(0, idx + 1, label)
@@ -76,7 +76,7 @@ class GitPanelView(
         val editorClip = ClippedCanvasRenderer(canvas, 0, offsetY, cols, editorHeight)
         commitEditor.render(editorClip)
         val buttonStyle = styleSheet.getStyle("button")
-        canvas.applyStyle(buttonStyle) {
+        canvas.withStyle(buttonStyle) {
             val label = "[ Commit ]".take(cols).padEnd(cols, ' ')
             drawText(0, offsetY + editorHeight, label)
         }
@@ -87,7 +87,7 @@ class GitPanelView(
         val lineStyle = styleSheet.getStyle("file-entry")
         val selectedStyle = styleSheet.getStyle("file-entry:selected")
         val clipped = ClippedCanvasRenderer(canvas, 0, offsetY, cols, height)
-        clipped.applyStyle(lineStyle) {
+        clipped.withStyle(lineStyle) {
             val header = "Commits".take(cols).padEnd(cols, ' ')
             drawText(0, 0, header)
             val visible = (height - 1).coerceAtLeast(0)
@@ -95,7 +95,7 @@ class GitPanelView(
             slice.forEachIndexed { idx, commit ->
                 val absoluteIdx = commitScroll + idx
                 val style = if (absoluteIdx == selectedCommitIdx) selectedStyle else lineStyle
-                applyStyle(style) {
+                withStyle(style) {
                     val label = commit.message.lineSequence().firstOrNull().orEmpty()
                     val line = label.take(cols).padEnd(cols, ' ')
                     drawText(0, idx + 1, line)

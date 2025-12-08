@@ -2,7 +2,6 @@ package editor.ui
 
 import editor.mime.MimeTypeResult
 import react.BaseComponent
-import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
@@ -47,7 +46,7 @@ class BinaryHexView(
         val selectionStyle = styleSheet.getStyle("code-selection")
             .withDefaults(fg = bodyStyle.bg ?: gutterStyle.bg, bg = bodyStyle.fg ?: gutterStyle.fg)
 
-        canvas.applyStyle(headerStyle) {
+        canvas.withStyle(headerStyle) {
             val mimeLabel = mime?.let { "[$it]" } ?: "[binary]"
             val sizeLabel = "${buffer.totalBytes()} bytes"
             val label = "${filePath.ifEmpty { "[no file]" }} $mimeLabel · $sizeLabel"
@@ -61,11 +60,11 @@ class BinaryHexView(
         val slice = buffer.viewportSlice(ByteViewport(scrollRow * bytesPerRow, bytesPerRow, bodyRows))
         val cursorIndex = slice.cursorIndex
 
-        canvas.applyStyle(bodyStyle) {
+        canvas.withStyle(bodyStyle) {
             drawRect(0, 1, cols, bodyRows)
             slice.rows.forEachIndexed { rowIdx, row ->
                 val offset = String.format("%08X", row.offset)
-                canvas.applyStyle(gutterStyle) {
+                canvas.withStyle(gutterStyle) {
                     drawText(0, 1 + rowIdx, offset.take(cols).padEnd(10, ' '))
                 }
                 val hexStart = 10
@@ -80,12 +79,12 @@ class BinaryHexView(
                     val hStyle = if (selected) selectionStyle else bodyStyle
                     val aStyle = if (selected) selectionStyle else bodyStyle
                     if (hx < cols) {
-                        canvas.applyStyle(hStyle) {
+                        canvas.withStyle(hStyle) {
                             drawText(hx, 1 + rowIdx, hexPair.take(max(0, cols - hx)))
                         }
                     }
                     if (ax < cols) {
-                        canvas.applyStyle(aStyle) {
+                        canvas.withStyle(aStyle) {
                             drawText(ax, 1 + rowIdx, asciiChar)
                         }
                     }
@@ -100,13 +99,13 @@ class BinaryHexView(
                     val ax = asciiStart + local
                     if (hx < cols) {
                         val pair = String.format("%02X", row.bytes[local].toInt() and 0xFF)
-                        canvas.applyStyle(cursorStyle) {
+                        canvas.withStyle(cursorStyle) {
                             drawText(hx, 1 + rowIdx, pair.take(max(0, cols - hx)))
                         }
                     }
                     if (ax < cols) {
                         val ch = asciiCharFor(row.bytes[local])
-                        canvas.applyStyle(cursorStyle) {
+                        canvas.withStyle(cursorStyle) {
                             drawText(ax, 1 + rowIdx, ch)
                         }
                     }

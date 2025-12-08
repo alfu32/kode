@@ -125,7 +125,7 @@ class SearchReplaceBar(
         val errorStatusStyle = styleSheet.getStyle("code-search-error").withDefaults(statusStyle.fg, statusStyle.bg)
         val closeStyle = styleSheet.getStyle("code-search-close").withDefaults(barStyle.fg, barStyle.bg)
 
-        canvas.applyStyle(barStyle) {
+        canvas.withStyle(barStyle) {
             drawRect(0, 0, cols, barHeight)
         }
 
@@ -164,7 +164,7 @@ class SearchReplaceBar(
 
         closeButtonX = (cols - closeButtonWidth).coerceAtLeast(0)
         val closeText = "[x]".take(closeButtonWidth).padEnd(closeButtonWidth, ' ')
-        canvas.applyStyle(closeStyle) {
+        canvas.withStyle(closeStyle) {
             drawText(closeButtonX, 0, closeText)
         }
     }
@@ -235,7 +235,7 @@ class SearchReplaceBar(
         reservedRight: Int
     ) {
         val labelText = "$label "
-        canvas.applyStyle(labelStyle) {
+        canvas.withStyle(labelStyle) {
             drawText(0, y, labelText.take(cols).padEnd(labelText.length.coerceAtMost(cols), ' '))
         }
         val startX = labelText.length
@@ -249,17 +249,17 @@ class SearchReplaceBar(
         val padText = visibleText.padEnd(available, ' ')
 
         val fieldStyleToUse = if (active) activeFieldStyle else fieldStyle
-        canvas.applyStyle(fieldStyleToUse) {
+        canvas.withStyle(fieldStyleToUse) {
             drawText(startX, y, padText)
         }
 
         val cursorX = startX + (cursor - windowStart).coerceAtLeast(0).coerceAtMost(available - 1)
-        canvas.applyStyle(cursorStyle) {
+        canvas.withStyle(cursorStyle) {
             val ch = padText.getOrElse(cursorX - startX) { ' ' }
             drawText(cursorX, y, ch.toString())
         }
 
-        canvas.applyStyle(trailingStyle) {
+        canvas.withStyle(trailingStyle) {
             drawText(trailingStart, y, trailingText)
         }
     }

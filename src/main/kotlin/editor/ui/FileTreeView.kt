@@ -4,7 +4,6 @@ import editor.lib.FileTree
 import editor.lib.FileTreeEntry
 import editor.lib.IFileTree
 import react.BaseComponent
-import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
@@ -35,7 +34,7 @@ class FileTreeView(
         visible.forEachIndexed { idx, entry ->
             val isSelected = entry.fullPath == selectedPath
             val style = if (isSelected) selectedStyle else lineStyle
-            canvas.applyStyle(style) {
+            canvas.withStyle(style) {
                 val prefix = when {
                     entry.typ == "folder" && entry.isOpen -> "[-] "
                     entry.typ == "folder" -> "[+] "

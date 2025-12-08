@@ -41,7 +41,7 @@ interface CanvasRenderer {
     fun requestExit()
     fun shutdown()
 
-    fun applyStyle(style: StyleSet, block: CanvasRenderer.() -> Unit) {
+    fun withStyle(style: StyleSet, block: CanvasRenderer.() -> Unit) {
         style.bg?.let { setBackgroundColor(it.r, it.g, it.b) }
         style.fg?.let { setColor(it.r, it.g, it.b) }
         block()
