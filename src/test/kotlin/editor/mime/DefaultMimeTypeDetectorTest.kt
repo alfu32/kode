@@ -64,4 +64,18 @@ class DefaultMimeTypeDetectorTest {
         assertEquals(MimeTypeDetectionSource.FALLBACK, result.source)
         assertTrue(result.mime.contains("text"))
     }
+
+    @Test
+    fun `detect file prefers content based fallback for unknown extensions`() {
+        val temp: Path = Files.createTempFile("mimetype-", ".weirdtxt")
+        Files.write(temp, "plain text body\nwith multiple lines\n".toByteArray())
+        try {
+            val result = detector.detectFile(temp)
+            assertEquals("text/plain", result.mime)
+            assertEquals(MimeTypeCategory.TEXT, result.mimeTypeCategory)
+            assertEquals(MimeTypeDetectionSource.FALLBACK, result.source)
+        } finally {
+            Files.deleteIfExists(temp)
+        }
+    }
 }

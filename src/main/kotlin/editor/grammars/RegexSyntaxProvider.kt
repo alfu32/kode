@@ -58,12 +58,24 @@ open class RegexSyntaxProvider(
         return out
     }
 
-    override fun languages(): Set<String> = grammars.keys
+    override fun languages(): Set<String> = setOf("text") + grammars.keys
 
-    override fun languageForExtension(ext: String): String? =
-        extensionIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]
+    override fun languageForExtension(ext: String): String? {
+        if(ext in listOf("txt")){
+            return "text"
+        }
+        return extensionIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]
+    }
 
     private fun compile(language: String): CompiledGrammar? {
+        if(language in listOf("text")){
+            return CompiledGrammar(
+                pattern= Pattern.compile("""([.,=+\[\]{}()#$%^&*!@'"\\|/])"""),
+                groups= mutableListOf(
+                    GroupDef("punctuation","punctuation")
+                )
+            )
+        }
         val def = grammars[language] ?: return null
         if (def.tokens.isEmpty()) return null
         val groupDefs = mutableListOf<GroupDef>()
@@ -156,3 +168,5 @@ open class RegexSyntaxProvider(
         return key?.let { palette[it] }
     }
 }
+
+

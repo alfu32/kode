@@ -51,15 +51,16 @@ class DefaultMimeTypeDetector(
             return nameResult
         }
 
+        var contentResult: MimeTypeResult? = null
         Files.newInputStream(path).use { input ->
             val buffer = readBytes(input, byteLimit)
-            val signatureResult = detect(buffer)
-            if (signatureResult.source != MimeTypeDetectionSource.FALLBACK) {
-                val mergedMimeTypeCategory = if (signatureResult.mimeTypeCategory != MimeTypeCategory.UNKNOWN)
-                    signatureResult.mimeTypeCategory else nameResult.mimeTypeCategory
-                return signatureResult.copy(
-                    language = nameResult.language ?: signatureResult.language,
-                    mimeTypeCategory = mergedMimeTypeCategory
+            contentResult = detect(buffer)
+            if (contentResult?.source != MimeTypeDetectionSource.FALLBACK) {
+                val mergedMimeTypeCategory = if (contentResult?.mimeTypeCategory != MimeTypeCategory.UNKNOWN)
+                    contentResult?.mimeTypeCategory else nameResult.mimeTypeCategory
+                return contentResult!!.copy(
+                    language = nameResult.language ?: contentResult?.language,
+                    mimeTypeCategory = mergedMimeTypeCategory ?: MimeTypeCategory.UNKNOWN
                 )
             }
         }
@@ -69,14 +70,24 @@ class DefaultMimeTypeDetector(
         if (!platformMime.isNullOrBlank()) {
             return MimeTypeResult(
                 mime = platformMime,
-                extension = nameResult.extension,
-                language = nameResult.language,
-                mimeTypeCategory = nameResult.mimeTypeCategory,
+                extension = nameResult.extension.ifBlank { contentResult?.extension ?: nameResult.extension },
+                language = nameResult.language ?: contentResult?.language,
+                mimeTypeCategory = categoryForMime(platformMime),
                 source = MimeTypeDetectionSource.PLATFORM,
             )
         }
 
-        return nameResult.copy(source = MimeTypeDetectionSource.FALLBACK)
+        val fallback = contentResult ?: nameResult
+        val mergedMimeTypeCategory = if (fallback.mimeTypeCategory != MimeTypeCategory.UNKNOWN)
+            fallback.mimeTypeCategory else nameResult.mimeTypeCategory
+        val extension = fallback.extension.ifBlank { nameResult.extension }
+
+        return fallback.copy(
+            source = MimeTypeDetectionSource.FALLBACK,
+            language = nameResult.language ?: fallback.language,
+            extension = extension,
+            mimeTypeCategory = mergedMimeTypeCategory
+        )
     }
 
     override fun detectFilename(name: String): MimeTypeResult {

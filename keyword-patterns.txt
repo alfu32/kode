@@ -116,8 +116,8 @@ jssm=\b(machine|state|initial|->|=>)\b
 jsx=<\s*[A-Z][A-Za-z0-9]*[^>]*>|\b(import|from|export|default|class|extends|if|else|return)\b
 julia=\b(module|using|import|export|struct|mutable struct|function|end|if|elseif|else|for|while|return|begin|try|catch|finally|macro)\b
 kdl=^[A-Za-z_][A-Za-z0-9_-]*(\s+[^;]*)?;?$
-kotlin=\b(package|import|class|interface|object|data|sealed|enum|fun|val|var|if|else|for|while|when|return|this|super|is|in|as)\b
-kts=\b(import|plugins|repositories|dependencies|task|apply|if|else)\b
+kotlin=\b((@[a-zA-Z0-9_]+)|package|import|class|interface|object|data|sealed|enum|fun|val|var|if|else|for|while|when|return|this|super|is|in|as)\b
+kotlin-script=\b(kotlin|java|implementation|testImplementation|tasks|register|import|plugins|repositories|dependencies|task|apply|if|else|for)\b
 kusto=\b(let|datatable|where|project|extend|summarize|by|join|take|top|order|asc|desc)\b
 latex=\\(documentclass|usepackage|begin|end|section|subsection|label|ref|cite|item)\b
 lean=\b(theorem|lemma|example|def|inductive|structure|namespace|open|import|match|with)\b
@@ -131,7 +131,7 @@ luau=\b(local|function|end|if|then|elseif|else|for|while|repeat|until|return|typ
 make=^[A-Za-z0-9_\.%-]+:\s|^\t.+$
 markdown-nix=^```nix$|^#{1,6}\s+.+$|^\s*[-*+]\s+.+$
 markdown-vue=^```vue$|^#{1,6}\s+.+$|^\s*[-*+]\s+.+$
-markdown=^#{1,6}\s+.+$|^\s*[-*+]\s+.+$|\*\*[^*]+\*\*|_[^_]+_
+markdown=^#{1,6}\s+.+$|^\s*[-*+]|\*\*[^*]+\*\*|\b__[^_]+__\b
 marko=<\s*[A-Z][A-Za-z0-9_.:-]*[^>]*>|<\s*if\(|<\s*for\(|<\s*else\b
 matlab=\b(function|end|if|elseif|else|for|while|switch|case|otherwise|return)\b
 mdc=^```mdc$|^#{1,6}\s+.+$|^\s*[-*+]\s+.+$
@@ -210,6 +210,7 @@ tcl=\b(proc|set|if|then|elseif|else|for|foreach|while|switch|case|default|return
 templ=<\s*(templ|if|else|for|range)[^>]*>
 terraform=\b(resource|data|provider|variable|output|module|locals|terraform)\b
 tex=\\(documentclass|usepackage|begin|end|section|subsection|label|ref|cite|item)\b
+text=[0-9!@#$%^&*()_+\|\=\\,./;'<>?:"{}\[\]-`~]
 tm-scopes=\b(name|scopeName|patterns|repository|match|begin|end|captures)\b
 toml=^\[[^\]]+\]$|^[A-Za-z0-9_-]+\s*=\s*.+$
 ts-tags=ts`[^`]*`
@@ -217,7 +218,7 @@ tsv=^(?:[^\t\r\n]*\t)+[^\t\r\n]*$
 tsx=<\s*[A-Z][A-Za-z0-9]*[^>]*>|\b(import|from|export|default|class|extends|interface|implements|if|else|return)\b
 turtle=\b(@prefix|@base|BASE|PREFIX|a|rdf:type)\b
 twig=\{%[-+]?\s*(if|elseif|else|endif|for|endfor|block|endblock|extends|include|macro|endmacro)\s*[-+]?%}
-typescript=\b(import|from|export|default|class|extends|implements|interface|type|enum|namespace|module|public|private|protected|readonly|abstract|declare|const|let|var|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|new|this|super|async|await|yield)\b
+typescript=\b(@Component|@Directive|@Injectable|@NgModule|Input|Output|ViewChild|import|from|export|default|class|extends|implements|interface|type|enum|namespace|module|public|private|protected|readonly|abstract|declare|const|let|var|if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|new|this|super|async|await|yield)\b
 typespec=\b(model|namespace|using|op|interface|union|extends|is|if|else)\b
 typst=\b(#import|#let|#set|#show|#figure|#table|#align|#box|#page|#chapter|#section)\b
 v=\b(module|import|fn|struct|enum|interface|pub|mut|if|else|for|while|match|return)\b

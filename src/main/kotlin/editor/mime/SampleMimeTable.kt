@@ -213,6 +213,7 @@ object SampleMimeTable {
         Entry(language="templ",extension=".templ",mime="text/templ",mimeTypeCategory=MimeTypeCategory.TEXT),
         Entry(language="terraform",extension=".tf",mime="text/terraform",mimeTypeCategory=MimeTypeCategory.TEXT),
         Entry(language="tex",extension=".tex",mime="text/tex",mimeTypeCategory=MimeTypeCategory.TEXT),
+        Entry(language="text",extension=".txt",mime="text/text",mimeTypeCategory=MimeTypeCategory.TEXT),
         Entry(language="toml",extension=".toml",mime="text/toml",mimeTypeCategory=MimeTypeCategory.TEXT),
         Entry(language="ts-tags",extension=".tags",mime="text/ts-tags",mimeTypeCategory=MimeTypeCategory.TEXT),
         Entry(language="tsv",extension=".tsv",mime="text/tsv",mimeTypeCategory=MimeTypeCategory.TEXT),
