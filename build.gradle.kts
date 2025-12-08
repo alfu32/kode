@@ -1,3 +1,6 @@
+import java.io.ByteArrayOutputStream
+import org.gradle.api.tasks.bundling.Zip
+
 plugins {
     kotlin("jvm") version "2.2.20"
     kotlin("plugin.serialization") version "2.2.20"
@@ -34,6 +37,20 @@ kotlin {
 }
 
 val externalColorMap = layout.projectDirectory.file("token-colors.txt")
+
+fun Project.latestTagOrVersion(): String {
+    return try {
+        val stdout = ByteArrayOutputStream()
+        exec {
+            commandLine("git", "describe", "--tags", "--abbrev=0")
+            standardOutput = stdout
+            isIgnoreExitValue = true
+        }
+        stdout.toString().trim().ifEmpty { version.toString() }
+    } catch (_: Exception) {
+        version.toString()
+    }
+}
 
 /**
  * Build a self-contained executable JAR (fat / uber JAR).
@@ -86,4 +103,31 @@ tasks.register<Copy>("distBundle") {
     layout.projectDirectory.file("keyword-patterns.txt").asFile.takeIf { it.exists() }?.let { from(it) }
     into(distDir)
     doFirst { distDir.asFile.mkdirs() }
+}
+
+tasks.register<Copy>("releaseBundle") {
+    group = "distribution"
+    description = "Bundle fat jar and assets into kode-rel-<latest-tag> with renamed kode.jar"
+    val fat = tasks.named<Jar>("fatJar")
+    dependsOn(fat)
+    val tag = latestTagOrVersion()
+    val relDir = layout.projectDirectory.dir("kode-rel-$tag")
+    from(fat.map { it.archiveFile }) { rename { "kode.jar" } }
+    listOf("keyword-patterns.txt", "token-colors.txt", "README.md", "styles/app.css").forEach { path ->
+        val file = layout.projectDirectory.file(path).asFile
+        if (file.exists()) from(file)
+    }
+    into(relDir)
+    doFirst { relDir.asFile.mkdirs() }
+}
+
+tasks.register<Zip>("releaseZip") {
+    group = "distribution"
+    description = "Zip the kode-rel-<latest-tag> folder"
+    val tag = latestTagOrVersion()
+    val relDir = layout.projectDirectory.dir("kode-rel-$tag")
+    dependsOn("releaseBundle")
+    from(relDir)
+    archiveFileName.set("kode-rel-$tag.zip")
+    destinationDirectory.set(layout.projectDirectory.asFile)
 }

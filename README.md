@@ -30,7 +30,7 @@
 - **Panels**: Files (tree + open callback), Git/Settings placeholders ready for expansion.
 
 ## Development Notes
-- Use `GRADLE_USER_HOME=./.gradle-user ./gradlew build|test|fatJar`; target Java 21. `fatJar` emits `kt-tui-edit-all.jar`. `distBundle` copies the fat jar plus `token-colors.txt` and `keyword-patterns.txt` into `dist/`.
+- Use `GRADLE_USER_HOME=./.gradle-user ./gradlew build|test|fatJar`; target Java 21. `fatJar` emits `kode-1.0-SNAPSHOT-all.jar`. `distBundle` copies the fat jar plus `token-colors.txt` and `keyword-patterns.txt` into `dist/`. `releaseBundle` packages a release folder `kode-rel-<latest-tag>` with `kode.jar` (renamed fat jar), `keyword-patterns.txt`, `token-colors.txt`, `styles/app.css`, and this README for distribution.
 - Syntax config: provide `keyword-patterns.txt` (lines `language=regex`) and `token-colors.txt` (`qualifier=hex`, e.g., `keyword=#CC7832`) next to the jar or in the working directory. Missing/invalid lines will throw with stacktrace on load.
 - Test focus/input flows, buffer mutations, MIME routing, and viewer rendering; add fixtures from `samples/` for MIME detection and rendering checks.
 - Dependencies: JGit for Git panel, Korim/Korio + coroutines for image loading, TM4E available for TM tokenization, and internal StyleSet/Renderer helpers for consistent styling.

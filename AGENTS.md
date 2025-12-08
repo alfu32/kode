@@ -9,7 +9,7 @@
 ## Build, Test, and Development Commands
 - `GRADLE_USER_HOME=./.gradle-user ./gradlew build` — compile and run tests.
 - `GRADLE_USER_HOME=./.gradle-user ./gradlew test` — execute the test suite only.
-- `GRADLE_USER_HOME=./.gradle-user ./gradlew fatJar` — create `build/libs/kt-tui-edit-all.jar`; run with `java -jar build/libs/kt-tui-edit-all.jar`.
+- `GRADLE_USER_HOME=./.gradle-user ./gradlew fatJar` — create `build/libs/kode-1.0-SNAPSHOT-all.jar`; run with `java -jar build/libs/kode-1.0-SNAPSHOT-all.jar`.
 - `GRADLE_USER_HOME=./.gradle-user ./gradlew clean` — clear build outputs. Avoid editing the wrapper scripts.
 
 ## Coding Style & Naming Conventions
