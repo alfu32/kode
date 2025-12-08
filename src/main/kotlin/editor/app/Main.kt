@@ -12,7 +12,7 @@ import react.util.enterRawMode
 import react.util.restoreStty
 import react.util.runCommand
 import editor.lib.FileTree
-import editor.grammars.generated.GeneratedRegexProvider
+import editor.grammars.KeywordSyntaxProvider
 import editor.mime.DefaultMimeTypeDetector
 import editor.mime.MimeTypeCategory
 import editor.mime.MimeTypeResult
@@ -22,7 +22,6 @@ import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
 import java.nio.file.Files
 import java.nio.file.Paths
-import java.nio.file.Path
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     fun redraw() {
@@ -101,10 +100,7 @@ private class SplitPanelsApp(
     private var focus: FocusTarget = FocusTarget.CODE
     private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
-    private val grammarCssDir: Path = Paths.get(
-        System.getProperty("grammar.css.dir", "build/generated/regex-grammars/css")
-    )
-    private val regexProvider = GeneratedRegexProvider
+    private val regexProvider = KeywordSyntaxProvider
     private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
@@ -279,7 +275,6 @@ private class SplitPanelsApp(
             }
             MimeTypeCategory.TEXT -> {
                 val (grammarLang, grammarAvailable) = resolveGrammar(path, detected)
-                codeEditor.updateStyleSheet(resolveStyleSheet(grammarLang) ?: styleSheet)
                 codeEditor.openFile(path, detected, grammarAvailable, grammarLang)
                 rightFocus = FocusTarget.CODE
                 focus = rightFocus
@@ -332,15 +327,6 @@ private class SplitPanelsApp(
             }
         }
         return null to false
-    }
-
-    private fun resolveStyleSheet(lang: String?): StyleSheet? {
-        val language = lang ?: return null
-        val cssFile = grammarCssDir.resolve("$language.css").toFile()
-        if (!cssFile.exists()) return null
-        val css = runCatching { cssFile.readText() }.getOrNull() ?: return null
-        val langSheet = StyleSheet.parse(css)
-        return styleSheet.merge(langSheet)
     }
 
     private inline fun CanvasRenderer.withStyle(style: react.StyleSet, block: CanvasRenderer.() -> Unit) {

@@ -257,6 +257,7 @@ class CodeEditorView(
 
     fun updateStyleSheet(styleSheet: StyleSheet) {
         this.localStyleSheet = styleSheet
+        styleCache.clear()
     }
 
     private fun renderLineWithTokens(

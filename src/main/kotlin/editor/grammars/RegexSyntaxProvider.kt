@@ -2,6 +2,7 @@ package editor.grammars
 
 import java.util.Locale
 import java.util.regex.Pattern
+import react.Color
 
 open class RegexSyntaxProvider(
     definitions: List<RegexGrammarDefinition> = emptyList()
@@ -104,31 +105,31 @@ open class RegexSyntaxProvider(
         return if (needsBoundary) "\\b(?:$trimmed)\\b" else trimmed
     }
 
-    private fun colorForQualifier(qualifier: String): react.Color? {
+    private fun colorForQualifier(qualifier: String): Color? {
         val palette = mapOf(
-            "comment" to react.Color.from("#808080"),
-            "string" to react.Color.from("#6A8759"),
-            "regex" to react.Color.from("#C6794C"),
-            "number" to react.Color.from("#6897BB"),
-            "constant" to react.Color.from("#9876AA"),
-            "keyword" to react.Color.from("#CC7832"),
-            "operator" to react.Color.from("#A9B7C6"),
-            "punctuation" to react.Color.from("#A9B7C6"),
-            "tag" to react.Color.from("#E8BF6A"),
-            "attribute" to react.Color.from("#A5C261"),
-            "property" to react.Color.from("#A5C261"),
-            "type" to react.Color.from("#A9B7C6"),
-            "class" to react.Color.from("#A9B7C6"),
-            "interface" to react.Color.from("#A9B7C6"),
-            "function" to react.Color.from("#FFC66D"),
-            "method" to react.Color.from("#FFC66D"),
-            "variable" to react.Color.from("#A9B7C6"),
-            "parameter" to react.Color.from("#A9B7C6"),
-            "namespace" to react.Color.from("#A9B7C6"),
-            "module" to react.Color.from("#A9B7C6"),
-            "annotation" to react.Color.from("#BBB529"),
-            "decorator" to react.Color.from("#BBB529"),
-            "boolean" to react.Color.from("#CC7832")
+            "comment" to Color.from("#808080"),
+            "string" to Color.from("#6A8759"),
+            "regex" to Color.from("#C6794C"),
+            "number" to Color.from("#6897BB"),
+            "constant" to Color.from("#9876AA"),
+            "keyword" to Color.from("#CC7832"),
+            "operator" to Color.from("#A9B7C6"),
+            "punctuation" to Color.from("#A9B7C6"),
+            "tag" to Color.from("#E8BF6A"),
+            "attribute" to Color.from("#A5C261"),
+            "property" to Color.from("#A5C261"),
+            "type" to Color.from("#A9B7C6"),
+            "class" to Color.from("#A9B7C6"),
+            "interface" to Color.from("#A9B7C6"),
+            "function" to Color.from("#FFC66D"),
+            "method" to Color.from("#FFC66D"),
+            "variable" to Color.from("#A9B7C6"),
+            "parameter" to Color.from("#A9B7C6"),
+            "namespace" to Color.from("#A9B7C6"),
+            "module" to Color.from("#A9B7C6"),
+            "annotation" to Color.from("#BBB529"),
+            "decorator" to Color.from("#BBB529"),
+            "boolean" to Color.from("#CC7832")
         )
         val lower = qualifier.lowercase()
         fun has(term: String) = lower.contains(term)

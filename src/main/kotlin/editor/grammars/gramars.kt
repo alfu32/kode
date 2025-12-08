@@ -6,6 +6,7 @@ import org.eclipse.tm4e.core.grammar.ITokenizeLineResult
 import org.eclipse.tm4e.core.grammar.IStateStack
 import org.eclipse.tm4e.core.registry.IGrammarSource
 import org.eclipse.tm4e.core.registry.Registry
+import react.Color
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
@@ -19,7 +20,7 @@ data class Token(
     val scopes: List<String>,
     val line: Int,
     val text: String = "",
-    val fg: react.Color? = null
+    val fg: Color? = null
 )
 
 interface SyntaxProvider {

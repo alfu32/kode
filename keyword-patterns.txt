@@ -1,0 +1,3 @@
+# language-name=regex (raw, no extra escaping)
+kotlin=\b(?:if|else|for|while|return|fun|val|var|class|object|when|is|in|as|try|catch|finally|throw|do|while|break|continue|sealed|data|enum|interface|package|import|this|super|null)\b
+java=\b(?:if|else|for|while|return|class|interface|enum|try|catch|finally|throw|throws|switch|case|break|continue|package|import|this|super|null|new|instanceof|extends|implements)\b

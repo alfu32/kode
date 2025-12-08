@@ -1,0 +1,3 @@
+# token-type to hex color (case-insensitive keys)
+keyword=#CC7832
+default=#CC7832
