@@ -85,7 +85,7 @@ tasks.register<Copy>("distBundle") {
     val distDir = layout.projectDirectory.dir("dist")
     from(fat.map { it.archiveFile })
     externalColorMap.asFile.takeIf { it.exists() }?.let { from(it) }
-    layout.projectDirectory.file("keyword-patterns.0.txt").asFile.takeIf { it.exists() }?.let { from(it) }
+    layout.projectDirectory.file("keyword-patterns.txt").asFile.takeIf { it.exists() }?.let { from(it) }
     into(distDir)
     doFirst { distDir.asFile.mkdirs() }
 }
