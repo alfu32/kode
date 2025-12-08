@@ -42,7 +42,7 @@ tasks.register<Jar>("fatJar") {
     group = "build"
     description = "Assembles a fat JAR with all dependencies"
 
-    archiveBaseName.set("kt-tui-edit")
+    archiveBaseName.set("kode")
     archiveClassifier.set("all")        // so name ends with -all.jar
 
     // optional: if you do not want the version in filename:
