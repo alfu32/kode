@@ -143,7 +143,6 @@ private class SplitPanelsApp(
                 recentFilesProvider = {
                     recentFiles
                         .sortedBy { it.path.lowercase() }
-                        .take(10)
                         .map { it.copy(path = sessionManager.toRelative(it.path)) }
                 },
                 currentPathProvider = { currentRelativePath() },

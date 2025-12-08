@@ -25,12 +25,17 @@ class FilesTabView(
     private val fileTreeView = FileTreeView(styleSheet, tree, onSelectFile)
     private var recentHeight: Int = 0
     private var recentScroll: Int = 0
+    private var lastRows: Int = 0
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(0)
+        lastRows = rows
         val recents = recentFilesProvider()
-        recentHeight = computeRecentHeight(rows)
+        recentHeight = if (recents.isNotEmpty()) computeRecentHeight(rows) else 0
+        val visible = (recentHeight - 1).coerceAtLeast(0)
+        val maxScroll = (recents.size - visible).coerceAtLeast(0)
+        recentScroll = recentScroll.coerceIn(0, maxScroll)
         renderRecentList(canvas, recents, cols, recentHeight)
         val hasRecents = recentHeight > 0
         if (hasRecents) {
@@ -42,7 +47,7 @@ class FilesTabView(
                 }
             }
         }
-        val offsetY = if (hasRecents) recentHeight + 1 else 0
+        val offsetY = if (hasRecents) recentHeight else 0
         val remaining = (rows - offsetY).coerceAtLeast(0)
         if (remaining <= 0) return
 
@@ -57,12 +62,12 @@ class FilesTabView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
-        val rows = event.rows ?: 0
+        val rows = (event.rows ?: 0).let { if (it > 0) it else lastRows }
         val recents = recentFilesProvider()
-        val headerRows = computeRecentHeight(rows)
+        val headerRows = if (recents.isNotEmpty()) computeRecentHeight(rows) else 0
         val hasRecents = headerRows > 0
         if (event.kind.startsWith("mouse")) {
-            val y = event.y ?: return false
+            val y = event.y ?: 0
             if (hasRecents && y < headerRows) {
                 if (event.kind == "mouse_down") {
                     val idx = (y - 1 + recentScroll)
@@ -86,9 +91,9 @@ class FilesTabView(
             UIEvent(
                 kind = event.kind,
                 x = event.x,
-                y = event.y?.let { it - if (hasRecents) headerRows + 1 else 0 },
+                y = event.y?.let { it - if (hasRecents) headerRows else 0 },
                 relX = event.relX,
-                relY = event.relY?.let { it - if (hasRecents) headerRows + 1 else 0 },
+                relY = event.relY?.let { it - if (hasRecents) headerRows else 0 },
                 button = event.button,
                 scrollDelta = event.scrollDelta,
                 key = event.key,
@@ -98,7 +103,7 @@ class FilesTabView(
                 meta = event.meta,
                 focusId = event.focusId,
                 cols = event.cols,
-                rows = event.rows?.let { it - if (hasRecents) headerRows + 1 else 0 },
+                rows = event.rows?.let { it - if (hasRecents) headerRows else 0 },
                 raw = event.raw
             )
         )
