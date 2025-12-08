@@ -258,8 +258,5 @@ class GitPanelView(
         } else false
     }
 
-    private fun handleKey(event: UIEvent): Boolean {
-        // Forward all keys to commit editor
-        return commitEditor.dispatch(event)
-    }
+    private fun handleKey(event: UIEvent): Boolean = commitEditor.dispatch(event)
 }

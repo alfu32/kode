@@ -23,7 +23,7 @@
 - Image viewer: ASCII and Braille modes, width/gray/contrast sliders (mouse drag/click, toggle button), aspect-aware sizing, per-cell color from Korim-rendered samples.
 
 ## Architecture Overview
-- **Terminal/Renderer**: ANSI canvas with back buffer diffing; `CanvasRenderer.applyStyle` and `StyleSet.withDefaults` centralize styling. Raw-mode event loop normalizes key/mouse/resize.
+- **Terminal/Renderer**: ANSI canvas with back buffer diffing; `CanvasRenderer.withStyle` and `StyleSet.withDefaults` centralize styling. Raw-mode event loop normalizes key/mouse/resize.
 - **Buffers**: `TextBuffer` (cursor, selection, word/nav ops) and `ByteBuffer` (hex editor) power the editors; viewport slicing drives rendering.
 - **MIME**: `DefaultMimeTypeDetector` uses a literal lookup table with hardcoded categories (TEXT/IMAGE/BINARY) plus signature/byte-scans; routing picks the viewer accordingly.
 - **Grammars**: Lightweight keyword-only regex provider. Patterns are loaded at runtime from `keyword-patterns.txt`; colors from `token-colors.txt`. Tokens include fg color, so the editor skips per-scope stylesheet lookup. A TM4E loader exists (`TmProvider`) but is not wired in by default.
