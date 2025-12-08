@@ -91,6 +91,7 @@ class TextBuffer : ITextBuffer {
     private val notifications = mutableListOf<Notification>()
     private var bufferBom: String = ""
     private var bufferEncoding: String = "UTF-8"
+    private var dirty: Boolean = false
     private var searchQuery: String = ""
     private var replacementText: String = ""
     private var matches: List<SelectionRange> = emptyList()
@@ -119,6 +120,7 @@ class TextBuffer : ITextBuffer {
     override fun bom(): String = bufferBom
 
     override fun encoding(): String = bufferEncoding
+    override fun isDirty(): Boolean = dirty
 
     override fun clone(): ITextBuffer {
         val b = TextBuffer()
@@ -126,6 +128,7 @@ class TextBuffer : ITextBuffer {
         b.cursor = Position(cursor.line, cursor.column)
         b.anchor = anchor?.let { Position(it.line, it.column) }
         b.clipboard = clipboard
+        b.dirty = dirty
         b.searchQuery = searchQuery
         b.replacementText = replacementText
         b.matches = matches.map { SelectionRange(Position(it.start.line, it.start.column), Position(it.end.line, it.end.column)) }
@@ -141,7 +144,18 @@ class TextBuffer : ITextBuffer {
         if (n.endsWith("\n")) lines.add("")
         cursor = Position(0, 0)
         anchor = null
+        dirty = false
         refreshSearchAfterChange()
+    }
+
+    override fun saveToFile(path: String): Boolean {
+        return try {
+            java.io.File(path).writeText(text())
+            dirty = false
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
 
@@ -237,6 +251,7 @@ class TextBuffer : ITextBuffer {
         if (parts.size == 1) {
             lines[cursor.line] = prefix + parts[0] + suffix
             cursor.column += parts[0].length
+            markDirty()
             refreshSearchAfterChange()
             return
         }
@@ -252,6 +267,7 @@ class TextBuffer : ITextBuffer {
 
         cursor.line = insertIdx
         cursor.column = parts.last().length
+        markDirty()
         refreshSearchAfterChange()
     }
 
@@ -271,6 +287,7 @@ class TextBuffer : ITextBuffer {
             lines[cursor.line] =
                 line.substring(0, cursor.column - 1) + line.substring(cursor.column)
             cursor.column--
+            markDirty()
             refreshSearchAfterChange()
             return
         }
@@ -283,6 +300,7 @@ class TextBuffer : ITextBuffer {
         lines.removeAt(cursor.line)
         cursor.line--
         cursor.column = above.length
+        markDirty()
         refreshSearchAfterChange()
     }
 
@@ -292,6 +310,7 @@ class TextBuffer : ITextBuffer {
         if (cursor.column < line.length) {
             lines[cursor.line] =
                 line.substring(0, cursor.column) + line.substring(cursor.column + 1)
+            markDirty()
             refreshSearchAfterChange()
             return
         }
@@ -299,6 +318,7 @@ class TextBuffer : ITextBuffer {
 
         lines[cursor.line] = line + lines[cursor.line + 1]
         lines.removeAt(cursor.line + 1)
+        markDirty()
         refreshSearchAfterChange()
     }
 
@@ -506,6 +526,7 @@ class TextBuffer : ITextBuffer {
 
         cursor = Position(s.start.line, s.start.column)
         anchor = null
+        markDirty()
         refreshSearchAfterChange()
         return true
     }
@@ -619,6 +640,7 @@ class TextBuffer : ITextBuffer {
         }
         if (!replaced) return false
         loadText(newText)
+        markDirty()
         rebuildSearchResults()
         activeMatchIndex = if (matches.isEmpty()) -1 else activeMatchIndex.coerceIn(0, matches.lastIndex)
         return true
@@ -633,6 +655,7 @@ class TextBuffer : ITextBuffer {
 
         val newText = regex.replace(text()) { mr -> expandReplacement(replacementText, mr) }
         loadText(newText)
+        markDirty()
         rebuildSearchResults()
         return count
     }
@@ -692,6 +715,10 @@ class TextBuffer : ITextBuffer {
             return
         }
         rebuildSearchResults()
+    }
+
+    private fun markDirty() {
+        dirty = true
     }
 
     private fun compileRegex(): Regex? {

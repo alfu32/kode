@@ -1,6 +1,6 @@
 # TUI Code Editor
 
-
+![img_6.png](img_6.png)
 ![img_5.png](img_5.png)
 ![img_4.png](img_4.png)
 ![img_3.png](img_3.png)
@@ -14,7 +14,7 @@
 - Split view: left vertical tabs (Files/Git/Settings), right viewer chosen by MIME (text → code editor, image → ASCII/Braille image viewer, else hex viewer). Splitter is mouse-draggable.
 - File tree uses [+]/[-]/[=] icons, expands/collapses, and opens files in the right viewer; focus follows click for correct input routing.
 - Code editor: guttered view, full mouse/keyboard navigation (select, word-jump, page up/down), cursor/selection rendering, and focus-aware input.
-- Find/Replace: `Ctrl+F` opens the IntelliJ-style bar above the code viewport (shrinks content); `Enter` finds next, `Ctrl+Enter` finds all, `Ctrl+R` replaces current, `Ctrl+Shift+R` replaces all, `Tab` switches between find/replace fields, and the `[x]` button closes the bar. The find box accepts regex patterns (invalid patterns turn the box red); replacements honor capture groups via `$1`, `$2`, etc. All matches stay highlighted (with an active-match accent) while the search state lives in the text buffer.
+- Find/Replace: `Ctrl+F` opens the IntelliJ-style bar above the code viewport (shrinks content); `Enter` finds next, `Ctrl+Enter` finds all, `Ctrl+R` replaces current, `Ctrl+Shift+R` replaces all, `Tab` switches between find/replace fields, and the `[x]` button closes the bar. The find box accepts regex patterns (invalid patterns turn the box red); replacements honor capture groups via `$1`, `$2`, etc. All matches stay highlighted (with an active-match accent) while the search state lives in the text buffer. `Ctrl+S` saves the current buffer, and the header shows `*` when there are unsaved changes.
 - Code highlighting: keyword-only regex highlighter; patterns come from `keyword-patterns.txt` (language=regex) and colors from `token-colors.txt` (qualifier=hex). Tokens carry fg color directly to avoid stylesheet lookups.
 - Hex editor: dual cursors (hex/ASCII), scroll keys, selection, and byte-buffer backing.
 - Image viewer: ASCII and Braille modes, width/gray/contrast sliders (mouse drag/click, toggle button), aspect-aware sizing, per-cell color from Korim-rendered samples.
@@ -35,6 +35,7 @@
 - Dependencies: JGit for Git panel, Korim/Korio + coroutines for image loading, TM4E available for TM tokenization, and internal StyleSet/Renderer helpers for consistent styling.
 - Tasks: `generateTmScopes` builds `grammars/tm-scopes.css` from grammar scopes (optional if using TM4E). Keep README aligned when adding viewers, sliders, detector/grammar changes; style names live in `styles/app.css` (e.g., `slider-track`, `slider-indicator`, `image-*`, `code-*`).
 
+![img_6.png](img_6.png)
 ![img_5.png](img_5.png)
 ![img_4.png](img_4.png)
 ![img_3.png](img_3.png)

@@ -64,6 +64,26 @@ class TextBufferSearchTest {
     }
 
     @Test
+    fun savingClearsDirtyFlag() {
+        val buffer = TextBuffer()
+        buffer.loadText("content")
+        assertEquals(false, buffer.isDirty())
+        buffer.moveCursorTo(Position(0, buffer.text().length), expand = false)
+        buffer.insertText("!")
+        assertEquals(true, buffer.isDirty())
+
+        val tmp = kotlin.io.path.createTempFile()
+        try {
+            val saved = buffer.saveToFile(tmp.toString())
+            assertTrue(saved)
+            assertEquals(false, buffer.isDirty())
+            assertEquals("content!", tmp.toFile().readText())
+        } finally {
+            java.nio.file.Files.deleteIfExists(tmp)
+        }
+    }
+
+    @Test
     fun invalidRegexReportsError() {
         val buffer = TextBuffer()
         buffer.loadText("text")

@@ -81,7 +81,8 @@ class CodeEditorView(
             val mimeLabel = mime?.let { "[$it]" } ?: "[unknown]"
             val grammarInfo = grammarLabel()
             val langLabel = language?.let { "· $it$grammarInfo" } ?: grammarInfo
-            val label = "${filePath.ifEmpty { "[no file]" }} $mimeLabel $langLabel"
+            val saveMarker = if (buffer.isDirty()) "*" else " "
+            val label = "$saveMarker${filePath.ifEmpty { "[no file]" }} $mimeLabel $langLabel"
                 .take(cols)
             drawText(0, 0, label.padEnd(cols, ' '))
         }
@@ -224,6 +225,10 @@ class CodeEditorView(
             }
             "key_down" -> {
                 val key = event.key?.lowercase()
+                if (event.ctrl && key == "s") {
+                    if (filePath.isNotEmpty()) buffer.saveToFile(filePath)
+                    return true
+                }
                 if (key == "pageup" || key == "pagedown") {
                     val delta = if (key == "pageup") -bodyRows else bodyRows
                     val newLine = (buffer.cursorPosition().line + delta).coerceIn(0, buffer.totalLines().coerceAtLeast(1) - 1)

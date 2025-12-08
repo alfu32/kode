@@ -20,8 +20,10 @@ interface ITextBuffer {
     fun totalLines(): Int
     fun bom(): String
     fun encoding(): String
+    fun isDirty(): Boolean
 
     fun loadText(text: String)
+    fun saveToFile(path: String): Boolean
 
     fun moveCursorTo(position: Position, expand: Boolean)
     fun moveLeft(expand: Boolean = false, word: Boolean = false)
