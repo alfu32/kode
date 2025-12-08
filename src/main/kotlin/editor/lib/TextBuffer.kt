@@ -98,6 +98,10 @@ class TextBuffer : ITextBuffer {
     private var activeMatchIndex: Int = -1
     private var patternError: String? = null
     private var compiledRegex: Regex? = null
+    private val undoStack: ArrayDeque<BufferSnapshot> = ArrayDeque()
+    private val redoStack: ArrayDeque<BufferSnapshot> = ArrayDeque()
+    private var capturingUndo: Boolean = false
+    private val maxHistory: Int = 200
 
 
     /*  
@@ -145,7 +149,16 @@ class TextBuffer : ITextBuffer {
         cursor = Position(0, 0)
         anchor = null
         dirty = false
+        clearHistory()
         refreshSearchAfterChange()
+    }
+
+    private fun applyFullText(newText: String) {
+        val n = newText.replace("\r\n", "\n")
+        lines = if (n.isEmpty()) mutableListOf("") else n.split("\n").toMutableList()
+        if (n.endsWith("\n")) lines.add("")
+        cursor = clampPosition(Position(cursor.line.coerceAtMost(lines.lastIndex), cursor.column))
+        anchor = null
     }
 
     override fun saveToFile(path: String): Boolean {
@@ -156,6 +169,20 @@ class TextBuffer : ITextBuffer {
         } catch (_: Exception) {
             false
         }
+    }
+
+    override fun undo(): Boolean {
+        val snapshot = undoStack.removeLastOrNull() ?: return false
+        redoStack.addLast(takeSnapshot())
+        applySnapshot(snapshot)
+        return true
+    }
+
+    override fun redo(): Boolean {
+        val snapshot = redoStack.removeLastOrNull() ?: return false
+        undoStack.addLast(takeSnapshot())
+        applySnapshot(snapshot)
+        return true
     }
 
 
@@ -238,37 +265,39 @@ class TextBuffer : ITextBuffer {
     */
 
     override fun insertText(text: String) {
-        if (text.isEmpty()) return
-        deleteSelection()
+        mutate {
+            if (text.isEmpty()) return@mutate
+            deleteSelection()
 
-        val norm = text.replace("\r\n", "\n")
-        val parts = norm.split("\n")
-        val cur = lines[cursor.line]
+            val norm = text.replace("\r\n", "\n")
+            val parts = norm.split("\n")
+            val cur = lines[cursor.line]
 
-        val prefix = cur.substring(0, cursor.column)
-        val suffix = cur.substring(cursor.column)
+            val prefix = cur.substring(0, cursor.column)
+            val suffix = cur.substring(cursor.column)
 
-        if (parts.size == 1) {
-            lines[cursor.line] = prefix + parts[0] + suffix
-            cursor.column += parts[0].length
+            if (parts.size == 1) {
+                lines[cursor.line] = prefix + parts[0] + suffix
+                cursor.column += parts[0].length
+                markDirty()
+                refreshSearchAfterChange()
+                return@mutate
+            }
+
+            lines[cursor.line] = prefix + parts.first()
+            var insertIdx = cursor.line + 1
+
+            for (i in 1 until parts.size - 1) {
+                lines.add(insertIdx, parts[i])
+                insertIdx++
+            }
+            lines.add(insertIdx, parts.last() + suffix)
+
+            cursor.line = insertIdx
+            cursor.column = parts.last().length
             markDirty()
             refreshSearchAfterChange()
-            return
         }
-
-        lines[cursor.line] = prefix + parts.first()
-        var insertIdx = cursor.line + 1
-
-        for (i in 1 until parts.size - 1) {
-            lines.add(insertIdx, parts[i])
-            insertIdx++
-        }
-        lines.add(insertIdx, parts.last() + suffix)
-
-        cursor.line = insertIdx
-        cursor.column = parts.last().length
-        markDirty()
-        refreshSearchAfterChange()
     }
 
     override fun insertNewline() = insertText("\n")
@@ -281,45 +310,49 @@ class TextBuffer : ITextBuffer {
     */
 
     override fun deleteBackspace() {
-        if (deleteSelection()) return
-        if (cursor.column > 0) {
-            val line = lines[cursor.line]
-            lines[cursor.line] =
-                line.substring(0, cursor.column - 1) + line.substring(cursor.column)
-            cursor.column--
+        mutate {
+            if (deleteSelection()) return@mutate
+            if (cursor.column > 0) {
+                val line = lines[cursor.line]
+                lines[cursor.line] =
+                    line.substring(0, cursor.column - 1) + line.substring(cursor.column)
+                cursor.column--
+                markDirty()
+                refreshSearchAfterChange()
+                return@mutate
+            }
+            if (cursor.line == 0) return@mutate
+
+            val above = lines[cursor.line - 1]
+            val here = lines[cursor.line]
+
+            lines[cursor.line - 1] = above + here
+            lines.removeAt(cursor.line)
+            cursor.line--
+            cursor.column = above.length
             markDirty()
             refreshSearchAfterChange()
-            return
         }
-        if (cursor.line == 0) return
-
-        val above = lines[cursor.line - 1]
-        val here = lines[cursor.line]
-
-        lines[cursor.line - 1] = above + here
-        lines.removeAt(cursor.line)
-        cursor.line--
-        cursor.column = above.length
-        markDirty()
-        refreshSearchAfterChange()
     }
 
     override fun deleteForward() {
-        if (deleteSelection()) return
-        val line = lines[cursor.line]
-        if (cursor.column < line.length) {
-            lines[cursor.line] =
-                line.substring(0, cursor.column) + line.substring(cursor.column + 1)
+        mutate {
+            if (deleteSelection()) return@mutate
+            val line = lines[cursor.line]
+            if (cursor.column < line.length) {
+                lines[cursor.line] =
+                    line.substring(0, cursor.column) + line.substring(cursor.column + 1)
+                markDirty()
+                refreshSearchAfterChange()
+                return@mutate
+            }
+            if (cursor.line == lines.size - 1) return@mutate
+
+            lines[cursor.line] = line + lines[cursor.line + 1]
+            lines.removeAt(cursor.line + 1)
             markDirty()
             refreshSearchAfterChange()
-            return
         }
-        if (cursor.line == lines.size - 1) return
-
-        lines[cursor.line] = line + lines[cursor.line + 1]
-        lines.removeAt(cursor.line + 1)
-        markDirty()
-        refreshSearchAfterChange()
     }
 
 
@@ -338,9 +371,11 @@ class TextBuffer : ITextBuffer {
 
     override fun cutSelection(): Boolean {
         val r = selectionRange() ?: return false
-        clipboard = extractText(r)
-        deleteSelection()
-        notifications.add(Notification(NotificationKind.CUT, clipboard))
+        mutate {
+            clipboard = extractText(r)
+            deleteSelection()
+            notifications.add(Notification(NotificationKind.CUT, clipboard))
+        }
         return true
     }
 
@@ -639,11 +674,15 @@ class TextBuffer : ITextBuffer {
             append(text.substring(lastEnd))
         }
         if (!replaced) return false
-        loadText(newText)
-        markDirty()
-        rebuildSearchResults()
-        activeMatchIndex = if (matches.isEmpty()) -1 else activeMatchIndex.coerceIn(0, matches.lastIndex)
-        return true
+        var changed = false
+        mutate {
+            applyFullText(newText)
+            markDirty()
+            rebuildSearchResults()
+            activeMatchIndex = if (matches.isEmpty()) -1 else activeMatchIndex.coerceIn(0, matches.lastIndex)
+            changed = true
+        }
+        return changed
     }
 
     override fun replaceAll(): Int {
@@ -654,9 +693,11 @@ class TextBuffer : ITextBuffer {
         if (count == 0) return 0
 
         val newText = regex.replace(text()) { mr -> expandReplacement(replacementText, mr) }
-        loadText(newText)
-        markDirty()
-        rebuildSearchResults()
+        mutate {
+            applyFullText(newText)
+            markDirty()
+            rebuildSearchResults()
+        }
         return count
     }
 
@@ -666,11 +707,15 @@ class TextBuffer : ITextBuffer {
         val safeStart = startIndex.coerceIn(0, content.length)
         val safeEnd = endIndex.coerceIn(safeStart, content.length)
         val newText = content.replaceRange(safeStart, safeEnd, replacement)
-        loadText(newText)
         val newCursorIndex = safeStart + replacement.length
-        val pos = indexToPosition(newCursorIndex)
-        cursor = pos
-        anchor = null
+        mutate {
+            applyFullText(newText)
+            val pos = indexToPosition(newCursorIndex)
+            cursor = pos
+            anchor = null
+            markDirty()
+            refreshSearchAfterChange()
+        }
         return newCursorIndex
     }
 
@@ -715,6 +760,49 @@ class TextBuffer : ITextBuffer {
             return
         }
         rebuildSearchResults()
+    }
+
+    private inline fun mutate(block: () -> Unit) {
+        if (capturingUndo) {
+            block()
+            return
+        }
+        capturingUndo = true
+        try {
+            recordUndoSnapshot()
+            redoStack.clear()
+            block()
+        } finally {
+            capturingUndo = false
+        }
+    }
+
+    private fun recordUndoSnapshot() {
+        undoStack.addLast(takeSnapshot())
+        if (undoStack.size > maxHistory) {
+            undoStack.removeFirst()
+        }
+    }
+
+    private fun takeSnapshot(): BufferSnapshot =
+        BufferSnapshot(
+            lines = lines.toList(),
+            cursor = Position(cursor.line, cursor.column),
+            anchor = anchor?.let { Position(it.line, it.column) },
+            dirty = dirty
+        )
+
+    private fun applySnapshot(snapshot: BufferSnapshot) {
+        lines = snapshot.lines.toMutableList()
+        cursor = Position(snapshot.cursor.line, snapshot.cursor.column)
+        anchor = snapshot.anchor?.let { Position(it.line, it.column) }
+        dirty = snapshot.dirty
+        refreshSearchAfterChange()
+    }
+
+    private fun clearHistory() {
+        undoStack.clear()
+        redoStack.clear()
     }
 
     private fun markDirty() {
@@ -824,6 +912,13 @@ class TextBuffer : ITextBuffer {
         return Position(line, i)
     }
 }
+
+private data class BufferSnapshot(
+    val lines: List<String>,
+    val cursor: Position,
+    val anchor: Position?,
+    val dirty: Boolean
+)
 
 data class Notification(val kind: NotificationKind, val text: String)
 enum class NotificationKind { COPY, CUT }

@@ -23,6 +23,8 @@ interface ITextBuffer {
     fun isDirty(): Boolean
 
     fun loadText(text: String)
+    fun undo(): Boolean
+    fun redo(): Boolean
     fun saveToFile(path: String): Boolean
 
     fun moveCursorTo(position: Position, expand: Boolean)
@@ -157,6 +159,8 @@ fun handleKeyForBuffer(buffer: ITextBuffer, ev: UIEvent, singleLine: Boolean = f
                     "x" -> if (buffer.cutSelection()) {}
                     "v" -> buffer.pasteClipboard()
                     "a" -> buffer.selectAll()
+                    "z" -> if (ev.shift) buffer.redo() else buffer.undo()
+                    "y" -> buffer.redo()
                     "s" -> {} // placeholder for save hook
                 }
             } else if (!ev.alt && key.length == 1) {
