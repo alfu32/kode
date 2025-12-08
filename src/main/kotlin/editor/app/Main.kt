@@ -20,7 +20,6 @@ import editor.ui.FilesTabView
 import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
 import editor.ui.GitPanelView
-import editor.ui.TerminalView
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Instant
@@ -118,13 +117,10 @@ private class SplitPanelsApp(
     private val mimeDetector = DefaultMimeTypeDetector()
     private val regexProvider = KeywordSyntaxProvider
     private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
-    private val terminalView = TerminalView(styleSheet, File(System.getProperty("user.dir")))
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val gitPanel = GitPanelView(styleSheet, JGitService(File(System.getProperty("user.dir"))))
     private var currentOpenPath: String = ""
-    private var terminalRatioPercent = 30
-    private var draggingTerminalSplitter = false
     init {
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -227,16 +223,11 @@ private class SplitPanelsApp(
             }
             "mouse_up" -> {
                 dragging = false
-                draggingTerminalSplitter = false
             }
             "mouse_move" -> {
                 if (dragging && event.x != null) {
                     leftWidth = clampWidth(event.x, lastCols.coerceAtLeast(1))
                     leftRatio = leftWidth.toDouble() / lastCols.toDouble().coerceAtLeast(1.0)
-                    return true
-                }
-                if (draggingTerminalSplitter && event.y != null && event.rows != null) {
-                    adjustTerminalRatio(event.y, event.rows)
                     return true
                 }
             }
@@ -310,7 +301,6 @@ private class SplitPanelsApp(
                 FocusTarget.CODE -> codeEditor.dispatch(event)
                 FocusTarget.HEX -> hexViewer.dispatch(event)
                 FocusTarget.IMAGE -> imageViewer.dispatch(event)
-                FocusTarget.TERMINAL -> terminalView.dispatch(event)
             }
             schedulePersist()
             return handled
@@ -393,81 +383,17 @@ private class SplitPanelsApp(
 
     private fun dispatchToRight(event: UIEvent): Boolean {
         val targetFocus = if (focus == FocusTarget.FILES) rightFocus else focus
-        var resolvedFocus = targetFocus
-        var forwarded = event
-
-        val usesTerminalLayout = targetFocus == FocusTarget.CODE || targetFocus == FocusTarget.TERMINAL
-        if (usesTerminalLayout && event.y != null && event.rows != null) {
-            val totalRows = event.rows.coerceAtLeast(1)
-            val terminalHeight = computeTerminalHeight(totalRows)
-            val editorHeight = (totalRows - terminalHeight).coerceAtLeast(1)
-            val y = event.y!!
-            if (y == editorHeight && event.kind == "mouse_down") {
-                draggingTerminalSplitter = true
-                return true
-            }
-            if (draggingTerminalSplitter && event.kind == "mouse_move") {
-                adjustTerminalRatio(y, totalRows)
-                return true
-            }
-            if (y >= editorHeight + 1) {
-                resolvedFocus = FocusTarget.TERMINAL
-                forwarded = event.alterCopy(
-                    UIEvent(
-                        kind = event.kind,
-                        x = event.x,
-                        y = y - editorHeight - 1,
-                        relX = event.relX,
-                        relY = event.relY?.minus(editorHeight + 1),
-                        button = event.button,
-                        scrollDelta = event.scrollDelta,
-                        key = event.key,
-                        ctrl = event.ctrl,
-                        alt = event.alt,
-                        shift = event.shift,
-                        meta = event.meta,
-                        focusId = event.focusId,
-                        cols = event.cols,
-                        rows = terminalHeight - 1,
-                        raw = event.raw
-                    )
-                )
-            } else {
-                forwarded = event.alterCopy(
-                    UIEvent(
-                        kind = event.kind,
-                        x = event.x,
-                        y = y,
-                        relX = event.relX,
-                        relY = event.relY,
-                        button = event.button,
-                        scrollDelta = event.scrollDelta,
-                        key = event.key,
-                        ctrl = event.ctrl,
-                        alt = event.alt,
-                        shift = event.shift,
-                        meta = event.meta,
-                        focusId = event.focusId,
-                        cols = event.cols,
-                        rows = editorHeight,
-                        raw = event.raw
-                    )
-                )
-            }
-        }
-
         if (event.kind == "mouse_down" || event.kind == "mouse_up" || event.kind == "mouse_move") {
-            focus = resolvedFocus
+            focus = targetFocus
         }
-        val handled = when (resolvedFocus) {
-            FocusTarget.CODE -> codeEditor.dispatch(forwarded)
-            FocusTarget.HEX -> hexViewer.dispatch(forwarded)
-            FocusTarget.IMAGE -> imageViewer.dispatch(forwarded)
-            FocusTarget.TERMINAL -> terminalView.dispatch(forwarded)
-            FocusTarget.FILES -> codeEditor.dispatch(forwarded)
+        val handled = when (targetFocus) {
+            FocusTarget.CODE -> codeEditor.dispatch(event)
+            FocusTarget.HEX -> hexViewer.dispatch(event)
+            FocusTarget.IMAGE -> imageViewer.dispatch(event)
+            FocusTarget.FILES -> codeEditor.dispatch(event)
         }
-        if (handled && resolvedFocus != FocusTarget.FILES) {
-            rightFocus = resolvedFocus
+        if (handled && targetFocus != FocusTarget.FILES) {
+            rightFocus = targetFocus
         }
         schedulePersist()
         return handled
@@ -621,49 +547,15 @@ private class SplitPanelsApp(
             height = height
         )
         when (viewer) {
-            FocusTarget.CODE -> renderEditorWithTerminal(clipped)
+            FocusTarget.CODE -> codeEditor.render(clipped)
             FocusTarget.HEX -> hexViewer.render(clipped)
             FocusTarget.IMAGE -> imageViewer.render(clipped)
             FocusTarget.FILES -> codeEditor.render(clipped)
-            FocusTarget.TERMINAL -> renderEditorWithTerminal(clipped)
         }
-    }
-
-    private fun renderEditorWithTerminal(canvas: CanvasRenderer) {
-        val rows = canvas.rows().coerceAtLeast(1)
-        val cols = canvas.cols().coerceAtLeast(1)
-        val terminalHeight = computeTerminalHeight(rows)
-        val editorHeight = (rows - terminalHeight).coerceAtLeast(1)
-
-        val editorClip = ClippedCanvasRenderer(canvas, 0, 0, cols, editorHeight)
-        codeEditor.render(editorClip)
-
-        val splitterStyle = styleSheet.getStyle("splitter")
-        canvas.withStyle(splitterStyle) {
-            drawRect(0, editorHeight, cols, 1)
-            for (x in 0 until cols) {
-                drawText(x, editorHeight, "-")
-            }
-        }
-
-        val terminalClipHeight = (terminalHeight - 1).coerceAtLeast(1)
-        val terminalClip = ClippedCanvasRenderer(canvas, 0, editorHeight + 1, cols, terminalClipHeight)
-        terminalView.render(terminalClip)
-    }
-
-    private fun computeTerminalHeight(totalRows: Int): Int {
-        val clampedPercent = terminalRatioPercent.coerceIn(5, 80)
-        val desired = (totalRows * clampedPercent) / 100
-        return desired.coerceIn(3, (totalRows - 3).coerceAtLeast(3))
-    }
-
-    private fun adjustTerminalRatio(cursorY: Int, totalRows: Int) {
-        val newTerminalHeight = (totalRows - cursorY).coerceIn(3, (totalRows - 3).coerceAtLeast(3))
-        terminalRatioPercent = ((newTerminalHeight * 100) / totalRows).coerceIn(5, 80)
     }
 }
 
-private enum class FocusTarget { FILES, CODE, HEX, IMAGE, TERMINAL }
+private enum class FocusTarget { FILES, CODE, HEX, IMAGE }
 
 private class PlaceholderPane(
     styleSheet: StyleSheet,
