@@ -1,7 +1,5 @@
 #!/bin/bash
 
-#!/bin/sh
-
 git filter-repo --force \
   --email-callback '
 def callback(email):

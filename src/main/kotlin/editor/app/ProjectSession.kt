@@ -71,3 +71,4 @@ class ProjectSessionManager(
     fun toAbsolute(path: String): String =
         root.resolve(path).normalize().toString()
 }
+

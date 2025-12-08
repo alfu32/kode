@@ -1,9 +1,9 @@
 # TUI Code Editor
 
-![img_6.png](img_6.png)
-![img_5.png](img_5.png)
-![img_4.png](img_4.png)
-![img_3.png](img_3.png)
+![img_7.png](img_7.png)
+![img_8.png](img_8.png)
+![img_9.png](img_9.png)
+![img_10.png](img_10.png)
 
 ## Objectives
 - Build a terminal-first editor workspace with split panes, tabs, and multiple viewers (code, hex, image) selected by MIME.
