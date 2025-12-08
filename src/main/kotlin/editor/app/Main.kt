@@ -87,12 +87,12 @@ fun main() {
 
     lateinit var app: SplitPanelsApp
     app = SplitPanelsApp(styleSheet) {
-        app.persistSession()
+        app.persistSession(force = true)
         renderer.requestExit()
     }
 
     runApp(app, renderer)
-    app.persistSession()
+    app.persistSession(force = true)
 }
 
 private class SplitPanelsApp(
@@ -102,6 +102,9 @@ private class SplitPanelsApp(
     private val sessionManager = ProjectSessionManager(System.getProperty("user.dir"))
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
     private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
+    private var lastPersistMs: Long = 0L
+    private var pendingPersist: Boolean = false
+    private val persistDebounceMs: Long = 3000L
     private var dragging = false
     private var leftWidth = -1
     private var leftRatio = 0.3
@@ -297,11 +300,11 @@ private class SplitPanelsApp(
                 FocusTarget.HEX -> hexViewer.dispatch(event)
                 FocusTarget.IMAGE -> imageViewer.dispatch(event)
             }
-            persistSession()
+            schedulePersist()
             return handled
         }
 
-        persistSession()
+        schedulePersist()
         return false
     }
 
@@ -366,7 +369,7 @@ private class SplitPanelsApp(
         if (handled && targetFocus != FocusTarget.FILES) {
             rightFocus = targetFocus
         }
-        persistSession()
+        schedulePersist()
         return handled
     }
 
@@ -381,7 +384,14 @@ private class SplitPanelsApp(
         return resolveGrammar(path, detected).second
     }
 
-    fun persistSession() {
+    fun persistSession(force: Boolean = false) {
+        if (!force) {
+            val now = System.currentTimeMillis()
+            if (now - lastPersistMs < persistDebounceMs) {
+                pendingPersist = true
+                return
+            }
+        }
         saveCurrentEditorState()
         val mergedEditors = savedEditors.values.toMutableList()
         val editorsForSave = mergedEditors.map { it.copy(path = sessionManager.toRelative(it.path)) }
@@ -392,6 +402,8 @@ private class SplitPanelsApp(
             )
         }
         sessionManager.save(ProjectSession(recentFiles = recentsForSave, openEditors = editorsForSave))
+        lastPersistMs = System.currentTimeMillis()
+        pendingPersist = false
     }
 
     private fun recordRecent(path: String, state: EditorSessionState?) {
@@ -454,6 +466,15 @@ private class SplitPanelsApp(
 
     private fun currentRelativePath(): String? =
         codeEditor.currentPath().takeIf { it.isNotEmpty() }?.let { sessionManager.toRelative(it) }
+
+    private fun schedulePersist() {
+        val now = System.currentTimeMillis()
+        if (pendingPersist && now - lastPersistMs >= persistDebounceMs) {
+            persistSession(force = true)
+            return
+        }
+        persistSession(force = false)
+    }
 
     private fun resolveGrammar(path: String, detected: MimeTypeResult): Pair<String?, Boolean> {
         detected.language?.let { lang ->
