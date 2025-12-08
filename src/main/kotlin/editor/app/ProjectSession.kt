@@ -12,7 +12,7 @@ import editor.lib.PositionState
 
 @Serializable
 data class ProjectSession(
-    val version: Int = 3,
+    val version: Int = 4,
     val recentFiles: List<RecentFileEntry> = emptyList(),
     val openEditors: List<EditorSessionState> = emptyList(),
 )
@@ -71,4 +71,3 @@ class ProjectSessionManager(
     fun toAbsolute(path: String): String =
         root.resolve(path).normalize().toString()
 }
-
