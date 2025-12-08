@@ -519,6 +519,7 @@ class TextBuffer : ITextBuffer {
     */
 
     override fun selectionRange(): SelectionRange? {
+        normalizePositions()
         val a = anchor ?: return null
         if (a.line == cursor.line && a.column == cursor.column) return null
 
@@ -767,6 +768,7 @@ class TextBuffer : ITextBuffer {
             block()
             return
         }
+        normalizePositions()
         capturingUndo = true
         try {
             recordUndoSnapshot()
@@ -797,12 +799,18 @@ class TextBuffer : ITextBuffer {
         cursor = Position(snapshot.cursor.line, snapshot.cursor.column)
         anchor = snapshot.anchor?.let { Position(it.line, it.column) }
         dirty = snapshot.dirty
+        normalizePositions()
         refreshSearchAfterChange()
     }
 
     private fun clearHistory() {
         undoStack.clear()
         redoStack.clear()
+    }
+
+    private fun normalizePositions() {
+        cursor = clampPosition(cursor)
+        anchor = anchor?.let { clampPosition(it) }
     }
 
     private fun markDirty() {

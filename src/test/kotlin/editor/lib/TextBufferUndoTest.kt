@@ -50,4 +50,14 @@ class TextBufferUndoTest {
         assertFalse(buffer.redo())
         assertEquals("abc2", buffer.text())
     }
+
+    @Test
+    fun `backspace at end of buffer stays in bounds`() {
+        val buffer = TextBuffer()
+        buffer.loadText("abc")
+        buffer.moveEndOfLine()
+        buffer.deleteBackspace()
+
+        assertEquals("ab", buffer.text())
+    }
 }

@@ -11,17 +11,22 @@ import react.renderer.CanvasRenderer
 import react.util.enterRawMode
 import react.util.restoreStty
 import react.util.runCommand
-import editor.lib.FileTree
 import editor.grammars.KeywordSyntaxProvider
 import editor.mime.DefaultMimeTypeDetector
 import editor.mime.MimeTypeCategory
 import editor.mime.MimeTypeResult
 import editor.ui.CodeEditorView
-import editor.ui.FileTreeView
+import editor.ui.FilesTabView
 import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.time.Instant
+import editor.app.ProjectSessionManager
+import editor.app.RecentFileEntry
+import editor.app.EditorSessionState
+import editor.app.ProjectSession
+import editor.lib.FileTree
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     fun redraw() {
@@ -80,15 +85,23 @@ fun main() {
     val styleSheet = StyleSheet.loadFromFiles(styleFiles)
     val renderer = AnsiCanvasRenderer()
 
-    val app = SplitPanelsApp(styleSheet) { renderer.requestExit() }
+    lateinit var app: SplitPanelsApp
+    app = SplitPanelsApp(styleSheet) {
+        app.persistSession()
+        renderer.requestExit()
+    }
 
     runApp(app, renderer)
+    app.persistSession()
 }
 
 private class SplitPanelsApp(
     styleSheet: StyleSheet,
     private val onQuit: () -> Unit
 ) : BaseComponent(styleSheet) {
+    private val sessionManager = ProjectSessionManager(System.getProperty("user.dir"))
+    private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
+    private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
     private var dragging = false
     private var leftWidth = -1
     private var leftRatio = 0.3
@@ -104,18 +117,39 @@ private class SplitPanelsApp(
     private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
+    init {
+        val loaded = sessionManager.load()
+        recentFiles = loaded.recentFiles.map { entry ->
+            entry.copy(
+                path = sessionManager.toAbsolute(entry.path),
+                editor = entry.editor?.copy(path = sessionManager.toAbsolute(entry.editor.path))
+            )
+        }.toMutableList()
+        savedEditors = loaded.openEditors.associateBy { sessionManager.toAbsolute(it.path) }
+            .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
+            .toMutableMap()
+        restoreLastSession()
+    }
     private val leftTabs = TabView(
         styleSheet = styleSheet,
         titles = listOf("Files", "Git", "Settings"),
         tabComponents = listOf(
-            FileTreeView(
+            FilesTabView(
                 styleSheet,
-                FileTree.newFileTree(System.getProperty("user.dir"))
-            ) { entry, mime ->
-                val detected = mime?.let { MimeTypeResult(it, language = null) }
-                    ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath))
-                openInViewer(entry.fullPath, detected)
-            },
+                FileTree.newFileTree(System.getProperty("user.dir")),
+                recentFilesProvider = {
+                    recentFiles
+                        .sortedByDescending { it.lastOpenedEpochMillis }
+                        .take(10)
+                        .map { it.copy(path = sessionManager.toRelative(it.path)) }
+                },
+                onSelectFile = { entry, mime ->
+                    val detected = mime?.let { MimeTypeResult(it, language = null) }
+                        ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath))
+                    openInViewer(entry.fullPath, detected)
+                },
+                onSelectRecent = { entry -> openRecent(entry) }
+            ),
             PlaceholderPane(styleSheet, "Git"),
             PlaceholderPane(styleSheet, "Settings")
         ),
@@ -272,20 +306,41 @@ private class SplitPanelsApp(
                 imageViewer.openFile(path, detected)
                 rightFocus = FocusTarget.IMAGE
                 focus = rightFocus
+                recordRecent(path, null)
             }
             MimeTypeCategory.TEXT -> {
                 val (grammarLang, grammarAvailable) = resolveGrammar(path, detected)
                 codeEditor.openFile(path, detected, grammarAvailable, grammarLang)
                 rightFocus = FocusTarget.CODE
                 focus = rightFocus
+                recordRecent(path, codeEditor.captureState())
             }
             MimeTypeCategory.BINARY, MimeTypeCategory.UNKNOWN -> {
                 // Unknown defaults to hex viewer.
                 hexViewer.openFile(path, detected)
                 rightFocus = FocusTarget.HEX
                 focus = rightFocus
+                recordRecent(path, null)
             }
         }
+    }
+
+    private fun openRecent(entry: RecentFileEntry) {
+        val absPath = sessionManager.toAbsolute(entry.path)
+        val state = entry.editor ?: savedEditors[absPath]
+        if (state != null) {
+            openEditorState(state.copy(path = absPath))
+            recordRecent(absPath, codeEditor.captureState())
+            return
+        }
+        val detected = mimeDetector.detectFile(java.nio.file.Path.of(absPath))
+        openInViewer(absPath, detected)
+    }
+
+    private fun openEditorState(state: EditorSessionState) {
+        codeEditor.restoreState(state)
+        rightFocus = FocusTarget.CODE
+        focus = rightFocus
     }
 
     private fun dispatchToRight(event: UIEvent): Boolean {
@@ -314,6 +369,49 @@ private class SplitPanelsApp(
 
     private fun isGrammarAvailable(path: String, detected: MimeTypeResult): Boolean {
         return resolveGrammar(path, detected).second
+    }
+
+    fun persistSession() {
+        val currentState = codeEditor.captureState()?.let { it.copy(path = sessionManager.toAbsolute(it.path)) }
+        currentState?.let { savedEditors[sessionManager.toAbsolute(it.path)] = it }
+        val mergedEditors = savedEditors.values.toMutableList()
+        currentState?.let { state ->
+            mergedEditors.removeIf { it.path == state.path }
+            mergedEditors.add(state)
+        }
+
+        val editorsForSave = mergedEditors.map { it.copy(path = sessionManager.toRelative(it.path)) }
+        val recentsForSave = recentFiles.map { entry ->
+            entry.copy(
+                path = sessionManager.toRelative(entry.path),
+                editor = entry.editor?.copy(path = sessionManager.toRelative(entry.editor.path))
+            )
+        }
+        sessionManager.save(ProjectSession(recentFiles = recentsForSave, openEditors = editorsForSave))
+    }
+
+    private fun recordRecent(path: String, state: EditorSessionState?) {
+        val abs = sessionManager.toAbsolute(path)
+        val now = Instant.now().toEpochMilli()
+        val existingIdx = recentFiles.indexOfFirst { sessionManager.toAbsolute(it.path) == abs }
+        val entry = RecentFileEntry(path = abs, lastOpenedEpochMillis = now, editor = state ?: savedEditors[abs])
+        if (existingIdx >= 0) recentFiles[existingIdx] = entry else recentFiles.add(entry)
+        if (recentFiles.size > 20) {
+            recentFiles = recentFiles.sortedByDescending { it.lastOpenedEpochMillis }.take(20).toMutableList()
+        }
+        if (state != null) {
+            savedEditors[abs] = state
+        }
+    }
+
+    private fun restoreLastSession() {
+        val ordered = recentFiles.sortedByDescending { it.lastOpenedEpochMillis }
+        val stateFromRecents = ordered.firstNotNullOfOrNull { it.editor ?: savedEditors[sessionManager.toAbsolute(it.path)] }
+        val fallback = savedEditors.values.firstOrNull()
+        val state = stateFromRecents ?: fallback
+        if (state != null) {
+            openEditorState(state)
+        }
     }
 
     private fun resolveGrammar(path: String, detected: MimeTypeResult): Pair<String?, Boolean> {

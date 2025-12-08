@@ -9,6 +9,8 @@ import editor.lib.handleKeyForBuffer
 import editor.lib.handleMouseToBuffer
 import editor.mime.MimeTypeResult
 import editor.grammars.SyntaxProvider
+import editor.app.EditorSessionState
+import editor.app.PositionState
 import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSet
@@ -36,6 +38,40 @@ class CodeEditorView(
     private var lastRows: Int = 0
     private var searchVisible = false
     private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet, this::handleSearchAction)
+
+    fun captureState(): EditorSessionState? {
+        if (filePath.isEmpty()) return null
+        val selection = buffer.selectionRange()
+        return EditorSessionState(
+            path = filePath,
+            text = buffer.text(),
+            cursorLine = buffer.cursorPosition().line,
+            cursorColumn = buffer.cursorPosition().column,
+            selectionStart = selection?.start?.let { PositionState(it.line, it.column) },
+            selectionEnd = selection?.end?.let { PositionState(it.line, it.column) },
+            scrollTop = scrollTop,
+            mime = mime,
+            language = language
+        )
+    }
+
+    fun restoreState(state: EditorSessionState) {
+        filePath = state.path
+        mime = state.mime
+        language = state.language
+        grammarAvailable = false
+        buffer.loadText(state.text)
+        val start = state.selectionStart
+        val end = state.selectionEnd
+        if (start != null && end != null) {
+            buffer.startSelection(Position(start.line, start.column))
+            buffer.selectTo(Position(end.line, end.column))
+        } else {
+            buffer.clearSelection()
+        }
+        buffer.moveCursorTo(Position(state.cursorLine, state.cursorColumn), expand = false)
+        scrollTop = state.scrollTop.coerceAtLeast(0)
+    }
 
     fun openFile(
         path: String,
