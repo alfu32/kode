@@ -20,6 +20,7 @@ import editor.ui.FilesTabView
 import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
 import editor.ui.GitPanelView
+import editor.ui.ProjectSearchDialog
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Instant
@@ -120,7 +121,11 @@ private class SplitPanelsApp(
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val gitPanel = GitPanelView(styleSheet, JGitService(File(System.getProperty("user.dir"))))
+    private val projectSearchDialog = ProjectSearchDialog(styleSheet) {
+        projectSearchVisible = false
+    }
     private var currentOpenPath: String = ""
+    private var projectSearchVisible = false
     init {
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -205,11 +210,28 @@ private class SplitPanelsApp(
             }
         }
 
+        if (projectSearchVisible) {
+            projectSearchDialog.render(canvas)
+        }
+
         lastCols = cols
         leftRatio = splitterX.toDouble() / cols.toDouble().coerceAtLeast(1.0)
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind == "key_down") {
+            val key = event.key
+            if (key != null && !event.ctrl && event.alt && key.equals("f", ignoreCase = true)) {
+                projectSearchVisible = true
+                return true
+            }
+        }
+
+        if (projectSearchVisible) {
+            val handled = projectSearchDialog.dispatch(event)
+            return handled
+        }
+
         when (event.kind) {
             "key_down" -> if (event.key?.lowercase() == "q") {
                 onQuit()
