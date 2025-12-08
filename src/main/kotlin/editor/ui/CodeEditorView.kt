@@ -35,6 +35,7 @@ class CodeEditorView(
     private var lastCols: Int = 0
     private var lastRows: Int = 0
     private var searchVisible = false
+    private var searchHasFocus = false
     private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet, this::handleSearchAction)
 
     fun textContent(): String = buffer.text()
@@ -194,20 +195,14 @@ class CodeEditorView(
         val bodyStartRow = 1 + searchHeight
 
         if (event.kind == "key_down" && event.ctrl && event.key?.lowercase() == "f") {
-            openSearch()
+            val selection = if (buffer.hasSelection()) buffer.selectionText() else ""
+            openSearch(selection)
             return true
         }
 
-        if (searchVisible && (event.kind == "key_down" || event.kind.startsWith("mouse"))) {
+        if (searchVisible && event.kind.startsWith("mouse")) {
             val y = event.y ?: 0
-            if (event.kind == "key_down") {
-                val handled = searchBar.dispatch(event)
-                if (handled) {
-                    syncSearchUiFromBuffer()
-                    ensureCursorVisible(rows, searchHeight)
-                    return true
-                }
-            } else if (y in 1 until bodyStartRow) {
+            if (y in 1 until bodyStartRow) {
                 val forwarded = event.alterCopy(
                     UIEvent(
                         kind = event.kind,
@@ -229,8 +224,22 @@ class CodeEditorView(
                     )
                 )
                 val handled = searchBar.dispatch(forwarded)
-                if (handled) return true
+                if (handled) {
+                    searchHasFocus = searchVisible
+                    syncSearchUiFromBuffer()
+                    ensureCursorVisible(rows, searchHeight)
+                    return true
+                }
             }
+        }
+
+        if (searchVisible && event.kind == "key_down" && searchHasFocus) {
+            val handled = searchBar.dispatch(event)
+            if (handled) {
+                syncSearchUiFromBuffer()
+                ensureCursorVisible(rows, searchHeight)
+            }
+            return true
         }
 
         when (event.kind) {
@@ -245,6 +254,7 @@ class CodeEditorView(
                 val y = event.y ?: return false
                 if (y == 0) return false // header
                 if (searchVisible && y in 1 until bodyStartRow) return true
+                searchHasFocus = false
                 dragging = true
                 return handleMouse(event, bodyRows, bodyStartRow, startSelection = true, extendSelection = false)
             }
@@ -371,8 +381,12 @@ class CodeEditorView(
         }
     }
 
-    private fun openSearch() {
+    private fun openSearch(selectionText: String? = null) {
         searchVisible = true
+        searchHasFocus = true
+        if (!selectionText.isNullOrEmpty()) {
+            buffer.updateSearch(Regex.escape(selectionText))
+        }
         searchBar.updateFromSearchState(buffer.searchState())
     }
 
@@ -385,6 +399,7 @@ class CodeEditorView(
             SearchCommand.ReplaceAll -> buffer.replaceAll()
             SearchCommand.Close -> {
                 searchVisible = false
+                searchHasFocus = false
                 return
             }
         }

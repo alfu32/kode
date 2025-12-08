@@ -30,7 +30,8 @@ class SearchReplaceBar(
         }
 
         fun handleKey(key: String, ev: UIEvent): Boolean {
-            when (key) {
+            val normalized = key.lowercase()
+            when (normalized) {
                 "left" -> {
                     if (cursor > 0) {
                         cursor--
@@ -69,12 +70,10 @@ class SearchReplaceBar(
                         return true
                     }
                 }
-                else -> {
-                    if (!ev.ctrl && !ev.alt && !ev.meta && key.length == 1) {
-                        text = text.substring(0, cursor) + key + text.substring(cursor)
-                        cursor++
-                        return true
-                    }
+                else -> if (!ev.ctrl && !ev.alt && !ev.meta && key.length == 1) {
+                    text = text.substring(0, cursor) + key + text.substring(cursor)
+                    cursor++
+                    return true
                 }
             }
             return false
@@ -82,6 +81,8 @@ class SearchReplaceBar(
     }
 
     private var focusedField: Field = Field.FIND
+    private var findFieldBounds: IntRange = 0 until 0
+    private var replaceFieldBounds: IntRange = 0 until 0
     private var findState = InputState()
     private var replaceState = InputState()
     private var matchLabel: String = "no matches"
@@ -132,6 +133,7 @@ class SearchReplaceBar(
         renderField(
             canvas = canvas,
             y = 0,
+            field = Field.FIND,
             label = "Find:",
             state = findState,
             cols = cols,
@@ -149,6 +151,7 @@ class SearchReplaceBar(
         renderField(
             canvas = canvas,
             y = 1,
+            field = Field.REPLACE,
             label = "Replace:",
             state = replaceState,
             cols = cols,
@@ -177,9 +180,18 @@ class SearchReplaceBar(
                 onAction(SearchCommand.Close)
                 return true
             }
+            if (y == 0 && x in findFieldBounds) {
+                focusedField = Field.FIND
+                return true
+            }
+            if (y == 1 && x in replaceFieldBounds) {
+                focusedField = Field.REPLACE
+                return true
+            }
         }
         if (event.kind != "key_down") return false
-        val key = event.key?.lowercase() ?: return false
+        val rawKey = event.key ?: return false
+        val key = rawKey.lowercase()
 
         if (event.ctrl && key == "enter") {
             onAction(SearchCommand.FindAll)
@@ -205,7 +217,7 @@ class SearchReplaceBar(
         }
 
         val target = if (focusedField == Field.FIND) findState else replaceState
-        val changed = target.handleKey(key, event)
+        val changed = target.handleKey(rawKey, event)
         if (changed) {
             if (focusedField == Field.FIND) {
                 findState = target
@@ -222,6 +234,7 @@ class SearchReplaceBar(
     private fun renderField(
         canvas: CanvasRenderer,
         y: Int,
+        field: Field,
         label: String,
         state: InputState,
         cols: Int,
@@ -247,16 +260,22 @@ class SearchReplaceBar(
         val windowStart = (cursor - available + 1).coerceAtLeast(0)
         val visibleText = state.text.substring(windowStart).take(available)
         val padText = visibleText.padEnd(available, ' ')
+        when (field) {
+            Field.FIND -> findFieldBounds = startX until (startX + available)
+            Field.REPLACE -> replaceFieldBounds = startX until (startX + available)
+        }
 
         val fieldStyleToUse = if (active) activeFieldStyle else fieldStyle
         canvas.withStyle(fieldStyleToUse) {
             drawText(startX, y, padText)
         }
 
-        val cursorX = startX + (cursor - windowStart).coerceAtLeast(0).coerceAtMost(available - 1)
-        canvas.withStyle(cursorStyle) {
-            val ch = padText.getOrElse(cursorX - startX) { ' ' }
-            drawText(cursorX, y, ch.toString())
+        if (active) {
+            val cursorX = startX + (cursor - windowStart).coerceAtLeast(0).coerceAtMost(available - 1)
+            canvas.withStyle(cursorStyle) {
+                val ch = padText.getOrElse(cursorX - startX) { ' ' }
+                drawText(cursorX, y, ch.toString())
+            }
         }
 
         canvas.withStyle(trailingStyle) {
