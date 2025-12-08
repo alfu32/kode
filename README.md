@@ -1,9 +1,9 @@
 # KODE - Code Editor
 
-![img_7.png](img_7.png)
-![img_8.png](img_8.png)
-![img_9.png](img_9.png)
+![img_12.png](img_12.png)
 ![img_10.png](img_10.png)
+![img_9.png](img_9.png)
+![img_8.png](img_8.png)
 
 ## Objectives
 - Build a terminal-first editor workspace with split panes, tabs, and multiple viewers (code, hex, image) selected by MIME.
@@ -36,6 +36,12 @@
 - Dependencies: JGit for Git panel, Korim/Korio + coroutines for image loading, TM4E available for TM tokenization, and internal StyleSet/Renderer helpers for consistent styling.
 - Tasks: `generateTmScopes` builds `grammars/tm-scopes.css` from grammar scopes (optional if using TM4E). Keep README aligned when adding viewers, sliders, detector/grammar changes; style names live in `styles/app.css` (e.g., `slider-track`, `slider-indicator`, `image-*`, `code-*`).
 
+
+![img_11.png](img_11.png)
+![img_10.png](img_10.png)
+![img_9.png](img_9.png)
+![img_8.png](img_8.png)
+![img_7.png](img_7.png)
 ![img_6.png](img_6.png)
 ![img_5.png](img_5.png)
 ![img_4.png](img_4.png)

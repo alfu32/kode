@@ -27086,6 +27086,12 @@
             "viewerType": "IMAGE"
         },
         {
+            "path": "kode-rel-1.0.0-jvm/kode.jar",
+            "lastOpenedEpochMillis": 1765203202487,
+            "lastModifiedMillis": 1765202359000,
+            "viewerType": "HEX"
+        },
+        {
             "path": "src/main/kotlin/editor/app/ProjectSession.kt",
             "lastOpenedEpochMillis": 1765202393786,
             "lastModifiedMillis": 1765192403460,
@@ -30645,7 +30651,7 @@
         },
         {
             "path": "src/main/kotlin/editor/ui/GitPanelView.kt",
-            "lastOpenedEpochMillis": 1765202407058,
+            "lastOpenedEpochMillis": 1765203267232,
             "lastModifiedMillis": 1765201278956,
             "editor": {
                 "path": "src/main/kotlin/editor/ui/GitPanelView.kt",
@@ -36516,7 +36522,7 @@
         },
         {
             "path": "src/test/resources/sample-00-racoon.png",
-            "lastOpenedEpochMillis": 1765195282487,
+            "lastOpenedEpochMillis": 1765203224219,
             "lastModifiedMillis": 1764967754044,
             "viewerType": "IMAGE"
         },
