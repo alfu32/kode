@@ -158,9 +158,6 @@ class DefaultMimeTypeDetector(
             val trimmed = data.toString(Charsets.UTF_8).trimStart()
             trimmed.startsWith("<svg") || trimmed.startsWith("<?xml")
         },
-        SignatureDetector("text/plain", ".txt") { data ->
-            looksLikeText(data)
-        },
     )
 
     private fun ByteArray.startsWith(prefix: ByteArray): Boolean {

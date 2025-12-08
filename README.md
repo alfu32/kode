@@ -14,6 +14,7 @@
 - Split view: left vertical tabs (Files/Git/Settings), right viewer chosen by MIME (text → code editor, image → ASCII/Braille image viewer, else hex viewer). Splitter is mouse-draggable.
 - File tree uses [+]/[-]/[=] icons, expands/collapses, and opens files in the right viewer; focus follows click for correct input routing.
 - Code editor: guttered view, full mouse/keyboard navigation (select, word-jump, page up/down), cursor/selection rendering, and focus-aware input.
+- Find/Replace: `Ctrl+F` opens the IntelliJ-style bar above the code viewport (shrinks content); `Enter` finds next, `Ctrl+Enter` finds all, `Ctrl+R` replaces current, `Ctrl+Shift+R` replaces all, `Tab` switches between find/replace fields, and `Esc` closes the bar. All matches stay highlighted (with an active-match accent) while the search state lives in the text buffer.
 - Code highlighting: keyword-only regex highlighter; patterns come from `keyword-patterns.txt` (language=regex) and colors from `token-colors.txt` (qualifier=hex). Tokens carry fg color directly to avoid stylesheet lookups.
 - Hex editor: dual cursors (hex/ASCII), scroll keys, selection, and byte-buffer backing.
 - Image viewer: ASCII and Braille modes, width/gray/contrast sliders (mouse drag/click, toggle button), aspect-aware sizing, per-cell color from Korim-rendered samples.
@@ -40,4 +41,3 @@
 ![img_2.png](img_2.png)
 ![img_1.png](img_1.png)
 ![img.png](img.png)
-

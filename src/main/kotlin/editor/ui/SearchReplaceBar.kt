@@ -1,0 +1,245 @@
+package editor.ui
+
+import editor.lib.SearchState
+import react.BaseComponent
+import react.StyleSet
+import react.StyleSheet
+import react.UIEvent
+import react.renderer.CanvasRenderer
+import kotlin.math.max
+
+class SearchReplaceBar(
+    styleSheet: StyleSheet,
+    private val onAction: (SearchCommand) -> Unit
+) : BaseComponent(styleSheet) {
+
+    enum class Field { FIND, REPLACE }
+
+    sealed class SearchCommand {
+        data class Change(val query: String, val replacement: String) : SearchCommand()
+        object FindNext : SearchCommand()
+        object FindAll : SearchCommand()
+        object ReplaceOne : SearchCommand()
+        object ReplaceAll : SearchCommand()
+        object Close : SearchCommand()
+    }
+
+    private data class InputState(var text: String = "", var cursor: Int = 0) {
+        fun clampCursor() {
+            cursor = cursor.coerceIn(0, text.length)
+        }
+
+        fun handleKey(key: String, ev: UIEvent): Boolean {
+            when (key) {
+                "left" -> {
+                    if (cursor > 0) {
+                        cursor--
+                        return true
+                    }
+                }
+                "right" -> {
+                    if (cursor < text.length) {
+                        cursor++
+                        return true
+                    }
+                }
+                "home" -> {
+                    if (cursor != 0) {
+                        cursor = 0
+                        return true
+                    }
+                }
+                "end" -> {
+                    val end = text.length
+                    if (cursor != end) {
+                        cursor = end
+                        return true
+                    }
+                }
+                "backspace" -> {
+                    if (cursor > 0) {
+                        text = text.removeRange(cursor - 1, cursor)
+                        cursor--
+                        return true
+                    }
+                }
+                "delete" -> {
+                    if (cursor < text.length) {
+                        text = text.removeRange(cursor, cursor + 1)
+                        return true
+                    }
+                }
+                else -> {
+                    if (!ev.ctrl && !ev.alt && !ev.meta && key.length == 1) {
+                        text = text.substring(0, cursor) + key + text.substring(cursor)
+                        cursor++
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+    }
+
+    private var focusedField: Field = Field.FIND
+    private var findState = InputState()
+    private var replaceState = InputState()
+    private var matchLabel: String = "no matches"
+    private val barHeight = 2
+
+    fun preferredHeight(): Int = barHeight
+
+    fun updateFromSearchState(state: SearchState) {
+        if (findState.text != state.query) {
+            findState = findState.copy(text = state.query, cursor = state.query.length)
+        }
+        if (replaceState.text != state.replacement) {
+            replaceState = replaceState.copy(text = state.replacement, cursor = state.replacement.length)
+        }
+        updateMatchLabel(state.activeIndex, state.matchCount)
+    }
+
+    fun updateMatchLabel(activeIndex: Int, total: Int) {
+        matchLabel = when {
+            total <= 0 -> "no matches"
+            activeIndex < 0 -> "0/$total"
+            else -> "${activeIndex + 1}/$total"
+        }
+    }
+
+    override fun render(canvas: CanvasRenderer) {
+        val cols = canvas.cols().coerceAtLeast(1)
+        val barStyle = styleSheet.getStyle("code-search-bar").withDefaults()
+        val labelStyle = styleSheet.getStyle("code-search-label").withDefaults(barStyle.fg, barStyle.bg)
+        val fieldStyle = styleSheet.getStyle("code-search-field").withDefaults(barStyle.fg, barStyle.bg)
+        val activeFieldStyle = styleSheet.getStyle("code-search-field-active").withDefaults(fieldStyle.fg, fieldStyle.bg)
+        val cursorStyle = styleSheet.getStyle("code-search-cursor").withDefaults(barStyle.bg ?: fieldStyle.bg, barStyle.fg ?: fieldStyle.fg)
+        val statusStyle = styleSheet.getStyle("code-search-status").withDefaults(labelStyle.fg, labelStyle.bg)
+        val hintStyle = styleSheet.getStyle("code-search-hint").withDefaults(labelStyle.fg, labelStyle.bg)
+
+        canvas.applyStyle(barStyle) {
+            drawRect(0, 0, cols, barHeight)
+        }
+
+        renderField(
+            canvas = canvas,
+            y = 0,
+            label = "Find:",
+            state = findState,
+            cols = cols,
+            active = focusedField == Field.FIND,
+            labelStyle = labelStyle,
+            fieldStyle = fieldStyle,
+            activeFieldStyle = activeFieldStyle,
+            cursorStyle = cursorStyle,
+            trailing = matchLabel,
+            trailingStyle = statusStyle
+        )
+
+        val hints = "Enter:Next  Ctrl+Enter:All  Ctrl+R:Replace  Ctrl+Shift+R:All  Esc:Close"
+        renderField(
+            canvas = canvas,
+            y = 1,
+            label = "Replace:",
+            state = replaceState,
+            cols = cols,
+            active = focusedField == Field.REPLACE,
+            labelStyle = labelStyle,
+            fieldStyle = fieldStyle,
+            activeFieldStyle = activeFieldStyle,
+            cursorStyle = cursorStyle,
+            trailing = hints,
+            trailingStyle = hintStyle
+        )
+    }
+
+    override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind != "key_down") return false
+        val key = event.key?.lowercase() ?: return false
+
+        if (event.ctrl && key == "enter") {
+            onAction(SearchCommand.FindAll)
+            return true
+        }
+        if (event.ctrl && key == "r" && event.shift) {
+            onAction(SearchCommand.ReplaceAll)
+            return true
+        }
+        if (event.ctrl && key == "r") {
+            onAction(SearchCommand.ReplaceOne)
+            return true
+        }
+        when (key) {
+            "enter" -> {
+                onAction(SearchCommand.FindNext)
+                return true
+            }
+            "tab" -> {
+                focusedField = if (focusedField == Field.FIND) Field.REPLACE else Field.FIND
+                return true
+            }
+            "escape" -> {
+                onAction(SearchCommand.Close)
+                return true
+            }
+        }
+
+        val target = if (focusedField == Field.FIND) findState else replaceState
+        val changed = target.handleKey(key, event)
+        if (changed) {
+            if (focusedField == Field.FIND) {
+                findState = target
+            } else {
+                replaceState = target
+            }
+            onAction(SearchCommand.Change(findState.text, replaceState.text))
+            return true
+        }
+
+        return false
+    }
+
+    private fun renderField(
+        canvas: CanvasRenderer,
+        y: Int,
+        label: String,
+        state: InputState,
+        cols: Int,
+        active: Boolean,
+        labelStyle: StyleSet,
+        fieldStyle: StyleSet,
+        activeFieldStyle: StyleSet,
+        cursorStyle: StyleSet,
+        trailing: String,
+        trailingStyle: StyleSet
+    ) {
+        val labelText = "$label "
+        canvas.applyStyle(labelStyle) {
+            drawText(0, y, labelText.take(cols).padEnd(labelText.length.coerceAtMost(cols), ' '))
+        }
+        val startX = labelText.length
+        val trailingText = trailing.take(max(0, cols - startX))
+        val trailingStart = cols - trailingText.length
+        val available = (trailingStart - startX).coerceAtLeast(1)
+
+        val cursor = state.cursor.coerceIn(0, state.text.length)
+        val windowStart = (cursor - available + 1).coerceAtLeast(0)
+        val visibleText = state.text.substring(windowStart).take(available)
+        val padText = visibleText.padEnd(available, ' ')
+
+        val fieldStyleToUse = if (active) activeFieldStyle else fieldStyle
+        canvas.applyStyle(fieldStyleToUse) {
+            drawText(startX, y, padText)
+        }
+
+        val cursorX = startX + (cursor - windowStart).coerceAtLeast(0).coerceAtMost(available - 1)
+        canvas.applyStyle(cursorStyle) {
+            val ch = padText.getOrElse(cursorX - startX) { ' ' }
+            drawText(cursorX, y, ch.toString())
+        }
+
+        canvas.applyStyle(trailingStyle) {
+            drawText(trailingStart, y, trailingText)
+        }
+    }
+}

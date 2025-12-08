@@ -91,6 +91,10 @@ class TextBuffer : ITextBuffer {
     private val notifications = mutableListOf<Notification>()
     private var bufferBom: String = ""
     private var bufferEncoding: String = "UTF-8"
+    private var searchQuery: String = ""
+    private var replacementText: String = ""
+    private var matches: List<SelectionRange> = emptyList()
+    private var activeMatchIndex: Int = -1
 
 
     /*  
@@ -120,6 +124,10 @@ class TextBuffer : ITextBuffer {
         b.cursor = Position(cursor.line, cursor.column)
         b.anchor = anchor?.let { Position(it.line, it.column) }
         b.clipboard = clipboard
+        b.searchQuery = searchQuery
+        b.replacementText = replacementText
+        b.matches = matches.map { SelectionRange(Position(it.start.line, it.start.column), Position(it.end.line, it.end.column)) }
+        b.activeMatchIndex = activeMatchIndex
         return b
     }
 
@@ -129,6 +137,7 @@ class TextBuffer : ITextBuffer {
         if (n.endsWith("\n")) lines.add("")
         cursor = Position(0, 0)
         anchor = null
+        refreshSearchAfterChange()
     }
 
 
@@ -224,6 +233,7 @@ class TextBuffer : ITextBuffer {
         if (parts.size == 1) {
             lines[cursor.line] = prefix + parts[0] + suffix
             cursor.column += parts[0].length
+            refreshSearchAfterChange()
             return
         }
 
@@ -238,6 +248,7 @@ class TextBuffer : ITextBuffer {
 
         cursor.line = insertIdx
         cursor.column = parts.last().length
+        refreshSearchAfterChange()
     }
 
     override fun insertNewline() = insertText("\n")
@@ -256,6 +267,7 @@ class TextBuffer : ITextBuffer {
             lines[cursor.line] =
                 line.substring(0, cursor.column - 1) + line.substring(cursor.column)
             cursor.column--
+            refreshSearchAfterChange()
             return
         }
         if (cursor.line == 0) return
@@ -267,6 +279,7 @@ class TextBuffer : ITextBuffer {
         lines.removeAt(cursor.line)
         cursor.line--
         cursor.column = above.length
+        refreshSearchAfterChange()
     }
 
     override fun deleteForward() {
@@ -275,12 +288,14 @@ class TextBuffer : ITextBuffer {
         if (cursor.column < line.length) {
             lines[cursor.line] =
                 line.substring(0, cursor.column) + line.substring(cursor.column + 1)
+            refreshSearchAfterChange()
             return
         }
         if (cursor.line == lines.size - 1) return
 
         lines[cursor.line] = line + lines[cursor.line + 1]
         lines.removeAt(cursor.line + 1)
+        refreshSearchAfterChange()
     }
 
 
@@ -487,7 +502,197 @@ class TextBuffer : ITextBuffer {
 
         cursor = Position(s.start.line, s.start.column)
         anchor = null
+        refreshSearchAfterChange()
         return true
+    }
+
+
+    /*  
+    ===============================================================
+      SEARCH & REPLACE
+    ===============================================================
+    */
+
+    override fun updateSearch(query: String, replacement: String?) {
+        val newReplacement = replacement ?: replacementText
+        val changed = (query != searchQuery) || (newReplacement != replacementText)
+        searchQuery = query
+        replacementText = newReplacement
+        if (changed) activeMatchIndex = -1
+        if (changed) rebuildSearchResults()
+    }
+
+    override fun searchState(): SearchState =
+        SearchState(searchQuery, replacementText, matches.size, activeMatchIndex)
+
+    override fun foundTokens(): List<FoundToken> {
+        if (searchQuery.isEmpty() || matches.isEmpty()) return emptyList()
+        val tokens = mutableListOf<FoundToken>()
+        matches.forEachIndexed { idx, range ->
+            val isActive = idx == activeMatchIndex
+            if (range.start.line == range.end.line) {
+                tokens.add(
+                    FoundToken(
+                        line = range.start.line,
+                        startColumn = range.start.column,
+                        endColumn = range.end.column,
+                        active = isActive
+                    )
+                )
+            } else {
+                tokens.add(
+                    FoundToken(
+                        line = range.start.line,
+                        startColumn = range.start.column,
+                        endColumn = lines[range.start.line].length,
+                        active = isActive
+                    )
+                )
+                for (line in (range.start.line + 1) until range.end.line) {
+                    tokens.add(
+                        FoundToken(
+                            line = line,
+                            startColumn = 0,
+                            endColumn = lines[line].length,
+                            active = isActive
+                        )
+                    )
+                }
+                tokens.add(
+                    FoundToken(
+                        line = range.end.line,
+                        startColumn = 0,
+                        endColumn = range.end.column,
+                        active = isActive
+                    )
+                )
+            }
+        }
+        return tokens
+    }
+
+    override fun findAll(): List<FoundToken> {
+        rebuildSearchResults()
+        return foundTokens()
+    }
+
+    override fun findNext(): SelectionRange? {
+        if (searchQuery.isEmpty()) return null
+        if (matches.isEmpty()) rebuildSearchResults()
+        if (matches.isEmpty()) return null
+
+        activeMatchIndex = if (activeMatchIndex in matches.indices) {
+            (activeMatchIndex + 1) % matches.size
+        } else 0
+
+        val target = matches[activeMatchIndex]
+        anchor = Position(target.start.line, target.start.column)
+        cursor = Position(target.end.line, target.end.column)
+        return target
+    }
+
+    override fun replaceCurrent(): Boolean {
+        if (searchQuery.isEmpty()) return false
+        if (matches.isEmpty()) rebuildSearchResults()
+        if (matches.isEmpty()) return false
+        if (activeMatchIndex !in matches.indices) activeMatchIndex = 0
+
+        val target = matches[activeMatchIndex]
+        val startIdx = positionToIndex(target.start)
+        val endIdx = positionToIndex(target.end)
+        val cursorAfterReplace = replaceRangeFlat(startIdx, endIdx, replacementText)
+
+        rebuildSearchResults()
+        if (matches.isEmpty()) {
+            activeMatchIndex = -1
+        } else {
+            activeMatchIndex = matches.indexOfFirst { positionToIndex(it.start) >= cursorAfterReplace }
+            if (activeMatchIndex == -1) activeMatchIndex = 0
+        }
+        return true
+    }
+
+    override fun replaceAll(): Int {
+        if (searchQuery.isEmpty()) return 0
+        if (matches.isEmpty()) rebuildSearchResults()
+        val count = matches.size
+        if (count == 0) return 0
+
+        val newText = text().replace(searchQuery, replacementText)
+        loadText(newText)
+        rebuildSearchResults()
+        return count
+    }
+
+    private fun replaceRangeFlat(startIndex: Int, endIndex: Int, replacement: String): Int {
+        val content = text()
+        if (startIndex >= content.length) return content.length
+        val safeStart = startIndex.coerceIn(0, content.length)
+        val safeEnd = endIndex.coerceIn(safeStart, content.length)
+        val newText = content.replaceRange(safeStart, safeEnd, replacement)
+        loadText(newText)
+        val newCursorIndex = safeStart + replacement.length
+        val pos = indexToPosition(newCursorIndex)
+        cursor = pos
+        anchor = null
+        return newCursorIndex
+    }
+
+    private fun rebuildSearchResults() {
+        if (searchQuery.isEmpty()) {
+            matches = emptyList()
+            activeMatchIndex = -1
+            return
+        }
+        val content = text()
+        if (content.isEmpty()) {
+            matches = emptyList()
+            activeMatchIndex = -1
+            return
+        }
+        val found = mutableListOf<SelectionRange>()
+        var idx = content.indexOf(searchQuery)
+        while (idx >= 0) {
+            val end = idx + searchQuery.length
+            val startPos = indexToPosition(idx)
+            val endPos = indexToPosition(end)
+            found.add(SelectionRange(startPos, endPos))
+            idx = content.indexOf(searchQuery, idx + searchQuery.length.coerceAtLeast(1))
+        }
+        matches = found
+        activeMatchIndex = activeMatchIndex.takeIf { it in matches.indices } ?: -1
+    }
+
+    private fun refreshSearchAfterChange() {
+        if (searchQuery.isEmpty()) {
+            matches = emptyList()
+            activeMatchIndex = -1
+            return
+        }
+        rebuildSearchResults()
+    }
+
+    private fun positionToIndex(pos: Position): Int {
+        var idx = 0
+        val targetLine = pos.line.coerceIn(0, lines.size.coerceAtLeast(1) - 1)
+        for (i in 0 until targetLine) {
+            idx += lines[i].length + 1 // include newline
+        }
+        val col = pos.column.coerceIn(0, lines[targetLine].length)
+        return idx + col
+    }
+
+    private fun indexToPosition(index: Int): Position {
+        if (lines.isEmpty()) return Position(0, 0)
+        var remaining = index
+        lines.forEachIndexed { lineIdx, line ->
+            val span = line.length
+            if (remaining <= span) {
+                return Position(lineIdx, remaining)
+            }
+            remaining -= (span + 1)
+        }
+        return Position(lines.size - 1, lines.last().length.coerceAtLeast(0))
     }
 
 

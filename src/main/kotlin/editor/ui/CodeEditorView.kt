@@ -1,5 +1,6 @@
 package editor.ui
 
+import editor.lib.FoundToken
 import editor.lib.ITextBuffer
 import editor.lib.Position
 import editor.lib.SelectionRange
@@ -9,13 +10,13 @@ import editor.lib.handleMouseToBuffer
 import editor.mime.MimeTypeResult
 import editor.grammars.SyntaxProvider
 import react.BaseComponent
+import react.ClippedCanvasRenderer
 import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.Path
+import editor.ui.SearchReplaceBar.SearchCommand
 
 class CodeEditorView(
     styleSheet: StyleSheet,
@@ -33,6 +34,8 @@ class CodeEditorView(
     private var dragging = false
     private var lastCols: Int = 0
     private var lastRows: Int = 0
+    private var searchVisible = false
+    private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet, this::handleSearchAction)
 
     fun openFile(
         path: String,
@@ -66,7 +69,12 @@ class CodeEditorView(
             .withDefaults(fg = baseBody.bg ?: gutterStyle.bg, bg = baseBody.fg ?: gutterStyle.fg)
         val cursorStyle = localStyleSheet.getStyle("code-cursor")
             .withDefaults(fg = baseBody.bg ?: gutterStyle.bg, bg = baseBody.fg ?: gutterStyle.fg)
+        val searchMatchStyle = localStyleSheet.getStyle("code-search-match").withDefaults(baseBody.fg, baseBody.bg)
+        val searchActiveMatchStyle =
+            localStyleSheet.getStyle("code-search-active").withDefaults(searchMatchStyle.fg, searchMatchStyle.bg)
         val bodyStyle = baseBody
+        val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
+        val bodyStartRow = 1 + searchHeight
 
         // Header bar with file path and mime
         canvas.applyStyle(headerStyle) {
@@ -78,7 +86,20 @@ class CodeEditorView(
             drawText(0, 0, label.padEnd(cols, ' '))
         }
 
-        val bodyRows = (rows - 1).coerceAtLeast(0)
+        if (searchVisible && searchHeight > 0) {
+            val clipped = ClippedCanvasRenderer(
+                base = canvas,
+                offsetX = 0,
+                offsetY = 1,
+                width = cols,
+                height = searchHeight
+            )
+            val state = buffer.searchState()
+            searchBar.updateMatchLabel(state.activeIndex, state.matchCount)
+            searchBar.render(clipped)
+        }
+
+        val bodyRows = (rows - bodyStartRow).coerceAtLeast(0)
         if (bodyRows == 0) return
 
         val visibleLines = buffer.text().split("\n").drop(scrollTop).take(bodyRows)
@@ -88,38 +109,43 @@ class CodeEditorView(
         } else {
             emptyMap()
         }
+        val searchTokensByLine = buffer.foundTokens().groupBy { it.line }
         val gutterWidth = computeGutterWidth()
         canvas.applyStyle(bodyStyle) {
-            drawRect(0, 1, cols, bodyRows)
+            drawRect(0, bodyStartRow, cols, bodyRows)
             visibleLines.forEachIndexed { idx, textLine ->
                 val lineNumber = scrollTop + idx
                 // gutter
                 canvas.applyStyle(gutterStyle) {
                     val g = (lineNumber + 1).toString().padStart(gutterWidth - 1, ' ') + " "
-                    drawText(0, 1 + idx, g.take(gutterWidth))
+                    drawText(0, bodyStartRow + idx, g.take(gutterWidth))
                 }
                 val contentCols = (cols - gutterWidth).coerceAtLeast(0)
                 if (contentCols <= 0) return@forEachIndexed
                 val tokens = tokensByLine[lineNumber] ?: emptyList()
                 val selectionCols = selectionRangeForLine(selection, lineNumber, textLine)
+                val highlights = searchTokensByLine[lineNumber] ?: emptyList()
                 renderLineWithTokens(
                     canvas = this,
                     text = textLine,
-                    y = 1 + idx,
+                    y = bodyStartRow + idx,
                     startX = gutterWidth,
                     maxCols = contentCols,
                     tokens = tokens,
                     baseStyle = bodyStyle,
                     selection = selectionCols,
-                    selectionStyle = selectionStyle
+                    selectionStyle = selectionStyle,
+                    highlights = highlights,
+                    highlightStyle = searchMatchStyle,
+                    activeHighlightStyle = searchActiveMatchStyle
                 )
             }
         }
 
         val cursor = buffer.cursorPosition()
         val cx = (gutterWidth + cursor.column).coerceAtMost(cols - 1)
-        val cy = 1 + (cursor.line - scrollTop)
-        if (cy in 1 until rows) {
+        val cy = bodyStartRow + (cursor.line - scrollTop)
+        if (cy in bodyStartRow until rows) {
             val ch = visibleLines.getOrNull(cursor.line - scrollTop)?.getOrNull(cursor.column)?.toString() ?: " "
             canvas.applyStyle(cursorStyle) {
                 drawText(cx, cy, ch)
@@ -129,7 +155,23 @@ class CodeEditorView(
 
     override fun dispatch(event: UIEvent): Boolean {
         val rows = (event.rows ?: lastRows).coerceAtLeast(1)
-        val bodyRows = (rows - 1).coerceAtLeast(0)
+        val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
+        val bodyRows = (rows - 1 - searchHeight).coerceAtLeast(0)
+        val bodyStartRow = 1 + searchHeight
+
+        if (event.kind == "key_down" && event.ctrl && event.key?.lowercase() == "f") {
+            openSearch()
+            return true
+        }
+
+        if (searchVisible && event.kind == "key_down") {
+            val handled = searchBar.dispatch(event)
+            if (handled) {
+                syncSearchUiFromBuffer()
+                ensureCursorVisible(rows, searchHeight)
+                return true
+            }
+        }
 
         when (event.kind) {
             "mouse_scroll" -> {
@@ -142,8 +184,9 @@ class CodeEditorView(
             "mouse_down" -> {
                 val y = event.y ?: return false
                 if (y == 0) return false // header
+                if (searchVisible && y in 1 until bodyStartRow) return true
                 dragging = true
-                return handleMouse(event, bodyRows, startSelection = true, extendSelection = false)
+                return handleMouse(event, bodyRows, bodyStartRow, startSelection = true, extendSelection = false)
             }
             "mouse_up" -> {
                 dragging = false
@@ -151,7 +194,7 @@ class CodeEditorView(
             }
             "mouse_move" -> {
                 if (!dragging) return false
-                return handleMouse(event, bodyRows, startSelection = false, extendSelection = true)
+                return handleMouse(event, bodyRows, bodyStartRow, startSelection = false, extendSelection = true)
             }
             "key_down" -> {
                 val key = event.key?.lowercase()
@@ -159,7 +202,7 @@ class CodeEditorView(
                     val delta = if (key == "pageup") -bodyRows else bodyRows
                     val newLine = (buffer.cursorPosition().line + delta).coerceIn(0, buffer.totalLines().coerceAtLeast(1) - 1)
                     buffer.moveCursorTo(Position(newLine, buffer.cursorPosition().column), expand = event.shift)
-                    ensureCursorVisible(rows)
+                    ensureCursorVisible(rows, searchHeight)
                     return true
                 }
                 val beforeCursor = buffer.cursorPosition()
@@ -170,15 +213,15 @@ class CodeEditorView(
                 val afterSelection = if (buffer.hasSelection()) buffer.selectionText() else null
                 val moved = beforeCursor != afterCursor || beforeSelection != afterSelection
                 val textChanged = beforeText != buffer.text()
-                ensureCursorVisible(rows)
+                ensureCursorVisible(rows, searchHeight)
                 return changed || moved || textChanged
             }
         }
         return true
     }
 
-    private fun ensureCursorVisible(totalRows: Int) {
-        val bodyRows = (totalRows - 1).coerceAtLeast(0)
+    private fun ensureCursorVisible(totalRows: Int, searchHeight: Int) {
+        val bodyRows = (totalRows - 1 - searchHeight).coerceAtLeast(0)
         if (bodyRows == 0) return
         val cursor = buffer.cursorPosition()
         if (cursor.line < scrollTop) {
@@ -188,13 +231,13 @@ class CodeEditorView(
         }
     }
 
-    private fun handleMouse(event: UIEvent, bodyRows: Int, startSelection: Boolean, extendSelection: Boolean): Boolean {
+    private fun handleMouse(event: UIEvent, bodyRows: Int, bodyStartRow: Int, startSelection: Boolean, extendSelection: Boolean): Boolean {
         val ex = event.x ?: return false
         val ey = event.y ?: return false
-        if (ey <= 0) return false
+        if (ey < bodyStartRow) return false
         val gutterWidth = computeGutterWidth()
         val relX = (ex - gutterWidth).coerceAtLeast(0) + 1 // +1 because handler subtracts 1
-        val relY = ey - 1
+        val relY = ey - bodyStartRow
         val mapped = event.alterCopy(
             UIEvent(
                 kind = event.kind,
@@ -223,7 +266,7 @@ class CodeEditorView(
             startSelection = startSelection,
             extendSelection = extendSelection
         )
-        ensureCursorVisible((event.rows ?: 0))
+        ensureCursorVisible((event.rows ?: 0), bodyStartRow - 1)
         return true
     }
 
@@ -258,6 +301,38 @@ class CodeEditorView(
     fun updateStyleSheet(styleSheet: StyleSheet) {
         this.localStyleSheet = styleSheet
         styleCache.clear()
+        val searchState = buffer.searchState()
+        searchBar = SearchReplaceBar(styleSheet, this::handleSearchAction).also {
+            it.updateFromSearchState(searchState)
+        }
+    }
+
+    private fun openSearch() {
+        searchVisible = true
+        searchBar.updateFromSearchState(buffer.searchState())
+    }
+
+    private fun handleSearchAction(action: SearchCommand) {
+        when (action) {
+            is SearchCommand.Change -> buffer.updateSearch(action.query, action.replacement)
+            SearchCommand.FindNext -> buffer.findNext()
+            SearchCommand.FindAll -> buffer.findAll()
+            SearchCommand.ReplaceOne -> buffer.replaceCurrent()
+            SearchCommand.ReplaceAll -> buffer.replaceAll()
+            SearchCommand.Close -> {
+                searchVisible = false
+                return
+            }
+        }
+        syncSearchUiFromBuffer()
+        val currentRows = lastRows.coerceAtLeast(1)
+        val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(currentRows - 1) else 0
+        ensureCursorVisible(currentRows, searchHeight)
+    }
+
+    private fun syncSearchUiFromBuffer() {
+        val state = buffer.searchState()
+        searchBar.updateMatchLabel(state.activeIndex, state.matchCount)
     }
 
     private fun renderLineWithTokens(
@@ -269,11 +344,15 @@ class CodeEditorView(
         tokens: List<editor.grammars.Token>,
         baseStyle: StyleSet,
         selection: IntRange?,
-        selectionStyle: StyleSet
+        selectionStyle: StyleSet,
+        highlights: List<FoundToken>,
+        highlightStyle: StyleSet,
+        activeHighlightStyle: StyleSet
     ) {
         if (maxCols <= 0) return
         val baseSegments = buildSegments(text, tokens, baseStyle)
-        val withSelection = applySelection(baseSegments, selection, selectionStyle)
+        val withHighlights = applyHighlights(baseSegments, highlights, highlightStyle, activeHighlightStyle)
+        val withSelection = applySelection(withHighlights, selection, selectionStyle)
         withSelection.forEach { seg ->
             if (seg.start >= maxCols) return
             val drawEnd = minOf(seg.end, maxCols, text.length)
@@ -356,6 +435,49 @@ class CodeEditorView(
             }
             if (seg.end > selEnd) {
                 out.add(StyledSegment(selEnd, seg.end, seg.style))
+            }
+        }
+        return out
+    }
+
+    private fun applyHighlights(
+        segments: List<StyledSegment>,
+        highlights: List<FoundToken>,
+        highlightStyle: StyleSet,
+        activeHighlightStyle: StyleSet
+    ): List<StyledSegment> {
+        if (highlights.isEmpty()) return segments
+        var current = segments
+        highlights.sortedBy { it.startColumn }.forEach { token ->
+            val style = if (token.active) activeHighlightStyle else highlightStyle
+            current = overlayRange(current, token.startColumn, token.endColumn, style)
+        }
+        return current
+    }
+
+    private fun overlayRange(
+        segments: List<StyledSegment>,
+        start: Int,
+        end: Int,
+        style: StyleSet
+    ): List<StyledSegment> {
+        if (segments.isEmpty() || start >= end) return segments
+        val out = mutableListOf<StyledSegment>()
+        segments.forEach { seg ->
+            if (seg.end <= start || seg.start >= end) {
+                out.add(seg)
+                return@forEach
+            }
+            if (seg.start < start) {
+                out.add(StyledSegment(seg.start, start, seg.style))
+            }
+            val overlayStart = maxOf(seg.start, start)
+            val overlayEnd = minOf(seg.end, end)
+            if (overlayStart < overlayEnd) {
+                out.add(StyledSegment(overlayStart, overlayEnd, style))
+            }
+            if (seg.end > end) {
+                out.add(StyledSegment(end, seg.end, seg.style))
             }
         }
         return out

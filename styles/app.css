@@ -161,6 +161,42 @@ code-cursor {
     fg: #3f4e7e;
     bg: #b6b9c5;
 }
+code-search-bar {
+    bg: #25345a;
+    fg: #e6e9f5;
+}
+code-search-label {
+    bg: #25345a;
+    fg: #9fb7ff;
+}
+code-search-field {
+    bg: #1a2237;
+    fg: #e6e9f5;
+}
+code-search-field-active {
+    bg: #31406a;
+    fg: #ffffff;
+}
+code-search-cursor {
+    bg: #e6e9f5;
+    fg: #1a2237;
+}
+code-search-status {
+    bg: #25345a;
+    fg: #ffc66d;
+}
+code-search-hint {
+    bg: #25345a;
+    fg: #b6b9c5;
+}
+code-search-match {
+    bg: #26406d;
+    fg: #e6e9f5;
+}
+code-search-active {
+    bg: #d8e6ff;
+    fg: #13203c;
+}
 slider-track {
     bg: #3f4e7e;
     fg: #b6b9c5;

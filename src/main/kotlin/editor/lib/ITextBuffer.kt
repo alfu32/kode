@@ -50,6 +50,14 @@ interface ITextBuffer {
     fun selectionRange(): SelectionRange?
     fun clearSelection()
 
+    fun updateSearch(query: String, replacement: String? = null)
+    fun searchState(): SearchState
+    fun foundTokens(): List<FoundToken>
+    fun findNext(): SelectionRange?
+    fun findAll(): List<FoundToken>
+    fun replaceCurrent(): Boolean
+    fun replaceAll(): Int
+
     fun viewportSlice(view: EditorViewport, gutterWidth: Int): ViewportSlice
 }
 
@@ -80,6 +88,20 @@ data class EditorState(
     val totalLines: Int,
     val bom: String,
     val encoding: String
+)
+
+data class SearchState(
+    val query: String,
+    val replacement: String,
+    val matchCount: Int,
+    val activeIndex: Int
+)
+
+data class FoundToken(
+    val line: Int,
+    val startColumn: Int,
+    val endColumn: Int,
+    val active: Boolean
 )
 
 fun handleMouseToBuffer(
