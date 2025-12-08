@@ -20,8 +20,6 @@ dependencies {
     implementation("com.soywiz.korlibs.korim:korim:4.0.10")
     implementation("com.soywiz.korlibs.korio:korio:4.0.10")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    implementation("org.eclipse:org.eclipse.tm4e.core:0.17.2-SNAPSHOT")
-    implementation("org.eclipse:org.eclipse.tm4e:0.17.2-SNAPSHOT")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 }
 

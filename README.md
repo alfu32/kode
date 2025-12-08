@@ -22,7 +22,7 @@
 - **Terminal/Renderer**: ANSI canvas with back buffer diffing; `CanvasRenderer.applyStyle` and `StyleSet.withDefaults` centralize styling. Raw-mode event loop normalizes key/mouse/resize.
 - **Buffers**: `TextBuffer` (cursor, selection, word/nav ops) and `ByteBuffer` (hex editor) power the editors; viewport slicing drives rendering.
 - **MIME**: `DefaultMimeTypeDetector` uses a literal lookup table with hardcoded categories (TEXT/IMAGE/BINARY) plus signature/byte-scans; routing picks the viewer accordingly.
-- **Grammars**: Lightweight keyword-only regex provider. Patterns are loaded at runtime from `keyword-patterns.txt`; colors from `token-colors.txt`. Tokens include fg color, so the editor skips per-scope stylesheet lookup. TM4E loader remains available (`TmProvider`) but is not used by default.
+- **Grammars**: Lightweight keyword-only regex provider. Patterns are loaded at runtime from `keyword-patterns.txt`; colors from `token-colors.txt`. Tokens include fg color, so the editor skips per-scope stylesheet lookup. A TM4E loader exists (`TmProvider`) but is not wired in by default.
 - **Viewers**: Code editor (focus-aware input, optional TM token styling), Hex viewer (byte cursors), Image viewer (Korim ASCII/Braille renderer with per-cell bg/fg and adjustable sliders).
 - **UI Components**: TabView for left panel, SliderControl (component with track/indicator styles) for viewer controls, splitter drag logic in `SplitPanelsApp`.
 - **Panels**: Files (tree + open callback), Git/Settings placeholders ready for expansion.
