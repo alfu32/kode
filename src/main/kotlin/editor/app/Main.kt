@@ -19,6 +19,7 @@ import editor.ui.CodeEditorView
 import editor.ui.FilesTabView
 import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
+import editor.ui.GitPanelView
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Instant
@@ -28,6 +29,8 @@ import editor.app.EditorSessionState
 import editor.app.ProjectSession
 import editor.app.ViewerType
 import editor.lib.FileTree
+import editor.lib.JGitService
+import java.io.File
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     fun redraw() {
@@ -121,6 +124,7 @@ private class SplitPanelsApp(
     private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
+    private val gitPanel = GitPanelView(styleSheet, JGitService(File(System.getProperty("user.dir"))))
     private var currentOpenPath: String = ""
     init {
         val loaded = sessionManager.load()
@@ -157,7 +161,7 @@ private class SplitPanelsApp(
                 onSelectRecent = { entry -> openRecent(entry) },
                 onRemoveRecent = { entry -> removeRecent(entry) }
             ),
-            PlaceholderPane(styleSheet, "Git"),
+            gitPanel,
             PlaceholderPane(styleSheet, "Settings")
         ),
         initialIndex = 0

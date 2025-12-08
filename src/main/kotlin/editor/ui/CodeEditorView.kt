@@ -40,6 +40,13 @@ class CodeEditorView(
     private var searchVisible = false
     private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet, this::handleSearchAction)
 
+    fun textContent(): String = buffer.text()
+
+    fun loadTextContent(text: String) {
+        buffer.loadText(text)
+        scrollTop = 0
+    }
+
     fun captureState(lastModifiedMillis: Long? = null): EditorSessionState? {
         if (filePath.isEmpty()) return null
         return EditorSessionState(

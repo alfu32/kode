@@ -77,21 +77,22 @@ class TabView(
                     return false
                 }
             }
-            "key_down" -> when (event.key?.lowercase()) {
-                "left" -> {
+            "key_down" -> {
+                val key = event.key?.lowercase()
+                // Only switch tabs on alt+left/right to avoid stealing arrows from editors.
+                if (event.alt && (key == "left" || key == "right")) {
                     if (titles.isNotEmpty()) {
-                        selected = (selected - 1 + titles.size) % titles.size
+                        selected = if (key == "left") {
+                            (selected - 1 + titles.size) % titles.size
+                        } else {
+                            (selected + 1) % titles.size
+                        }
                         onSelect?.invoke(selected)
                         return true
                     }
                 }
-                "right" -> {
-                    if (titles.isNotEmpty()) {
-                        selected = (selected + 1) % titles.size
-                        onSelect?.invoke(selected)
-                        return true
-                    }
-                }
+                val child = children.getOrNull(selected) ?: return false
+                return child.dispatch(event)
             }
         }
 

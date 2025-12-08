@@ -15,7 +15,7 @@ import java.time.Instant
 // Interface + Data Classes
 // =============================================================
 
-interface GitService {
+interface IGitService {
     // ----- Read -----
     fun statusPorcelain(): List<GitStatusEntry>
     fun listCommits(limit: Int? = null): List<GitCommitEntry>
@@ -26,6 +26,8 @@ interface GitService {
     // ----- Write -----
     fun stage(paths: List<String>)
     fun stage(path: String) = stage(listOf(path))
+    fun unstage(paths: List<String>)
+    fun unstage(path: String) = unstage(listOf(path))
     fun commit(message: String)
     fun tagCommit(
         tag: String,
@@ -36,7 +38,8 @@ interface GitService {
 
 data class GitStatusEntry(
     val code: String,
-    val path: String
+    val path: String,
+    val staged: Boolean = false
 )
 
 data class GitCommitEntry(
@@ -74,7 +77,7 @@ private fun scoreSemanticTag(tag: String, slotBits: Int = 10): Long? {
 // JGit Reference Implementation
 // =============================================================
 
-class JGitService(root: File) : GitService {
+class JGitService(root: File) : IGitService {
 
     private lateinit var objectId: ObjectId
     private val repo = FileRepositoryBuilder()
@@ -89,12 +92,12 @@ class JGitService(root: File) : GitService {
         val st = git.status().call()
         val r = mutableListOf<GitStatusEntry>()
 
-        st.added.forEach { r += GitStatusEntry("A", it) }
-        st.changed.forEach { r += GitStatusEntry("M", it) }
-        st.modified.forEach { r += GitStatusEntry("M", it) }
-        st.removed.forEach { r += GitStatusEntry("D", it) }
-        st.missing.forEach { r += GitStatusEntry("D", it) }
-        st.untracked.forEach { r += GitStatusEntry("??", it) }
+        st.added.forEach { r += GitStatusEntry("A", it, staged = true) }
+        st.changed.forEach { r += GitStatusEntry("M", it, staged = true) }
+        st.removed.forEach { r += GitStatusEntry("D", it, staged = true) }
+        st.modified.forEach { r += GitStatusEntry("M", it, staged = false) }
+        st.missing.forEach { r += GitStatusEntry("D", it, staged = false) }
+        st.untracked.forEach { r += GitStatusEntry("??", it, staged = false) }
 
         return r
     }
@@ -145,6 +148,12 @@ class JGitService(root: File) : GitService {
         val add = git.add()
         paths.forEach { add.addFilepattern(it) }
         add.call()
+    }
+
+    override fun unstage(paths: List<String>) {
+        val reset = git.reset()
+        paths.forEach { reset.addPath(it) }
+        reset.call()
     }
 
     override fun commit(message: String) {
