@@ -164,12 +164,38 @@ class CodeEditorView(
             return true
         }
 
-        if (searchVisible && event.kind == "key_down") {
-            val handled = searchBar.dispatch(event)
-            if (handled) {
-                syncSearchUiFromBuffer()
-                ensureCursorVisible(rows, searchHeight)
-                return true
+        if (searchVisible && (event.kind == "key_down" || event.kind.startsWith("mouse"))) {
+            val y = event.y ?: 0
+            if (event.kind == "key_down") {
+                val handled = searchBar.dispatch(event)
+                if (handled) {
+                    syncSearchUiFromBuffer()
+                    ensureCursorVisible(rows, searchHeight)
+                    return true
+                }
+            } else if (y in 1 until bodyStartRow) {
+                val forwarded = event.alterCopy(
+                    UIEvent(
+                        kind = event.kind,
+                        x = event.x,
+                        y = (event.y ?: 0) - 1,
+                        relX = event.relX,
+                        relY = event.relY,
+                        button = event.button,
+                        scrollDelta = event.scrollDelta,
+                        key = event.key,
+                        ctrl = event.ctrl,
+                        alt = event.alt,
+                        shift = event.shift,
+                        meta = event.meta,
+                        focusId = event.focusId,
+                        cols = event.cols,
+                        rows = searchHeight,
+                        raw = event.raw
+                    )
+                )
+                val handled = searchBar.dispatch(forwarded)
+                if (handled) return true
             }
         }
 
@@ -332,7 +358,7 @@ class CodeEditorView(
 
     private fun syncSearchUiFromBuffer() {
         val state = buffer.searchState()
-        searchBar.updateMatchLabel(state.activeIndex, state.matchCount)
+        searchBar.updateFromSearchState(state)
     }
 
     private fun renderLineWithTokens(

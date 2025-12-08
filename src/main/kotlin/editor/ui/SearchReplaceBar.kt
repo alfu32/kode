@@ -85,7 +85,10 @@ class SearchReplaceBar(
     private var findState = InputState()
     private var replaceState = InputState()
     private var matchLabel: String = "no matches"
+    private var regexInvalid: Boolean = false
     private val barHeight = 2
+    private var closeButtonX: Int = -1
+    private val closeButtonWidth = 3
 
     fun preferredHeight(): Int = barHeight
 
@@ -96,11 +99,13 @@ class SearchReplaceBar(
         if (replaceState.text != state.replacement) {
             replaceState = replaceState.copy(text = state.replacement, cursor = state.replacement.length)
         }
-        updateMatchLabel(state.activeIndex, state.matchCount)
+        regexInvalid = state.patternError != null
+        updateMatchLabel(state.activeIndex, state.matchCount, state.patternError)
     }
 
-    fun updateMatchLabel(activeIndex: Int, total: Int) {
+    fun updateMatchLabel(activeIndex: Int, total: Int, error: String? = null) {
         matchLabel = when {
+            error != null -> "regex error"
             total <= 0 -> "no matches"
             activeIndex < 0 -> "0/$total"
             else -> "${activeIndex + 1}/$total"
@@ -116,6 +121,9 @@ class SearchReplaceBar(
         val cursorStyle = styleSheet.getStyle("code-search-cursor").withDefaults(barStyle.bg ?: fieldStyle.bg, barStyle.fg ?: fieldStyle.fg)
         val statusStyle = styleSheet.getStyle("code-search-status").withDefaults(labelStyle.fg, labelStyle.bg)
         val hintStyle = styleSheet.getStyle("code-search-hint").withDefaults(labelStyle.fg, labelStyle.bg)
+        val errorFieldStyle = styleSheet.getStyle("code-search-field-error").withDefaults(fieldStyle.fg, fieldStyle.bg)
+        val errorStatusStyle = styleSheet.getStyle("code-search-error").withDefaults(statusStyle.fg, statusStyle.bg)
+        val closeStyle = styleSheet.getStyle("code-search-close").withDefaults(barStyle.fg, barStyle.bg)
 
         canvas.applyStyle(barStyle) {
             drawRect(0, 0, cols, barHeight)
@@ -129,14 +137,15 @@ class SearchReplaceBar(
             cols = cols,
             active = focusedField == Field.FIND,
             labelStyle = labelStyle,
-            fieldStyle = fieldStyle,
+            fieldStyle = if (regexInvalid) errorFieldStyle else fieldStyle,
             activeFieldStyle = activeFieldStyle,
             cursorStyle = cursorStyle,
             trailing = matchLabel,
-            trailingStyle = statusStyle
+            trailingStyle = if (regexInvalid) errorStatusStyle else statusStyle,
+            reservedRight = closeButtonWidth + 1
         )
 
-        val hints = "Enter:Next  Ctrl+Enter:All  Ctrl+R:Replace  Ctrl+Shift+R:All  Esc:Close"
+        val hints = "Enter:Next  Ctrl+Enter:All  Ctrl+R:Replace  Ctrl+Shift+R:All"
         renderField(
             canvas = canvas,
             y = 1,
@@ -149,11 +158,26 @@ class SearchReplaceBar(
             activeFieldStyle = activeFieldStyle,
             cursorStyle = cursorStyle,
             trailing = hints,
-            trailingStyle = hintStyle
+            trailingStyle = hintStyle,
+            reservedRight = 0
         )
+
+        closeButtonX = (cols - closeButtonWidth).coerceAtLeast(0)
+        val closeText = "[x]".take(closeButtonWidth).padEnd(closeButtonWidth, ' ')
+        canvas.applyStyle(closeStyle) {
+            drawText(closeButtonX, 0, closeText)
+        }
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind == "mouse_down") {
+            val x = event.x ?: return false
+            val y = event.y ?: return false
+            if (y == 0 && x in closeButtonX until (closeButtonX + closeButtonWidth)) {
+                onAction(SearchCommand.Close)
+                return true
+            }
+        }
         if (event.kind != "key_down") return false
         val key = event.key?.lowercase() ?: return false
 
@@ -176,10 +200,6 @@ class SearchReplaceBar(
             }
             "tab" -> {
                 focusedField = if (focusedField == Field.FIND) Field.REPLACE else Field.FIND
-                return true
-            }
-            "escape" -> {
-                onAction(SearchCommand.Close)
                 return true
             }
         }
@@ -211,15 +231,16 @@ class SearchReplaceBar(
         activeFieldStyle: StyleSet,
         cursorStyle: StyleSet,
         trailing: String,
-        trailingStyle: StyleSet
+        trailingStyle: StyleSet,
+        reservedRight: Int
     ) {
         val labelText = "$label "
         canvas.applyStyle(labelStyle) {
             drawText(0, y, labelText.take(cols).padEnd(labelText.length.coerceAtMost(cols), ' '))
         }
         val startX = labelText.length
-        val trailingText = trailing.take(max(0, cols - startX))
-        val trailingStart = cols - trailingText.length
+        val trailingText = trailing.take(max(0, cols - startX - reservedRight))
+        val trailingStart = cols - reservedRight - trailingText.length
         val available = (trailingStart - startX).coerceAtLeast(1)
 
         val cursor = state.cursor.coerceIn(0, state.text.length)

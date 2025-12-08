@@ -94,7 +94,8 @@ data class SearchState(
     val query: String,
     val replacement: String,
     val matchCount: Int,
-    val activeIndex: Int
+    val activeIndex: Int,
+    val patternError: String?
 )
 
 data class FoundToken(

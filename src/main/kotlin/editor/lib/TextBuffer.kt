@@ -95,6 +95,8 @@ class TextBuffer : ITextBuffer {
     private var replacementText: String = ""
     private var matches: List<SelectionRange> = emptyList()
     private var activeMatchIndex: Int = -1
+    private var patternError: String? = null
+    private var compiledRegex: Regex? = null
 
 
     /*  
@@ -128,6 +130,8 @@ class TextBuffer : ITextBuffer {
         b.replacementText = replacementText
         b.matches = matches.map { SelectionRange(Position(it.start.line, it.start.column), Position(it.end.line, it.end.column)) }
         b.activeMatchIndex = activeMatchIndex
+        b.patternError = patternError
+        b.compiledRegex = compiledRegex
         return b
     }
 
@@ -523,7 +527,7 @@ class TextBuffer : ITextBuffer {
     }
 
     override fun searchState(): SearchState =
-        SearchState(searchQuery, replacementText, matches.size, activeMatchIndex)
+        SearchState(searchQuery, replacementText, matches.size, activeMatchIndex, patternError)
 
     override fun foundTokens(): List<FoundToken> {
         if (searchQuery.isEmpty() || matches.isEmpty()) return emptyList()
@@ -595,30 +599,39 @@ class TextBuffer : ITextBuffer {
         if (searchQuery.isEmpty()) return false
         if (matches.isEmpty()) rebuildSearchResults()
         if (matches.isEmpty()) return false
+        val regex = compiledRegex ?: return false
         if (activeMatchIndex !in matches.indices) activeMatchIndex = 0
-
-        val target = matches[activeMatchIndex]
-        val startIdx = positionToIndex(target.start)
-        val endIdx = positionToIndex(target.end)
-        val cursorAfterReplace = replaceRangeFlat(startIdx, endIdx, replacementText)
-
-        rebuildSearchResults()
-        if (matches.isEmpty()) {
-            activeMatchIndex = -1
-        } else {
-            activeMatchIndex = matches.indexOfFirst { positionToIndex(it.start) >= cursorAfterReplace }
-            if (activeMatchIndex == -1) activeMatchIndex = 0
+        val text = text()
+        var idx = -1
+        var replaced = false
+        val newText = buildString {
+            var lastEnd = 0
+            regex.findAll(text).forEach { mr ->
+                idx++
+                if (idx == activeMatchIndex && !replaced) {
+                    append(text.substring(lastEnd, mr.range.first))
+                    append(expandReplacement(replacementText, mr))
+                    lastEnd = mr.range.last + 1
+                    replaced = true
+                }
+            }
+            append(text.substring(lastEnd))
         }
+        if (!replaced) return false
+        loadText(newText)
+        rebuildSearchResults()
+        activeMatchIndex = if (matches.isEmpty()) -1 else activeMatchIndex.coerceIn(0, matches.lastIndex)
         return true
     }
 
     override fun replaceAll(): Int {
         if (searchQuery.isEmpty()) return 0
         if (matches.isEmpty()) rebuildSearchResults()
+        val regex = compiledRegex ?: return 0
         val count = matches.size
         if (count == 0) return 0
 
-        val newText = text().replace(searchQuery, replacementText)
+        val newText = regex.replace(text()) { mr -> expandReplacement(replacementText, mr) }
         loadText(newText)
         rebuildSearchResults()
         return count
@@ -642,6 +655,13 @@ class TextBuffer : ITextBuffer {
         if (searchQuery.isEmpty()) {
             matches = emptyList()
             activeMatchIndex = -1
+            compiledRegex = null
+            patternError = null
+            return
+        }
+        val regex = compileRegex() ?: run {
+            matches = emptyList()
+            activeMatchIndex = -1
             return
         }
         val content = text()
@@ -651,16 +671,18 @@ class TextBuffer : ITextBuffer {
             return
         }
         val found = mutableListOf<SelectionRange>()
-        var idx = content.indexOf(searchQuery)
-        while (idx >= 0) {
-            val end = idx + searchQuery.length
-            val startPos = indexToPosition(idx)
-            val endPos = indexToPosition(end)
+        regex.findAll(content).forEach { mr ->
+            val startIdx = mr.range.first
+            val endIdx = mr.range.last + 1
+            if (endIdx <= startIdx) return@forEach
+            val startPos = indexToPosition(startIdx)
+            val endPos = indexToPosition(endIdx)
             found.add(SelectionRange(startPos, endPos))
-            idx = content.indexOf(searchQuery, idx + searchQuery.length.coerceAtLeast(1))
         }
         matches = found
-        activeMatchIndex = activeMatchIndex.takeIf { it in matches.indices } ?: -1
+        if (matches.isEmpty() || activeMatchIndex !in matches.indices) {
+            activeMatchIndex = -1
+        }
     }
 
     private fun refreshSearchAfterChange() {
@@ -670,6 +692,44 @@ class TextBuffer : ITextBuffer {
             return
         }
         rebuildSearchResults()
+    }
+
+    private fun compileRegex(): Regex? {
+        return try {
+            val regex = Regex(searchQuery)
+            compiledRegex = regex
+            patternError = null
+            regex
+        } catch (e: Exception) {
+            compiledRegex = null
+            patternError = e.message
+            null
+        }
+    }
+
+    private fun expandReplacement(replacement: String, match: MatchResult): String {
+        val out = StringBuilder()
+        var i = 0
+        while (i < replacement.length) {
+            val ch = replacement[i]
+            if (ch == '$' && i + 1 < replacement.length && replacement[i + 1].isDigit()) {
+                var j = i + 1
+                var num = ""
+                while (j < replacement.length && replacement[j].isDigit()) {
+                    num += replacement[j]
+                    j++
+                }
+                val idx = num.toIntOrNull()
+                if (idx != null && idx in match.groupValues.indices) {
+                    out.append(match.groupValues[idx])
+                }
+                i = j
+            } else {
+                out.append(ch)
+                i++
+            }
+        }
+        return out.toString()
     }
 
     private fun positionToIndex(pos: Position): Int {

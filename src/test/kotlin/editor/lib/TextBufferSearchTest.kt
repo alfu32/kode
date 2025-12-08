@@ -53,6 +53,29 @@ class TextBufferSearchTest {
     }
 
     @Test
+    fun replaceHonorsRegexGroups() {
+        val buffer = TextBuffer()
+        buffer.loadText("abc123 xyz")
+        buffer.updateSearch("(abc)(123)", replacement = "$2-$1")
+
+        buffer.replaceCurrent()
+
+        assertEquals("123-abc xyz", buffer.text())
+    }
+
+    @Test
+    fun invalidRegexReportsError() {
+        val buffer = TextBuffer()
+        buffer.loadText("text")
+        buffer.updateSearch("[")
+
+        val state = buffer.searchState()
+        assertTrue(state.patternError?.isNotBlank() == true)
+        assertEquals(0, state.matchCount)
+        assertTrue(buffer.foundTokens().isEmpty())
+    }
+
+    @Test
     fun searchResultsRefreshAfterEditing() {
         val buffer = TextBuffer()
         buffer.loadText("match")

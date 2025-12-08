@@ -189,6 +189,18 @@ code-search-hint {
     bg: #25345a;
     fg: #b6b9c5;
 }
+code-search-field-error {
+    bg: #1a2237;
+    fg: #ff5f5f;
+}
+code-search-error {
+    bg: #25345a;
+    fg: #ff5f5f;
+}
+code-search-close {
+    bg: #25345a;
+    fg: #e6e9f5;
+}
 code-search-match {
     bg: #26406d;
     fg: #e6e9f5;
