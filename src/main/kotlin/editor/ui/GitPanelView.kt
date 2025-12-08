@@ -105,27 +105,26 @@ class GitPanelView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
-        var handled = false
-        when (event.kind) {
-            "mouse_down" -> handled = handleClick(event)
+        return when (event.kind) {
+            "mouse_down" -> handleClick(event, allowCommit = false)
             "mouse_up" -> {
                 val y = event.y ?: return false
                 val rows = event.rows ?: return false
                 val section = rows / 3
                 val topH = section
                 val midH = section
-                if(y >= topH && y < section + midH) {
-                    handled = handleClick(event)
-                }
+                if (y >= topH && y < section + midH) {
+                    handleClick(event, allowCommit = true)
+                } else false
             }
-            "mouse_move" -> handled = handleDrag(event)
-            "mouse_scroll" -> handled = handleScroll(event)
-            "key_down" -> handled = handleKey(event)
+            "mouse_move" -> handleDrag(event)
+            "mouse_scroll" -> handleScroll(event)
+            "key_down" -> handleKey(event)
+            else -> false
         }
-        return handled
     }
 
-    private fun handleClick(event: UIEvent): Boolean {
+    private fun handleClick(event: UIEvent, allowCommit: Boolean): Boolean {
         val y = event.y ?: return false
         val rows = event.rows ?: return false
         val section = rows / 3
@@ -146,6 +145,7 @@ class GitPanelView(
                 val relY = y - topH
                 val editorHeight = (midH - 1).coerceAtLeast(1)
                 if (relY >= editorHeight) {
+                    if (!allowCommit) return true
                     git.commit(commitEditor.textContent())
                     commitEditor.loadTextContent("")
                     refreshData()
@@ -263,4 +263,3 @@ class GitPanelView(
         return commitEditor.dispatch(event)
     }
 }
-
