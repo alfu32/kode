@@ -80,11 +80,12 @@ tasks.register<Jar>("fatJar") {
 tasks.register<Copy>("distBundle") {
     group = "distribution"
     description = "Bundle fat jar into dist/"
-    dependsOn("fatJar")
+    val fat = tasks.named<Jar>("fatJar")
+    dependsOn(fat)
     val distDir = layout.projectDirectory.dir("dist")
-    from(layout.buildDirectory.file("libs/kt-tui-edit-all.jar"))
+    from(fat.map { it.archiveFile })
     externalColorMap.asFile.takeIf { it.exists() }?.let { from(it) }
-    layout.projectDirectory.file("keyword-patterns.txt").asFile.takeIf { it.exists() }?.let { from(it) }
+    layout.projectDirectory.file("keyword-patterns.0.txt").asFile.takeIf { it.exists() }?.let { from(it) }
     into(distDir)
     doFirst { distDir.asFile.mkdirs() }
 }

@@ -14,7 +14,7 @@ object KeywordSyntaxProvider : SyntaxProvider {
     private val extensionIndex: Map<String, String> = emptyMap()
 
     private val colorOverrides: Map<String, Color> by lazy { loadColorOverrides() }
-    private val defaultColor: Color = colorOverrides["default"] ?: Color.from("#CC7832")
+    private val defaultColor: Color = colorOverrides["default"] ?: Color.from("#CC7832")!!
     private val keywordPatterns: Map<String, Pattern> by lazy { loadPatterns() }
 
     override fun tokensForLine(lineNumber: Int, lineText: String, language: String): List<Token> =
