@@ -121,6 +121,7 @@ private class SplitPanelsApp(
     private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
+    private var currentOpenPath: String = ""
     init {
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -318,6 +319,7 @@ private class SplitPanelsApp(
                 imageViewer.openFile(path, detected)
                 rightFocus = FocusTarget.IMAGE
                 focus = rightFocus
+                currentOpenPath = path
                 recordRecent(path, null, ViewerType.IMAGE)
             }
             MimeTypeCategory.TEXT -> {
@@ -325,6 +327,7 @@ private class SplitPanelsApp(
                 codeEditor.openFile(path, detected, grammarAvailable, grammarLang)
                 rightFocus = FocusTarget.CODE
                 focus = rightFocus
+                currentOpenPath = path
                 recordRecent(path, codeEditor.captureState(fileLastModified(path)), ViewerType.CODE)
             }
             MimeTypeCategory.BINARY, MimeTypeCategory.UNKNOWN -> {
@@ -332,6 +335,7 @@ private class SplitPanelsApp(
                 hexViewer.openFile(path, detected)
                 rightFocus = FocusTarget.HEX
                 focus = rightFocus
+                currentOpenPath = path
                 recordRecent(path, null, ViewerType.HEX)
             }
         }
@@ -352,6 +356,7 @@ private class SplitPanelsApp(
                 imageViewer.openFile(absPath, detected)
                 rightFocus = FocusTarget.IMAGE
                 focus = rightFocus
+                currentOpenPath = absPath
                 recordRecent(absPath, null, ViewerType.IMAGE)
             }
             ViewerType.HEX -> {
@@ -359,6 +364,7 @@ private class SplitPanelsApp(
                 hexViewer.openFile(absPath, detected)
                 rightFocus = FocusTarget.HEX
                 focus = rightFocus
+                currentOpenPath = absPath
                 recordRecent(absPath, null, ViewerType.HEX)
             }
             ViewerType.CODE -> {
@@ -372,6 +378,7 @@ private class SplitPanelsApp(
         codeEditor.restoreState(state)
         rightFocus = FocusTarget.CODE
         focus = rightFocus
+        currentOpenPath = state.path
     }
 
     private fun dispatchToRight(event: UIEvent): Boolean {
@@ -494,7 +501,7 @@ private class SplitPanelsApp(
     }
 
     private fun currentRelativePath(): String? =
-        codeEditor.currentPath().takeIf { it.isNotEmpty() }?.let { sessionManager.toRelative(it) }
+        currentOpenPath.takeIf { it.isNotEmpty() }?.let { sessionManager.toRelative(it) }
 
     private fun schedulePersist() {
         val now = System.currentTimeMillis()
