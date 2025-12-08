@@ -12,7 +12,7 @@ import editor.lib.PositionState
 
 @Serializable
 data class ProjectSession(
-    val version: Int = 4,
+    val version: Int = 3,
     val recentFiles: List<RecentFileEntry> = emptyList(),
     val openEditors: List<EditorSessionState> = emptyList(),
 )

@@ -3,7 +3,6 @@ package editor.lib
 import kotlin.text.iterator
 import editor.lib.BufferPersistState
 import editor.lib.BufferSnapshotState
-import editor.lib.EditOpState
 import editor.lib.PositionState
 
 /*  
@@ -102,10 +101,11 @@ class TextBuffer : ITextBuffer {
     private var activeMatchIndex: Int = -1
     private var patternError: String? = null
     private var compiledRegex: Regex? = null
-    private val undoStack: ArrayDeque<EditOp> = ArrayDeque()
-    private val redoStack: ArrayDeque<EditOp> = ArrayDeque()
+    private val undoStack: ArrayDeque<BufferSnapshot> = ArrayDeque()
+    private val redoStack: ArrayDeque<BufferSnapshot> = ArrayDeque()
     private var capturingUndo: Boolean = false
     private val maxHistory: Int = 200
+    private val persistHistoryLimit: Int = 30
 
 
     /*  
@@ -176,16 +176,16 @@ class TextBuffer : ITextBuffer {
     }
 
     override fun undo(): Boolean {
-        val op = undoStack.removeLastOrNull() ?: return false
-        applyChange(op.start, op.inserted.length, op.removed, op.beforeCursor, op.beforeAnchor, op.beforeDirty)
-        redoStack.addLast(op)
+        val snapshot = undoStack.removeLastOrNull() ?: return false
+        redoStack.addLast(takeSnapshot())
+        applySnapshot(snapshot)
         return true
     }
 
     override fun redo(): Boolean {
-        val op = redoStack.removeLastOrNull() ?: return false
-        applyChange(op.start, op.removed.length, op.inserted, op.afterCursor, op.afterAnchor, op.afterDirty)
-        undoStack.addLast(op)
+        val snapshot = redoStack.removeLastOrNull() ?: return false
+        undoStack.addLast(takeSnapshot())
+        applySnapshot(snapshot)
         return true
     }
 
@@ -773,36 +773,38 @@ class TextBuffer : ITextBuffer {
             return
         }
         normalizePositions()
-        val beforeText = text()
-        val beforeCursor = Position(cursor.line, cursor.column)
-        val beforeAnchor = anchor?.let { Position(it.line, it.column) }
-        val beforeDirty = dirty
-
         capturingUndo = true
         try {
+            recordUndoSnapshot()
+            redoStack.clear()
             block()
         } finally {
             capturingUndo = false
         }
+    }
 
-        val afterText = text()
-        if (afterText == beforeText) return
+    private fun recordUndoSnapshot() {
+        undoStack.addLast(takeSnapshot())
+        if (undoStack.size > maxHistory) {
+            undoStack.removeFirst()
+        }
+    }
 
-        val change = diffText(beforeText, afterText) ?: return
-        val op = EditOp(
-            start = change.start,
-            removed = change.removed,
-            inserted = change.inserted,
-            beforeCursor = beforeCursor,
-            beforeAnchor = beforeAnchor,
-            beforeDirty = beforeDirty,
-            afterCursor = Position(cursor.line, cursor.column),
-            afterAnchor = anchor?.let { Position(it.line, it.column) },
-            afterDirty = dirty
+    private fun takeSnapshot(): BufferSnapshot =
+        BufferSnapshot(
+            lines = lines.toList(),
+            cursor = Position(cursor.line, cursor.column),
+            anchor = anchor?.let { Position(it.line, it.column) },
+            dirty = dirty
         )
-        undoStack.addLast(op)
-        if (undoStack.size > maxHistory) undoStack.removeFirst()
-        redoStack.clear()
+
+    private fun applySnapshot(snapshot: BufferSnapshot) {
+        lines = snapshot.lines.toMutableList()
+        cursor = Position(snapshot.cursor.line, snapshot.cursor.column)
+        anchor = snapshot.anchor?.let { Position(it.line, it.column) }
+        dirty = snapshot.dirty
+        normalizePositions()
+        refreshSearchAfterChange()
     }
 
     private fun clearHistory() {
@@ -815,32 +817,14 @@ class TextBuffer : ITextBuffer {
         anchor = anchor?.let { clampPosition(it) }
     }
 
-    private fun applyChange(start: Int, removeLen: Int, insert: String, newCursor: Position?, newAnchor: Position?, newDirty: Boolean) {
-        val current = text()
-        val sb = StringBuilder()
-        sb.append(current, 0, start.coerceAtMost(current.length))
-        val cutFrom = start.coerceAtMost(current.length)
-        val cutTo = (start + removeLen).coerceAtMost(current.length)
-        sb.append(insert)
-        if (cutTo < current.length) {
-            sb.append(current.substring(cutTo))
-        }
-        applyFullText(sb.toString())
-        newCursor?.let { cursor = clampPosition(it) }
-        anchor = newAnchor?.let { clampPosition(it) }
-        dirty = newDirty
-        normalizePositions()
-        refreshSearchAfterChange()
-    }
-
     fun exportState(): BufferPersistState {
         normalizePositions()
         return BufferPersistState(
             lines = lines.toList(),
             cursor = PositionState(cursor.line, cursor.column),
             anchor = anchor?.let { PositionState(it.line, it.column) },
-            undoOps = undoStack.map { it.toState() },
-            redoOps = redoStack.map { it.toState() },
+            undo = undoStack.takeLast(persistHistoryLimit).map { it.toState() },
+            redo = redoStack.takeLast(persistHistoryLimit).map { it.toState() },
             dirty = dirty
         )
     }
@@ -851,16 +835,8 @@ class TextBuffer : ITextBuffer {
         anchor = state.anchor?.let { Position(it.line, it.column) }
         undoStack.clear()
         redoStack.clear()
-        if (state.undoOps.isNotEmpty() || state.redoOps.isNotEmpty()) {
-            undoStack.addAll(state.undoOps.map { it.toOp() })
-            redoStack.addAll(state.redoOps.map { it.toOp() })
-        } else {
-            // Legacy snapshot-based history
-            val undoFromSnapshots = legacySnapshotsToOps(state.undo, state.lines, cursor, anchor, dirty)
-            val redoFromSnapshots = legacySnapshotsToOps(state.redo, state.lines, cursor, anchor, dirty)
-            undoStack.addAll(undoFromSnapshots)
-            redoStack.addAll(redoFromSnapshots)
-        }
+        undoStack.addAll(state.undo.map { it.toSnapshot() })
+        redoStack.addAll(state.redo.map { it.toSnapshot() })
         dirty = state.dirty
         normalizePositions()
         refreshSearchAfterChange()
@@ -974,96 +950,28 @@ class TextBuffer : ITextBuffer {
     }
 }
 
-private data class EditOp(
-    val start: Int,
-    val removed: String,
-    val inserted: String,
-    val beforeCursor: Position,
-    val beforeAnchor: Position?,
-    val beforeDirty: Boolean,
-    val afterCursor: Position,
-    val afterAnchor: Position?,
-    val afterDirty: Boolean
-)
-
-private fun EditOp.toState(): EditOpState =
-    EditOpState(
-        start = start,
-        removed = removed,
-        inserted = inserted,
-        beforeCursor = PositionState(beforeCursor.line, beforeCursor.column),
-        beforeAnchor = beforeAnchor?.let { PositionState(it.line, it.column) },
-        beforeDirty = beforeDirty,
-        afterCursor = PositionState(afterCursor.line, afterCursor.column),
-        afterAnchor = afterAnchor?.let { PositionState(it.line, it.column) },
-        afterDirty = afterDirty
-    )
-
-private fun EditOpState.toOp(): EditOp =
-    EditOp(
-        start = start,
-        removed = removed,
-        inserted = inserted,
-        beforeCursor = Position(beforeCursor.line, beforeCursor.column),
-        beforeAnchor = beforeAnchor?.let { Position(it.line, it.column) },
-        beforeDirty = beforeDirty,
-        afterCursor = Position(afterCursor.line, afterCursor.column),
-        afterAnchor = afterAnchor?.let { Position(it.line, it.column) },
-        afterDirty = afterDirty
-    )
-
-private fun legacySnapshotsToOps(
-    snapshots: List<BufferSnapshotState>,
-    currentLines: List<String>,
-    currentCursor: Position,
-    currentAnchor: Position?,
-    currentDirty: Boolean
-): List<EditOp> {
-    if (snapshots.isEmpty()) return emptyList()
-    val ops = mutableListOf<EditOp>()
-    val all = snapshots + BufferSnapshotState(currentLines, PositionState(currentCursor.line, currentCursor.column), currentAnchor?.let { PositionState(it.line, it.column) }, currentDirty)
-    for (i in 0 until snapshots.size) {
-        val before = snapshots[i]
-        val after = all[i + 1]
-        val beforeText = before.lines.joinToString("\n")
-        val afterText = after.lines.joinToString("\n")
-        val delta = diffText(beforeText, afterText) ?: continue
-        ops.add(
-            EditOp(
-                start = delta.start,
-                removed = delta.removed,
-                inserted = delta.inserted,
-                beforeCursor = Position(before.cursor.line, before.cursor.column),
-                beforeAnchor = before.anchor?.let { Position(it.line, it.column) },
-                beforeDirty = before.dirty,
-                afterCursor = Position(after.cursor.line, after.cursor.column),
-                afterAnchor = after.anchor?.let { Position(it.line, it.column) },
-                afterDirty = after.dirty
-            )
+private data class BufferSnapshot(
+    val lines: List<String>,
+    val cursor: Position,
+    val anchor: Position?,
+    val dirty: Boolean
+) {
+    fun toState(): BufferSnapshotState =
+        BufferSnapshotState(
+            lines = lines,
+            cursor = PositionState(cursor.line, cursor.column),
+            anchor = anchor?.let { PositionState(it.line, it.column) },
+            dirty = dirty
         )
-    }
-    return ops
 }
 
-private data class TextDelta(val start: Int, val removed: String, val inserted: String)
-
-private fun diffText(before: String, after: String): TextDelta? {
-    if (before == after) return null
-    val maxPrefix = before.zip(after).takeWhile { it.first == it.second }.count()
-    val prefix = maxPrefix
-    val beforeRem = before.length - prefix
-    val afterRem = after.length - prefix
-    var suffix = 0
-    while (suffix < beforeRem && suffix < afterRem && before[before.length - 1 - suffix] == after[after.length - 1 - suffix]) {
-        suffix++
-    }
-    val start = prefix
-    val endBefore = before.length - suffix
-    val endAfter = after.length - suffix
-    val removed = if (start <= endBefore) before.substring(start, endBefore) else ""
-    val inserted = if (start <= endAfter) after.substring(start, endAfter) else ""
-    return TextDelta(start, removed, inserted)
-}
+private fun BufferSnapshotState.toSnapshot(): BufferSnapshot =
+    BufferSnapshot(
+        lines = lines.toList(),
+        cursor = Position(cursor.line, cursor.column),
+        anchor = anchor?.let { Position(it.line, it.column) },
+        dirty = dirty
+    )
 
 data class Notification(val kind: NotificationKind, val text: String)
 enum class NotificationKind { COPY, CUT }
