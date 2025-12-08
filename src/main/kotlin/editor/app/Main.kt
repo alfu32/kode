@@ -26,6 +26,7 @@ import editor.app.ProjectSessionManager
 import editor.app.RecentFileEntry
 import editor.app.EditorSessionState
 import editor.app.ProjectSession
+import editor.app.ViewerType
 import editor.lib.FileTree
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
@@ -152,7 +153,8 @@ private class SplitPanelsApp(
                         ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath))
                     openInViewer(entry.fullPath, detected)
                 },
-                onSelectRecent = { entry -> openRecent(entry) }
+                onSelectRecent = { entry -> openRecent(entry) },
+                onRemoveRecent = { entry -> removeRecent(entry) }
             ),
             PlaceholderPane(styleSheet, "Git"),
             PlaceholderPane(styleSheet, "Settings")
@@ -316,21 +318,21 @@ private class SplitPanelsApp(
                 imageViewer.openFile(path, detected)
                 rightFocus = FocusTarget.IMAGE
                 focus = rightFocus
-                recordRecent(path, null)
+                recordRecent(path, null, ViewerType.IMAGE)
             }
             MimeTypeCategory.TEXT -> {
                 val (grammarLang, grammarAvailable) = resolveGrammar(path, detected)
                 codeEditor.openFile(path, detected, grammarAvailable, grammarLang)
                 rightFocus = FocusTarget.CODE
                 focus = rightFocus
-                recordRecent(path, codeEditor.captureState(fileLastModified(path)))
+                recordRecent(path, codeEditor.captureState(fileLastModified(path)), ViewerType.CODE)
             }
             MimeTypeCategory.BINARY, MimeTypeCategory.UNKNOWN -> {
                 // Unknown defaults to hex viewer.
                 hexViewer.openFile(path, detected)
                 rightFocus = FocusTarget.HEX
                 focus = rightFocus
-                recordRecent(path, null)
+                recordRecent(path, null, ViewerType.HEX)
             }
         }
     }
@@ -344,8 +346,26 @@ private class SplitPanelsApp(
             recordRecent(absPath, codeEditor.captureState(currentMtime))
             return
         }
-        val detected = mimeDetector.detectFile(java.nio.file.Path.of(absPath))
-        openInViewer(absPath, detected)
+        when (entry.viewerType) {
+            ViewerType.IMAGE -> {
+                val detected = mimeDetector.detectFile(java.nio.file.Path.of(absPath))
+                imageViewer.openFile(absPath, detected)
+                rightFocus = FocusTarget.IMAGE
+                focus = rightFocus
+                recordRecent(absPath, null, ViewerType.IMAGE)
+            }
+            ViewerType.HEX -> {
+                val detected = mimeDetector.detectFile(java.nio.file.Path.of(absPath))
+                hexViewer.openFile(absPath, detected)
+                rightFocus = FocusTarget.HEX
+                focus = rightFocus
+                recordRecent(absPath, null, ViewerType.HEX)
+            }
+            ViewerType.CODE -> {
+                val detected = mimeDetector.detectFile(java.nio.file.Path.of(absPath))
+                openInViewer(absPath, detected)
+            }
+        }
     }
 
     private fun openEditorState(state: EditorSessionState) {
@@ -405,22 +425,32 @@ private class SplitPanelsApp(
         pendingPersist = false
     }
 
-    private fun recordRecent(path: String, state: EditorSessionState?) {
+    private fun recordRecent(path: String, state: EditorSessionState?, viewerType: ViewerType = ViewerType.CODE) {
         val abs = sessionManager.toAbsolute(path)
         val now = Instant.now().toEpochMilli()
         val mtime = fileLastModified(abs)
         val existingIdx = recentFiles.indexOfFirst { sessionManager.toAbsolute(it.path) == abs }
+        val dirtyFlag = state?.buffer?.dirty ?: savedEditors[abs]?.buffer?.dirty ?: false
         val entry = RecentFileEntry(
             path = abs,
             lastOpenedEpochMillis = now,
             lastModifiedMillis = mtime,
-            editor = state ?: savedEditors[abs]
+            editor = state ?: savedEditors[abs],
+            dirty = dirtyFlag,
+            viewerType = viewerType
         )
         if (existingIdx >= 0) recentFiles[existingIdx] = entry else recentFiles.add(entry)
         recentFiles = recentFiles.sortedBy { it.path.lowercase() }.take(20).toMutableList()
         if (state != null) {
             savedEditors[abs] = state.copy(lastModifiedMillis = mtime)
         }
+    }
+
+    private fun removeRecent(entry: RecentFileEntry) {
+        val abs = sessionManager.toAbsolute(entry.path)
+        recentFiles.removeIf { sessionManager.toAbsolute(it.path) == abs }
+        savedEditors.remove(abs)
+        persistSession(force = true)
     }
 
     private fun restoreLastSession() {
@@ -450,7 +480,7 @@ private class SplitPanelsApp(
         codeEditor.captureState(mtime)?.let { state ->
             val abs = sessionManager.toAbsolute(state.path)
             savedEditors[abs] = state.copy(lastModifiedMillis = mtime)
-            recordRecent(abs, state.copy(lastModifiedMillis = mtime))
+            recordRecent(abs, state.copy(lastModifiedMillis = mtime), ViewerType.CODE)
         }
     }
 

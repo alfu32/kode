@@ -12,7 +12,7 @@ import editor.lib.PositionState
 
 @Serializable
 data class ProjectSession(
-    val version: Int = 2,
+    val version: Int = 3,
     val recentFiles: List<RecentFileEntry> = emptyList(),
     val openEditors: List<EditorSessionState> = emptyList(),
 )
@@ -23,6 +23,8 @@ data class RecentFileEntry(
     val lastOpenedEpochMillis: Long,
     val lastModifiedMillis: Long? = null,
     val editor: EditorSessionState? = null,
+    val dirty: Boolean = false,
+    val viewerType: ViewerType = ViewerType.CODE
 )
 
 @Serializable
@@ -36,6 +38,9 @@ data class EditorSessionState(
     val grammarAvailable: Boolean = false,
     val lastModifiedMillis: Long? = null,
 )
+
+@Serializable
+enum class ViewerType { CODE, HEX, IMAGE }
 
 class ProjectSessionManager(
     projectRoot: String = System.getProperty("user.dir")

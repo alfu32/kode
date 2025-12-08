@@ -19,7 +19,8 @@ class FilesTabView(
     private val recentFilesProvider: () -> List<RecentFileEntry> = { emptyList() },
     private val currentPathProvider: () -> String? = { null },
     private val onSelectFile: (FileTreeEntry, String?) -> Unit = { _, _ -> },
-    private val onSelectRecent: (RecentFileEntry) -> Unit = {}
+    private val onSelectRecent: (RecentFileEntry) -> Unit = {},
+    private val onRemoveRecent: (RecentFileEntry) -> Unit = {}
 ) : BaseComponent(styleSheet) {
 
     private val fileTreeView = FileTreeView(styleSheet, tree, onSelectFile)
@@ -72,7 +73,13 @@ class FilesTabView(
                 if (event.kind == "mouse_down") {
                     val idx = (y - 1 + recentScroll)
                     if (idx in recents.indices) {
-                        onSelectRecent(recents[idx])
+                        val relX = event.x ?: 0
+                        // Column 0 is indicator ('x' or '*'), clicking it clears the entry.
+                        if (relX == 0) {
+                            onRemoveRecent(recents[idx])
+                        } else {
+                            onSelectRecent(recents[idx])
+                        }
                         return true
                     }
                 }
@@ -124,8 +131,10 @@ class FilesTabView(
                 val isSelected = current != null && current == entry.path.trim()
                 val style = if (isSelected) selectedStyle else lineStyle
                 applyStyle(style) {
-                    val label = entry.path.take(cols).padEnd(cols, ' ')
-                    drawText(0, idx + 1, label)
+                    val indicator = if (entry.dirty) "*" else "x"
+                    val label = entry.path.take((cols - 2).coerceAtLeast(1))
+                    val line = "$indicator $label".padEnd(cols, ' ')
+                    drawText(0, idx + 1, line)
                 }
             }
         }
