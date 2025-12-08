@@ -7,10 +7,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
+import editor.lib.BufferPersistState
+import editor.lib.PositionState
 
 @Serializable
 data class ProjectSession(
-    val version: Int = 1,
+    val version: Int = 2,
     val recentFiles: List<RecentFileEntry> = emptyList(),
     val openEditors: List<EditorSessionState> = emptyList(),
 )
@@ -19,24 +21,19 @@ data class ProjectSession(
 data class RecentFileEntry(
     val path: String,
     val lastOpenedEpochMillis: Long,
+    val lastModifiedMillis: Long? = null,
     val editor: EditorSessionState? = null,
 )
 
 @Serializable
 data class EditorSessionState(
     val path: String,
-    val text: String,
-    val cursorLine: Int,
-    val cursorColumn: Int,
-    val selectionStart: PositionState? = null,
-    val selectionEnd: PositionState? = null,
+    val buffer: BufferPersistState,
     val scrollTop: Int = 0,
     val mime: String? = null,
     val language: String? = null,
+    val lastModifiedMillis: Long? = null,
 )
-
-@Serializable
-data class PositionState(val line: Int, val column: Int)
 
 class ProjectSessionManager(
     projectRoot: String = System.getProperty("user.dir")

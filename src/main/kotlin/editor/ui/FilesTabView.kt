@@ -17,12 +17,14 @@ class FilesTabView(
     styleSheet: StyleSheet,
     private val tree: IFileTree = FileTree.newFileTree(System.getProperty("user.dir")),
     private val recentFilesProvider: () -> List<RecentFileEntry> = { emptyList() },
+    private val currentPathProvider: () -> String? = { null },
     private val onSelectFile: (FileTreeEntry, String?) -> Unit = { _, _ -> },
     private val onSelectRecent: (RecentFileEntry) -> Unit = {}
 ) : BaseComponent(styleSheet) {
 
     private val fileTreeView = FileTreeView(styleSheet, tree, onSelectFile)
     private var recentHeight: Int = 0
+    private var recentScroll: Int = 0
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
@@ -30,13 +32,24 @@ class FilesTabView(
         val recents = recentFilesProvider()
         recentHeight = computeRecentHeight(recents, rows)
         renderRecentList(canvas, recents, cols, recentHeight)
-        val remaining = (rows - recentHeight).coerceAtLeast(0)
+        val hasRecents = recentHeight > 0
+        if (hasRecents) {
+            val separatorY = (recentHeight - 1).coerceAtLeast(0)
+            if (separatorY < rows) {
+                val sepStyle = styleSheet.getStyle("splitter")
+                canvas.applyStyle(sepStyle) {
+                    drawText(0, separatorY, "-".repeat(cols))
+                }
+            }
+        }
+        val offsetY = if (hasRecents) recentHeight + 1 else 0
+        val remaining = (rows - offsetY).coerceAtLeast(0)
         if (remaining <= 0) return
 
         val clipped = ClippedCanvasRenderer(
             base = canvas,
             offsetX = 0,
-            offsetY = recentHeight,
+            offsetY = offsetY,
             width = cols,
             height = remaining
         )
@@ -47,15 +60,24 @@ class FilesTabView(
         val rows = event.rows ?: 0
         val recents = recentFilesProvider()
         val headerRows = computeRecentHeight(recents, rows)
+        val hasRecents = headerRows > 0
         if (event.kind.startsWith("mouse")) {
             val y = event.y ?: return false
-            if (y < headerRows) {
+            if (hasRecents && y < headerRows) {
                 if (event.kind == "mouse_down") {
-                    val idx = y - 1
+                    val idx = (y - 1 + recentScroll)
                     if (idx in recents.indices) {
                         onSelectRecent(recents[idx])
                         return true
                     }
+                }
+                if (event.kind == "mouse_scroll") {
+                    val delta = event.scrollDelta ?: 0
+                    val visible = (headerRows - 1).coerceAtLeast(0)
+                    val maxScroll = (recents.size - visible).coerceAtLeast(0)
+                    val prev = recentScroll
+                    recentScroll = (recentScroll - delta).coerceIn(0, maxScroll)
+                    return recentScroll != prev
                 }
                 return false
             }
@@ -64,9 +86,9 @@ class FilesTabView(
             UIEvent(
                 kind = event.kind,
                 x = event.x,
-                y = event.y?.let { it - headerRows },
+                y = event.y?.let { it - if (hasRecents) headerRows + 1 else 0 },
                 relX = event.relX,
-                relY = event.relY?.let { it - headerRows },
+                relY = event.relY?.let { it - if (hasRecents) headerRows + 1 else 0 },
                 button = event.button,
                 scrollDelta = event.scrollDelta,
                 key = event.key,
@@ -76,7 +98,7 @@ class FilesTabView(
                 meta = event.meta,
                 focusId = event.focusId,
                 cols = event.cols,
-                rows = event.rows?.let { it - headerRows },
+                rows = event.rows?.let { it - if (hasRecents) headerRows + 1 else 0 },
                 raw = event.raw
             )
         )
@@ -86,19 +108,27 @@ class FilesTabView(
     private fun renderRecentList(canvas: CanvasRenderer, recents: List<RecentFileEntry>, cols: Int, height: Int) {
         if (height <= 0 || cols <= 0 || recents.isEmpty()) return
         val lineStyle = styleSheet.getStyle("file-entry")
+        val selectedStyle = styleSheet.getStyle("file-entry:selected")
         canvas.applyStyle(lineStyle) {
             val header = "Recent".take(cols).padEnd(cols, ' ')
             drawText(0, 0, header)
-            recents.take(height - 1).forEachIndexed { idx, entry ->
-                val label = entry.path.take(cols).padEnd(cols, ' ')
-                drawText(0, idx + 1, label)
+            val available = height - 1
+            val slice = recents.drop(recentScroll).take(available)
+            val current = currentPathProvider()?.let { it.trim() }
+            slice.forEachIndexed { idx, entry ->
+                val isSelected = current != null && current == entry.path.trim()
+                val style = if (isSelected) selectedStyle else lineStyle
+                applyStyle(style) {
+                    val label = entry.path.take(cols).padEnd(cols, ' ')
+                    drawText(0, idx + 1, label)
+                }
             }
         }
     }
 
     private fun computeRecentHeight(recents: List<RecentFileEntry>, totalRows: Int): Int {
         if (recents.isEmpty()) return 0
-        val needed = recents.size + 1 // header + items
-        return needed.coerceAtMost(totalRows)
+        val target = (totalRows * 0.3).toInt().coerceAtLeast(2)
+        return target.coerceAtMost(totalRows)
     }
 }

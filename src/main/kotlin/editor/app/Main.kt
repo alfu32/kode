@@ -139,11 +139,13 @@ private class SplitPanelsApp(
                 FileTree.newFileTree(System.getProperty("user.dir")),
                 recentFilesProvider = {
                     recentFiles
-                        .sortedByDescending { it.lastOpenedEpochMillis }
+                        .sortedBy { it.path.lowercase() }
                         .take(10)
                         .map { it.copy(path = sessionManager.toRelative(it.path)) }
                 },
+                currentPathProvider = { currentRelativePath() },
                 onSelectFile = { entry, mime ->
+                    saveCurrentEditorState()
                     val detected = mime?.let { MimeTypeResult(it, language = null) }
                         ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath))
                     openInViewer(entry.fullPath, detected)
@@ -301,6 +303,7 @@ private class SplitPanelsApp(
     private fun isOnSplitter(x: Int): Boolean = x == clampWidth(leftWidth, lastCols.coerceAtLeast(1))
 
     private fun openInViewer(path: String, detected: MimeTypeResult) {
+        saveCurrentEditorState()
         when (detected.mimeTypeCategory) {
             MimeTypeCategory.IMAGE -> {
                 imageViewer.openFile(path, detected)
@@ -313,7 +316,7 @@ private class SplitPanelsApp(
                 codeEditor.openFile(path, detected, grammarAvailable, grammarLang)
                 rightFocus = FocusTarget.CODE
                 focus = rightFocus
-                recordRecent(path, codeEditor.captureState())
+                recordRecent(path, codeEditor.captureState(fileLastModified(path)))
             }
             MimeTypeCategory.BINARY, MimeTypeCategory.UNKNOWN -> {
                 // Unknown defaults to hex viewer.
@@ -328,9 +331,10 @@ private class SplitPanelsApp(
     private fun openRecent(entry: RecentFileEntry) {
         val absPath = sessionManager.toAbsolute(entry.path)
         val state = entry.editor ?: savedEditors[absPath]
-        if (state != null) {
-            openEditorState(state.copy(path = absPath))
-            recordRecent(absPath, codeEditor.captureState())
+        val currentMtime = fileLastModified(absPath)
+        if (state != null && !isStale(state, currentMtime)) {
+            openEditorState(state.copy(path = absPath, lastModifiedMillis = currentMtime))
+            recordRecent(absPath, codeEditor.captureState(currentMtime))
             return
         }
         val detected = mimeDetector.detectFile(java.nio.file.Path.of(absPath))
@@ -372,14 +376,8 @@ private class SplitPanelsApp(
     }
 
     fun persistSession() {
-        val currentState = codeEditor.captureState()?.let { it.copy(path = sessionManager.toAbsolute(it.path)) }
-        currentState?.let { savedEditors[sessionManager.toAbsolute(it.path)] = it }
+        saveCurrentEditorState()
         val mergedEditors = savedEditors.values.toMutableList()
-        currentState?.let { state ->
-            mergedEditors.removeIf { it.path == state.path }
-            mergedEditors.add(state)
-        }
-
         val editorsForSave = mergedEditors.map { it.copy(path = sessionManager.toRelative(it.path)) }
         val recentsForSave = recentFiles.map { entry ->
             entry.copy(
@@ -393,26 +391,62 @@ private class SplitPanelsApp(
     private fun recordRecent(path: String, state: EditorSessionState?) {
         val abs = sessionManager.toAbsolute(path)
         val now = Instant.now().toEpochMilli()
+        val mtime = fileLastModified(abs)
         val existingIdx = recentFiles.indexOfFirst { sessionManager.toAbsolute(it.path) == abs }
-        val entry = RecentFileEntry(path = abs, lastOpenedEpochMillis = now, editor = state ?: savedEditors[abs])
+        val entry = RecentFileEntry(
+            path = abs,
+            lastOpenedEpochMillis = now,
+            lastModifiedMillis = mtime,
+            editor = state ?: savedEditors[abs]
+        )
         if (existingIdx >= 0) recentFiles[existingIdx] = entry else recentFiles.add(entry)
-        if (recentFiles.size > 20) {
-            recentFiles = recentFiles.sortedByDescending { it.lastOpenedEpochMillis }.take(20).toMutableList()
-        }
+        recentFiles = recentFiles.sortedByDescending { it.lastOpenedEpochMillis }.take(20).toMutableList()
         if (state != null) {
-            savedEditors[abs] = state
+            savedEditors[abs] = state.copy(lastModifiedMillis = mtime)
         }
     }
 
     private fun restoreLastSession() {
         val ordered = recentFiles.sortedByDescending { it.lastOpenedEpochMillis }
-        val stateFromRecents = ordered.firstNotNullOfOrNull { it.editor ?: savedEditors[sessionManager.toAbsolute(it.path)] }
-        val fallback = savedEditors.values.firstOrNull()
+        val stateFromRecents = ordered.firstNotNullOfOrNull { entry ->
+            val abs = sessionManager.toAbsolute(entry.path)
+            val state = entry.editor ?: savedEditors[abs]
+            val currentMtime = fileLastModified(abs)
+            if (state != null && !isStale(state, currentMtime)) {
+                state.copy(path = abs, lastModifiedMillis = currentMtime)
+            } else null
+        }
+        val fallback = savedEditors.entries.firstOrNull()?.let { (path, state) ->
+            val currentMtime = fileLastModified(path)
+            if (!isStale(state, currentMtime)) state.copy(path = path, lastModifiedMillis = currentMtime) else null
+        }
         val state = stateFromRecents ?: fallback
         if (state != null) {
             openEditorState(state)
         }
     }
+
+    private fun saveCurrentEditorState() {
+        val currentPath = codeEditor.currentPath()
+        if (currentPath.isEmpty()) return
+        val mtime = fileLastModified(currentPath)
+        codeEditor.captureState(mtime)?.let { state ->
+            val abs = sessionManager.toAbsolute(state.path)
+            savedEditors[abs] = state.copy(lastModifiedMillis = mtime)
+        }
+    }
+
+    private fun fileLastModified(path: String): Long? =
+        runCatching { java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(path)).toMillis() }.getOrNull()
+
+    private fun isStale(state: EditorSessionState, currentMtime: Long?): Boolean {
+        val stored = state.lastModifiedMillis ?: return false
+        val now = currentMtime ?: return false
+        return now > stored + 1000
+    }
+
+    private fun currentRelativePath(): String? =
+        codeEditor.currentPath().takeIf { it.isNotEmpty() }?.let { sessionManager.toRelative(it) }
 
     private fun resolveGrammar(path: String, detected: MimeTypeResult): Pair<String?, Boolean> {
         detected.language?.let { lang ->

@@ -10,7 +10,8 @@ import editor.lib.handleMouseToBuffer
 import editor.mime.MimeTypeResult
 import editor.grammars.SyntaxProvider
 import editor.app.EditorSessionState
-import editor.app.PositionState
+import editor.lib.PositionState
+import editor.lib.BufferPersistState
 import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSet
@@ -22,7 +23,7 @@ import editor.ui.SearchReplaceBar.SearchCommand
 
 class CodeEditorView(
     styleSheet: StyleSheet,
-    private val buffer: ITextBuffer = TextBuffer(),
+    private val buffer: TextBuffer = TextBuffer(),
     private val syntaxProvider: SyntaxProvider? = null
 ) : BaseComponent(styleSheet) {
 
@@ -39,19 +40,15 @@ class CodeEditorView(
     private var searchVisible = false
     private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet, this::handleSearchAction)
 
-    fun captureState(): EditorSessionState? {
+    fun captureState(lastModifiedMillis: Long? = null): EditorSessionState? {
         if (filePath.isEmpty()) return null
-        val selection = buffer.selectionRange()
         return EditorSessionState(
             path = filePath,
-            text = buffer.text(),
-            cursorLine = buffer.cursorPosition().line,
-            cursorColumn = buffer.cursorPosition().column,
-            selectionStart = selection?.start?.let { PositionState(it.line, it.column) },
-            selectionEnd = selection?.end?.let { PositionState(it.line, it.column) },
+            buffer = buffer.exportState(),
             scrollTop = scrollTop,
             mime = mime,
-            language = language
+            language = language,
+            lastModifiedMillis = lastModifiedMillis
         )
     }
 
@@ -60,18 +57,11 @@ class CodeEditorView(
         mime = state.mime
         language = state.language
         grammarAvailable = false
-        buffer.loadText(state.text)
-        val start = state.selectionStart
-        val end = state.selectionEnd
-        if (start != null && end != null) {
-            buffer.startSelection(Position(start.line, start.column))
-            buffer.selectTo(Position(end.line, end.column))
-        } else {
-            buffer.clearSelection()
-        }
-        buffer.moveCursorTo(Position(state.cursorLine, state.cursorColumn), expand = false)
+        buffer.restoreState(state.buffer)
         scrollTop = state.scrollTop.coerceAtLeast(0)
     }
+
+    fun currentPath(): String = filePath
 
     fun openFile(
         path: String,

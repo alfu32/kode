@@ -1,6 +1,9 @@
 package editor.lib
 
 import kotlin.text.iterator
+import editor.lib.BufferPersistState
+import editor.lib.BufferSnapshotState
+import editor.lib.PositionState
 
 /*  
 ===============================================================
@@ -813,6 +816,31 @@ class TextBuffer : ITextBuffer {
         anchor = anchor?.let { clampPosition(it) }
     }
 
+    fun exportState(): BufferPersistState {
+        normalizePositions()
+        return BufferPersistState(
+            lines = lines.toList(),
+            cursor = PositionState(cursor.line, cursor.column),
+            anchor = anchor?.let { PositionState(it.line, it.column) },
+            undo = undoStack.map { it.toState() },
+            redo = redoStack.map { it.toState() },
+            dirty = dirty
+        )
+    }
+
+    fun restoreState(state: BufferPersistState) {
+        lines = state.lines.toMutableList().ifEmpty { mutableListOf("") }
+        cursor = Position(state.cursor.line, state.cursor.column)
+        anchor = state.anchor?.let { Position(it.line, it.column) }
+        undoStack.clear()
+        redoStack.clear()
+        undoStack.addAll(state.undo.map { it.toSnapshot() })
+        redoStack.addAll(state.redo.map { it.toSnapshot() })
+        dirty = state.dirty
+        normalizePositions()
+        refreshSearchAfterChange()
+    }
+
     private fun markDirty() {
         dirty = true
     }
@@ -926,7 +954,23 @@ private data class BufferSnapshot(
     val cursor: Position,
     val anchor: Position?,
     val dirty: Boolean
-)
+) {
+    fun toState(): BufferSnapshotState =
+        BufferSnapshotState(
+            lines = lines,
+            cursor = PositionState(cursor.line, cursor.column),
+            anchor = anchor?.let { PositionState(it.line, it.column) },
+            dirty = dirty
+        )
+}
+
+private fun BufferSnapshotState.toSnapshot(): BufferSnapshot =
+    BufferSnapshot(
+        lines = lines.toList(),
+        cursor = Position(cursor.line, cursor.column),
+        anchor = anchor?.let { Position(it.line, it.column) },
+        dirty = dirty
+    )
 
 data class Notification(val kind: NotificationKind, val text: String)
 enum class NotificationKind { COPY, CUT }
