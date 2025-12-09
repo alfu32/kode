@@ -86,9 +86,9 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
 
 fun main() {
     val styleFiles = mutableListOf("styles/app.css")
-    if (Files.exists(Paths.get("grammars/tm-scopes.css"))) {
-        styleFiles += "grammars/tm-scopes.css"
-    }
+    val kodeHome = kodeHome()
+    resolveResource("styles/app.css", kodeHome)?.let { styleFiles.add(0, it) }
+    resolveResource("grammars/tm-scopes.css", kodeHome)?.let { styleFiles += it }
     val styleSheet = StyleSheet.loadFromFiles(styleFiles)
     val renderer = AnsiCanvasRenderer()
 
@@ -100,6 +100,25 @@ fun main() {
 
     runApp(app, renderer)
     app.persistSession(force = true)
+}
+
+private fun kodeHome(): java.nio.file.Path? {
+    System.getProperty("kode.home")?.let { return Paths.get(it) }
+    System.getenv("KODE_HOME")?.let { return Paths.get(it) }
+    return try {
+        val uri = EditorSessionState::class.java.protectionDomain.codeSource?.location?.toURI()
+        uri?.let { Paths.get(it).parent }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun resolveResource(rel: String, base: java.nio.file.Path?): String? {
+    val candidates = listOfNotNull(
+        base?.resolve(rel),
+        Paths.get(rel)
+    )
+    return candidates.firstOrNull { Files.exists(it) }?.toString()
 }
 
 private class SplitPanelsApp(

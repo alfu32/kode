@@ -34,9 +34,10 @@ tasks.test {
     useJUnitPlatform()
 }
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(17)
     compilerOptions {
         freeCompilerArgs.add("-Xmulti-dollar-interpolation")
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -100,13 +101,21 @@ tasks.register<Copy>("distBundle") {
     group = "distribution"
     description = "Bundle fat jar into dist/"
     val fat = tasks.named<Jar>("fatJar")
-    dependsOn(fat)
+    val launchers = tasks.named("generateLaunchers")
+    dependsOn(fat, launchers)
     val distDir = layout.projectDirectory.dir("dist")
-    from(fat.map { it.archiveFile })
+    from(fat.map { it.archiveFile }) { rename { "kode.jar" } }
     externalColorMap.asFile.takeIf { it.exists() }?.let { from(it) }
     layout.projectDirectory.file("keyword-patterns.txt").asFile.takeIf { it.exists() }?.let { from(it) }
     layout.projectDirectory.file("styles/app.css").asFile.takeIf { it.exists() }?.let { css ->
         from(css) { into("styles") }
+    }
+    // launchers
+    from(launcherDir) {
+        include("kode.sh","kode", "kode.bat")
+        filePermissions {
+            unix("755")
+        }
     }
     into(distDir)
     doFirst { distDir.asFile.mkdirs() }
@@ -115,8 +124,10 @@ tasks.register<Copy>("distBundle") {
 tasks.register<Copy>("releaseBundle") {
     group = "distribution"
     description = "Bundle fat jar and assets into kode-rel-<latest-tag> with renamed kode.jar"
+    doNotTrackState("Release bundle is regenerated fully to include launchers and assets.")
     val fat = tasks.named<Jar>("fatJar")
-    dependsOn(fat)
+    val launchers = tasks.named("generateLaunchers")
+    dependsOn(fat, launchers)
     val tag = latestTagOrVersion()
     val relDir = layout.projectDirectory.dir("kode-rel-$tag")
     from(fat.map { it.archiveFile }) { rename { "kode.jar" } }
@@ -127,8 +138,18 @@ tasks.register<Copy>("releaseBundle") {
     layout.projectDirectory.file("styles/app.css").asFile.takeIf { it.exists() }?.let { css ->
         from(css) { into("styles") }
     }
+    // launchers
+    from(launcherDir) {
+        include("kode.sh", "kode", "kode.bat")
+        filePermissions {
+            unix("755")
+        }
+    }
     into(relDir)
-    doFirst { relDir.asFile.mkdirs() }
+    doFirst {
+        relDir.asFile.deleteRecursively()
+        relDir.asFile.mkdirs()
+    }
 }
 
 tasks.register<Zip>("releaseZip") {
@@ -158,4 +179,31 @@ tasks.register<Zip>("releaseZip") {
 
 
 
+val launcherDir = layout.buildDirectory.dir("launchers")
 
+tasks.register("generateLaunchers") {
+    outputs.dir(launcherDir)
+    doLast {
+        val outDir = launcherDir.get().asFile
+        outDir.mkdirs()
+        val shText = """
+            |#!/usr/bin/env sh
+            |DIR="$(CDPATH= cd -- "$(dirname -- "${'$'}0")" && pwd)"
+            |exec java -Dkode.home="${'$'}DIR" -jar "${'$'}DIR/kode.jar" "${'$'}@"
+            |""".trimMargin()
+        val sh = outDir.resolve("kode.sh")
+        sh.writeText(shText)
+        sh.setExecutable(true, false)
+        val sh2 = outDir.resolve("kode")
+        sh2.writeText(shText)
+        sh2.setExecutable(true, false)
+        val bat = outDir.resolve("kode.bat")
+        bat.writeText(
+            """
+            |@echo off
+            |set DIR=%~dp0
+            |java -Dkode.home="%DIR%" -jar "%DIR%\\kode.jar" %*
+            |""".trimMargin()
+        )
+    }
+}
