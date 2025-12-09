@@ -6,6 +6,9 @@ import editor.app.EditorSessionState
 import editor.lib.SearchState
 import editor.lib.ProjectSearcher
 import editor.lib.ProjectSearchMatch
+import editor.mime.DefaultMimeTypeDetector
+import editor.mime.MimeTypeResult
+import editor.grammars.Token
 import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSet
@@ -19,10 +22,11 @@ import java.nio.file.Paths
 class ProjectSearchDialog(
     styleSheet: StyleSheet,
     private val onDismiss: () -> Unit,
-    syntaxProvider: SyntaxProvider? = null,
+    private val syntaxProvider: SyntaxProvider? = null,
     private val onDirtyFile: (String, EditorSessionState?) -> Unit = { _, _ -> },
     private val projectRoot: Path = Paths.get(System.getProperty("user.dir")),
-    private val searcher: ProjectSearcher = ProjectSearcher()
+    private val searcher: ProjectSearcher = ProjectSearcher(),
+    private val mimeDetector: DefaultMimeTypeDetector = DefaultMimeTypeDetector()
 ) : BaseComponent(styleSheet) {
 
     data class MatchLine(
@@ -114,6 +118,9 @@ class ProjectSearchDialog(
     private var currentQuery: String = ""
     private var currentFilter: String = ""
     private var lastPatternError: String? = null
+    private val detectionCache = mutableMapOf<String, MimeTypeResult?>()
+    private val languageCache = mutableMapOf<String, String?>()
+    private val styleCache = mutableMapOf<String, StyleSet>()
 
     init {
         setFocus(FocusTarget.SEARCH)
@@ -271,40 +278,37 @@ class ProjectSearchDialog(
             canvas.withStyle(markerStyle) {
                 drawText(x, rowY, marker.take(width.coerceAtLeast(0)))
             }
-            val textStart = x + marker.length + 1
-            val available = (width - (textStart - x)).coerceAtLeast(0)
-            val matchText = match.lineText
-            val clippedText = if (matchText.length > available) matchText.take(available) else matchText
-            val highlightStart = match.matchRange.first.coerceIn(0, clippedText.length)
-            val highlightEnd = (match.matchRange.last + 1).coerceIn(highlightStart, clippedText.length)
-            if (highlightStart < highlightEnd) {
-                val before = clippedText.substring(0, highlightStart)
-                val highlight = clippedText.substring(highlightStart, highlightEnd)
-                val after = clippedText.substring(highlightEnd, clippedText.length.coerceAtLeast(highlightEnd))
-                canvas.withStyle(if (isSelected) selectedStyle else listStyle) {
-                    drawText(textStart, rowY, before)
-                }
-                canvas.withStyle(highlightStyle) {
-                    drawText(textStart + before.length, rowY, highlight)
-                }
-                val trailingX = textStart + before.length + highlight.length
-                val remaining = available - (before.length + highlight.length)
-                val afterText = after.take(remaining).padEnd(remaining, ' ')
-                canvas.withStyle(if (isSelected) selectedStyle else listStyle) {
-                    drawText(trailingX, rowY, afterText)
-                }
-            } else {
-                val pad = clippedText.padEnd(available, ' ')
-                canvas.withStyle(if (isSelected) selectedStyle else listStyle) {
-                    drawText(textStart, rowY, pad)
-                }
-            }
             val fileLabel = " ${match.filePath.substringAfterLast('/')}"
-            val pathStart = (x + width - fileLabel.length).coerceAtLeast(textStart)
+            val pathWidth = fileLabel.length.coerceAtMost(width.coerceAtLeast(0))
+            val pathStart = (x + width - pathWidth).coerceAtLeast(x)
             canvas.withStyle(pathStyle) {
                 bold(true)
-                drawText(pathStart, rowY, fileLabel.take(width - (pathStart - x)))
+                drawText(pathStart, rowY, fileLabel.take(pathWidth))
                 bold(false)
+            }
+            val textStart = x + marker.length + 1
+            val available = (pathStart - textStart).coerceAtLeast(0)
+            val matchText = match.lineText
+            val clippedText = matchText.take(available)
+            val lang = resolveLanguage(match.filePath)
+            val tokens: List<Token> = if (lang != null && syntaxProvider != null) {
+                syntaxProvider.tokensForLines(match.lineNumber, listOf(match.lineText), lang).filter { it.line == match.lineNumber }
+            } else emptyList()
+            val baseStyle = if (isSelected) selectedStyle else listStyle
+            val segments = if (tokens.isEmpty()) {
+                listOf(StyledSegment(0, clippedText.length, baseStyle))
+            } else buildSegments(clippedText, tokens, baseStyle)
+            val withHighlight = overlayRange(segments, match.matchRange.first, match.matchRange.last + 1, highlightStyle)
+            withHighlight.forEach { seg ->
+                if (seg.start >= available) return@forEach
+                val drawEnd = minOf(seg.end, available, clippedText.length)
+                if (drawEnd <= seg.start) return@forEach
+                val part = clippedText.substring(seg.start, drawEnd)
+                if (part.isNotEmpty()) {
+                    canvas.withStyle(seg.style) {
+                        drawText(textStart + seg.start, rowY, part)
+                    }
+                }
             }
         }
     }
@@ -555,7 +559,12 @@ class ProjectSearchDialog(
     private fun loadSelectedMatch() {
         val match = matches.getOrNull(selectedIndex) ?: return
         try {
-            codeEditor.openFile(match.filePath)
+            val detection = detectionCache.getOrPut(match.filePath) {
+                runCatching { mimeDetector.detectFile(Paths.get(match.filePath)) }.getOrNull()
+            }
+            val lang = resolveLanguage(match.filePath)
+            val grammarAvailable = lang != null
+            codeEditor.openFile(match.filePath, detection, grammarAvailable, lang)
             val start = Position(match.lineNumber, match.matchRange.first)
             val end = Position(match.lineNumber, (match.matchRange.last + 1).coerceAtLeast(match.matchRange.first))
             codeEditor.setSelection(start, end, center = true)
@@ -574,6 +583,91 @@ class ProjectSearchDialog(
         if (path.isEmpty()) return
         if (!codeEditor.isDirty()) return
         onDirtyFile(path, codeEditor.captureState())
+    }
+
+    private fun resolveLanguage(filePath: String): String? {
+        languageCache[filePath]?.let { return it }
+        val detection = detectionCache.getOrPut(filePath) {
+            runCatching { mimeDetector.detectFile(Paths.get(filePath)) }.getOrNull()
+        }
+        val ext = Paths.get(filePath).fileName?.toString()?.substringAfterLast('.', "")?.lowercase()
+        val fromDetection = detection?.language
+        val fromExt = ext?.takeIf { it.isNotEmpty() }?.let { syntaxProvider?.languageForExtension(it) }
+        val lang = listOfNotNull(fromDetection, fromExt).firstOrNull { l ->
+            syntaxProvider?.languages()?.contains(l) == true
+        }
+        languageCache[filePath] = lang
+        return lang
+    }
+
+    private fun styleForToken(token: Token, base: StyleSet): StyleSet {
+        token.fg?.let { color ->
+            val copy = base.copy()
+            copy.fg = color
+            return copy
+        }
+        val scope = token.scopes.lastOrNull() ?: return base
+        return cachedStyle(scope).withDefaults(base.fg, base.bg)
+    }
+
+    private fun cachedStyle(scope: String): StyleSet =
+        styleCache.getOrPut(scope) { styleSheet.getStyle(scopeToStyleId(scope)) }
+
+    private fun scopeToStyleId(scope: String): String =
+        scope.replace(' ', '_').replace(":", "-").replace(",", "-")
+
+    private data class StyledSegment(val start: Int, val end: Int, val style: StyleSet)
+
+    private fun buildSegments(text: String, tokens: List<Token>, baseStyle: StyleSet): List<StyledSegment> {
+        if (text.isEmpty()) return emptyList()
+        if (tokens.isEmpty()) return listOf(StyledSegment(0, text.length, baseStyle))
+        val segments = mutableListOf<StyledSegment>()
+        var cursor = 0
+        tokens.sortedBy { it.start }.forEach { tok ->
+            val segStart = tok.start.coerceIn(0, text.length)
+            val segEnd = tok.end.coerceIn(segStart, text.length)
+            if (segStart > cursor) {
+                segments.add(StyledSegment(cursor, segStart, baseStyle))
+            }
+            if (segEnd > segStart) {
+                val style = styleForToken(tok, baseStyle)
+                segments.add(StyledSegment(segStart, segEnd, style))
+            }
+            cursor = maxOf(cursor, segEnd)
+            if (cursor >= text.length) return@forEach
+        }
+        if (cursor < text.length) {
+            segments.add(StyledSegment(cursor, text.length, baseStyle))
+        }
+        return segments
+    }
+
+    private fun overlayRange(
+        segments: List<StyledSegment>,
+        start: Int,
+        end: Int,
+        style: StyleSet
+    ): List<StyledSegment> {
+        if (segments.isEmpty() || start >= end) return segments
+        val out = mutableListOf<StyledSegment>()
+        segments.forEach { seg ->
+            if (seg.end <= start || seg.start >= end) {
+                out.add(seg)
+                return@forEach
+            }
+            if (seg.start < start) {
+                out.add(StyledSegment(seg.start, start, seg.style))
+            }
+            val overlayStart = maxOf(seg.start, start)
+            val overlayEnd = minOf(seg.end, end)
+            if (overlayStart < overlayEnd) {
+                out.add(StyledSegment(overlayStart, overlayEnd, style))
+            }
+            if (seg.end > end) {
+                out.add(StyledSegment(end, seg.end, seg.style))
+            }
+        }
+        return out
     }
 
     private fun toLocal(event: UIEvent): UIEvent? {
