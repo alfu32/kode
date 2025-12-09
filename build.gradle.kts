@@ -105,6 +105,9 @@ tasks.register<Copy>("distBundle") {
     from(fat.map { it.archiveFile })
     externalColorMap.asFile.takeIf { it.exists() }?.let { from(it) }
     layout.projectDirectory.file("keyword-patterns.txt").asFile.takeIf { it.exists() }?.let { from(it) }
+    layout.projectDirectory.file("styles/app.css").asFile.takeIf { it.exists() }?.let { css ->
+        from(css) { into("styles") }
+    }
     into(distDir)
     doFirst { distDir.asFile.mkdirs() }
 }
@@ -117,9 +120,12 @@ tasks.register<Copy>("releaseBundle") {
     val tag = latestTagOrVersion()
     val relDir = layout.projectDirectory.dir("kode-rel-$tag")
     from(fat.map { it.archiveFile }) { rename { "kode.jar" } }
-    listOf("keyword-patterns.txt", "token-colors.txt", "README.md", "styles/app.css").forEach { path ->
+    listOf("keyword-patterns.txt", "token-colors.txt", "README.md").forEach { path ->
         val file = layout.projectDirectory.file(path).asFile
         if (file.exists()) from(file)
+    }
+    layout.projectDirectory.file("styles/app.css").asFile.takeIf { it.exists() }?.let { css ->
+        from(css) { into("styles") }
     }
     into(relDir)
     doFirst { relDir.asFile.mkdirs() }
@@ -135,7 +141,6 @@ tasks.register<Zip>("releaseZip") {
     archiveFileName.set("kode-rel-$tag.zip")
     destinationDirectory.set(layout.projectDirectory.asFile)
 }
-
 
 
 
