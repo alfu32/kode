@@ -28,6 +28,10 @@ class FilesTabView(
     private var recentScroll: Int = 0
     private var lastRows: Int = 0
 
+    fun refreshFileTree() {
+        tree.refreshOpenNodes()
+    }
+
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(0)

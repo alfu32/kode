@@ -31,7 +31,7 @@ class GitPanelView(
         )
     }
 
-    private fun refreshData() {
+    fun refreshData() {
         statusEntries = git.statusPorcelain().sortedBy { it.path }
         commitEntries = git.listCommits()
         commitScroll = commitScroll.coerceIn(0, (commitEntries.size - 1).coerceAtLeast(0))

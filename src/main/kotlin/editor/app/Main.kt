@@ -48,10 +48,17 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
         var needsRender = true
         redraw()
 
+        var lastTickMs = System.currentTimeMillis()
         while (renderer.isRunning()) {
             val event = renderer.tryPollEvent()
             if (event != null) {
                 needsRender = app.dispatch(event) || event.kind == "resize"
+            }
+            val now = System.currentTimeMillis()
+            if (now - lastTickMs >= 500) { // lightweight periodic tick
+                val ticked = (app as? Tickable)?.tick(now) ?: false
+                if (ticked) needsRender = true
+                lastTickMs = now
             }
 
             if (needsRender) {
@@ -98,7 +105,7 @@ fun main() {
 private class SplitPanelsApp(
     styleSheet: StyleSheet,
     private val onQuit: () -> Unit
-) : BaseComponent(styleSheet) {
+) : BaseComponent(styleSheet), Tickable {
     // gotcha
     private val sessionManager = ProjectSessionManager(System.getProperty("user.dir"))
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
@@ -131,6 +138,9 @@ private class SplitPanelsApp(
     )
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
+    private var lastFileRefreshMs: Long = 0L
+    private var lastGitRefreshMs: Long = 0L
+    private val refreshIntervalMs: Long = 5_000L
     init {
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -590,6 +600,21 @@ private class SplitPanelsApp(
             FocusTarget.FILES -> codeEditor.render(clipped)
         }
     }
+
+    override fun tick(nowMs: Long): Boolean {
+        var needsRender = false
+        if (nowMs - lastFileRefreshMs >= refreshIntervalMs) {
+            (leftTabs.children.getOrNull(0) as? editor.ui.FilesTabView)?.refreshFileTree()
+            lastFileRefreshMs = nowMs
+            needsRender = true
+        }
+        if (nowMs - lastGitRefreshMs >= refreshIntervalMs) {
+            gitPanel.refreshData()
+            lastGitRefreshMs = nowMs
+            needsRender = true
+        }
+        return needsRender
+    }
 }
 
 private enum class FocusTarget { FILES, CODE, HEX, IMAGE }
@@ -607,4 +632,9 @@ private class PlaceholderPane(
 
     override fun dispatch(event: UIEvent): Boolean = false
 }
-
+private interface Tickable {
+    /**
+     * Called periodically from the main loop. Return true to request a repaint.
+     */
+    fun tick(nowMs: Long): Boolean
+}
