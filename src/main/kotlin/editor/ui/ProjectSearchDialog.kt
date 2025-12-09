@@ -3,6 +3,9 @@ package editor.ui
 import editor.grammars.SyntaxProvider
 import editor.lib.Position
 import editor.app.EditorSessionState
+import editor.lib.SearchState
+import editor.lib.ProjectSearcher
+import editor.lib.ProjectSearchMatch
 import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSet
@@ -10,12 +13,16 @@ import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
 import kotlin.math.max
+import java.nio.file.Path
+import java.nio.file.Paths
 
 class ProjectSearchDialog(
     styleSheet: StyleSheet,
     private val onDismiss: () -> Unit,
     syntaxProvider: SyntaxProvider? = null,
-    private val onDirtyFile: (String, EditorSessionState?) -> Unit = { _, _ -> }
+    private val onDirtyFile: (String, EditorSessionState?) -> Unit = { _, _ -> },
+    private val projectRoot: Path = Paths.get(System.getProperty("user.dir")),
+    private val searcher: ProjectSearcher = ProjectSearcher()
 ) : BaseComponent(styleSheet) {
 
     data class MatchLine(
@@ -91,7 +98,7 @@ class ProjectSearchDialog(
     private enum class FocusTarget { SEARCH, FILTER, LIST, EDITOR }
 
     private var bounds: Bounds = Bounds(0, 0, 0, 0)
-    private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet) { }
+    private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet, this::handleSearchAction)
     private var filterState = InputState()
     private var focus: FocusTarget = FocusTarget.SEARCH
     private var matches: List<MatchLine> = emptyList()
@@ -104,16 +111,33 @@ class ProjectSearchDialog(
     private var contentHeight = 0
     private var contentX = 0
     private var contentY = 0
+    private var currentQuery: String = ""
+    private var currentFilter: String = ""
+    private var lastPatternError: String? = null
 
     init {
         setFocus(FocusTarget.SEARCH)
     }
 
-    fun setMatches(newMatches: List<MatchLine>) {
+    fun setInitialInputs(searchQuery: String?, fileFilter: String?) {
+        val query = searchQuery ?: ""
+        currentQuery = query
+        currentFilter = fileFilter ?: ""
+        searchBar.updateFromSearchState(SearchState(query, "", 0, -1, null))
+        filterState.text = currentFilter
+        filterState.cursor = filterState.text.length
+        filterState.clampCursor()
+        setFocus(FocusTarget.SEARCH)
+        runSearch()
+    }
+
+    fun setMatches(newMatches: List<MatchLine>, patternError: String? = null) {
         matches = newMatches
         selectedIndex = if (matches.isNotEmpty()) 0 else -1
         listScroll = 0
+        lastPatternError = patternError
         loadSelectedMatch()
+        updateSearchStatus()
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -381,11 +405,56 @@ class ProjectSearchDialog(
         searchBar.setFocusEnabled(target == FocusTarget.SEARCH)
     }
 
+    private fun handleSearchAction(action: SearchReplaceBar.SearchCommand) {
+        when (action) {
+            is SearchReplaceBar.SearchCommand.Change -> {
+                currentQuery = action.query
+                runSearch()
+            }
+            SearchReplaceBar.SearchCommand.FindNext -> {
+                moveSelection(1)
+            }
+            SearchReplaceBar.SearchCommand.FindAll -> {
+                runSearch()
+            }
+            else -> {
+                // Replace actions are ignored for project-wide search for now
+            }
+        }
+    }
+
+    private fun runSearch() {
+        val result = searcher.search(projectRoot, currentQuery, currentFilter)
+        val mapped = result.matches.map { toMatchLine(it) }
+        setMatches(mapped, result.patternError)
+        val activeIndex = if (selectedIndex in mapped.indices) selectedIndex else -1
+        searchBar.updateFromSearchState(
+            SearchState(
+                query = currentQuery,
+                replacement = "",
+                matchCount = mapped.size,
+                activeIndex = activeIndex,
+                patternError = result.patternError
+            )
+        )
+    }
+
+    private fun toMatchLine(match: ProjectSearchMatch): MatchLine =
+        MatchLine(
+            filePath = match.filePath,
+            lineNumber = match.lineNumber,
+            lineText = match.lineText,
+            matchRange = match.matchRange
+        )
+
     private fun handleFilterEvent(event: UIEvent): Boolean {
         if (event.kind != "key_down") return false
-        val key = event.key
-        if (key != null) {
-            filterState.handleKey(key, event)
+        val key = event.key ?: return true
+        val before = filterState.text
+        filterState.handleKey(key, event)
+        currentFilter = filterState.text
+        if (before != currentFilter) {
+            runSearch()
         }
         return true // consume all key events while filter is focused
     }
@@ -440,6 +509,7 @@ class ProjectSearchDialog(
         selectedIndex = newIndex
         ensureSelectionVisible()
         loadSelectedMatch()
+        updateSearchStatus()
     }
 
     private fun ensureSelectionVisible() {
@@ -462,6 +532,11 @@ class ProjectSearchDialog(
         } catch (_: Exception) {
             // ignore missing files for now
         }
+    }
+
+    private fun updateSearchStatus() {
+        val activeIndex = if (selectedIndex in matches.indices) selectedIndex else -1
+        searchBar.updateMatchLabel(activeIndex, matches.size, lastPatternError)
     }
 
     private fun maybeRecordRecent() {

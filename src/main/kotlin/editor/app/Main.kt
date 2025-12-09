@@ -99,6 +99,7 @@ private class SplitPanelsApp(
     styleSheet: StyleSheet,
     private val onQuit: () -> Unit
 ) : BaseComponent(styleSheet) {
+    // gotcha
     private val sessionManager = ProjectSessionManager(System.getProperty("user.dir"))
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
     private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
@@ -125,7 +126,8 @@ private class SplitPanelsApp(
         styleSheet,
         onDismiss = { projectSearchVisible = false },
         syntaxProvider = regexProvider,
-        onDirtyFile = { path, state -> recordRecentFromSearch(path, state) }
+        onDirtyFile = { path, state -> recordRecentFromSearch(path, state) },
+        projectRoot = java.nio.file.Paths.get(System.getProperty("user.dir"))
     )
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
@@ -225,6 +227,11 @@ private class SplitPanelsApp(
         if (event.kind == "key_down") {
             val key = event.key
             if (key != null && !event.ctrl && event.alt && key.equals("f", ignoreCase = true)) {
+                val selection = codeEditor.currentSelectionText()
+                val prefillQuery = selection?.takeIf { it.isNotEmpty() }?.let { Regex.escape(it) }
+                val ext = codeEditor.currentPath().substringAfterLast('.', missingDelimiterValue = "")
+                val prefillFilter = ext.takeIf { it.isNotEmpty() }?.let { "\\.${it}" }
+                projectSearchDialog.setInitialInputs(prefillQuery, prefillFilter)
                 projectSearchVisible = true
                 return true
             }
@@ -600,3 +607,4 @@ private class PlaceholderPane(
 
     override fun dispatch(event: UIEvent): Boolean = false
 }
+
