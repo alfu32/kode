@@ -44,7 +44,12 @@
 - Dependencies: JGit for Git panel, Korim/Korio + coroutines for image loading, TM4E available for TM tokenization, and internal StyleSet/Renderer helpers for consistent styling.
 - Tasks: `generateTmScopes` builds `grammars/tm-scopes.css` from grammar scopes (optional if using TM4E). Keep README aligned when adding viewers, sliders, detector/grammar changes; style names live in `styles/app.css` (e.g., `slider-track`, `slider-indicator`, `image-*`, `code-*`).
 
+using in combination with tmux with codex and the command promp
+![img_19.png](assets/img_19.png)
+
+usage of the file management features : renaming file
 ![img_18.png](assets/img_18.png)
+
 ![img_16.png](assets/img_16.png)
 
 ![img_14.png](assets/img_14.png)
