@@ -121,9 +121,12 @@ private class SplitPanelsApp(
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val gitPanel = GitPanelView(styleSheet, JGitService(File(System.getProperty("user.dir"))))
-    private val projectSearchDialog = ProjectSearchDialog(styleSheet) {
-        projectSearchVisible = false
-    }
+    private val projectSearchDialog = ProjectSearchDialog(
+        styleSheet,
+        onDismiss = { projectSearchVisible = false },
+        syntaxProvider = regexProvider,
+        onDirtyFile = { path, state -> recordRecentFromSearch(path, state) }
+    )
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
     init {
@@ -473,6 +476,11 @@ private class SplitPanelsApp(
         if (state != null) {
             savedEditors[abs] = state.copy(lastModifiedMillis = mtime)
         }
+    }
+
+    private fun recordRecentFromSearch(path: String, state: EditorSessionState?) {
+        val abs = sessionManager.toAbsolute(path)
+        recordRecent(abs, state, ViewerType.CODE)
     }
 
     private fun removeRecent(entry: RecentFileEntry) {

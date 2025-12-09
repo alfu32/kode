@@ -378,8 +378,23 @@ class CodeEditorView(
         val searchState = buffer.searchState()
         searchBar = SearchReplaceBar(styleSheet, this::handleSearchAction).also {
             it.updateFromSearchState(searchState)
+            it.setFocusEnabled(true)
         }
     }
+
+    fun setSelection(start: Position, end: Position, center: Boolean = false) {
+        buffer.startSelection(start)
+        buffer.selectTo(end)
+        val currentRows = lastRows.coerceAtLeast(1)
+        val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(currentRows - 1) else 0
+        if (center) {
+            val bodyRows = (currentRows - 1 - searchHeight).coerceAtLeast(1)
+            scrollTop = (start.line - bodyRows / 2).coerceIn(0, buffer.totalLines().coerceAtLeast(1) - 1)
+        }
+        ensureCursorVisible(currentRows, searchHeight)
+    }
+
+    fun isDirty(): Boolean = buffer.isDirty()
 
     private fun openSearch(selectionText: String? = null) {
         searchVisible = true

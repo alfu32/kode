@@ -81,6 +81,7 @@ class SearchReplaceBar(
     }
 
     private var focusedField: Field = Field.FIND
+    private var focusEnabled: Boolean = true
     private var findFieldBounds: IntRange = 0 until 0
     private var replaceFieldBounds: IntRange = 0 until 0
     private var findState = InputState()
@@ -92,6 +93,10 @@ class SearchReplaceBar(
     private val closeButtonWidth = 3
 
     fun preferredHeight(): Int = barHeight
+
+    fun setFocusEnabled(enabled: Boolean) {
+        focusEnabled = enabled
+    }
 
     fun updateFromSearchState(state: SearchState) {
         if (findState.text != state.query) {
@@ -270,7 +275,7 @@ class SearchReplaceBar(
             drawText(startX, y, padText)
         }
 
-        if (active) {
+        if (active && focusEnabled) {
             val cursorX = startX + (cursor - windowStart).coerceAtLeast(0).coerceAtMost(available - 1)
             canvas.withStyle(cursorStyle) {
                 val ch = padText.getOrElse(cursorX - startX) { ' ' }
