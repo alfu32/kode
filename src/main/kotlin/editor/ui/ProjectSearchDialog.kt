@@ -267,12 +267,12 @@ class ProjectSearchDialog(
         visibleMatches.forEachIndexed { idx, match ->
             val isSelected = (listScroll + idx) == selectedIndex
             val rowY = y + idx
-            val marker = if (isSelected) ">" else " "
-            canvas.withStyle(if (isSelected) markerStyle else listStyle) {
-                drawText(x, rowY, marker)
+            val marker = if (isSelected) "[*]" else "[ ]"
+            canvas.withStyle(markerStyle) {
+                drawText(x, rowY, marker.take(width.coerceAtLeast(0)))
             }
-            val textStart = x + 2
-            val available = (width - 2).coerceAtLeast(0)
+            val textStart = x + marker.length + 1
+            val available = (width - (textStart - x)).coerceAtLeast(0)
             val matchText = match.lineText
             val clippedText = if (matchText.length > available) matchText.take(available) else matchText
             val highlightStart = match.matchRange.first.coerceIn(0, clippedText.length)
@@ -302,7 +302,9 @@ class ProjectSearchDialog(
             val fileLabel = " ${match.filePath.substringAfterLast('/')}"
             val pathStart = (x + width - fileLabel.length).coerceAtLeast(textStart)
             canvas.withStyle(pathStyle) {
+                bold(true)
                 drawText(pathStart, rowY, fileLabel.take(width - (pathStart - x)))
+                bold(false)
             }
         }
     }
@@ -355,6 +357,33 @@ class ProjectSearchDialog(
             }
         }
 
+        if (localEvent.kind == "key_down" && localEvent.ctrl && localEvent.key.equals("s", ignoreCase = true)) {
+            val editorEvent = localEvent.alterCopy(
+                UIEvent(
+                    kind = localEvent.kind,
+                    x = localEvent.x,
+                    y = localEvent.y?.minus(bodyY + listHeight + 1),
+                    relX = localEvent.relX,
+                    relY = localEvent.relY,
+                    button = localEvent.button,
+                    scrollDelta = localEvent.scrollDelta,
+                    key = localEvent.key,
+                    ctrl = localEvent.ctrl,
+                    alt = localEvent.alt,
+                    shift = localEvent.shift,
+                    meta = localEvent.meta,
+                    focusId = localEvent.focusId,
+                    cols = localEvent.cols,
+                    rows = localEvent.rows,
+                    raw = localEvent.raw
+                )
+            )
+            if (codeEditor.dispatch(editorEvent)) {
+                maybeRecordRecent()
+                return true
+            }
+        }
+
         if (focus == FocusTarget.SEARCH) {
             val handled = searchBar.dispatch(localEvent)
             if (handled) return true
@@ -366,7 +395,7 @@ class ProjectSearchDialog(
         }
 
         if (focus == FocusTarget.LIST) {
-            val handled = handleListEvent(localEvent, listHeight)
+            val handled = handleListEvent(localEvent, listHeight, headerHeight + filterHeight)
             if (handled) return true
         }
 
@@ -459,7 +488,7 @@ class ProjectSearchDialog(
         return true // consume all key events while filter is focused
     }
 
-    private fun handleListEvent(event: UIEvent, listHeight: Int): Boolean {
+    private fun handleListEvent(event: UIEvent, listHeight: Int, listStartY: Int): Boolean {
         if (event.kind == "key_down") {
             when (event.key?.lowercase()) {
                 "up" -> {
@@ -486,7 +515,8 @@ class ProjectSearchDialog(
         }
         if (event.kind == "mouse_down") {
             val y = event.y ?: return false
-            val idx = listScroll + y
+            val localY = (y - listStartY).coerceAtLeast(0)
+            val idx = listScroll + localY
             if (idx in matches.indices) {
                 selectedIndex = idx
                 loadSelectedMatch()
