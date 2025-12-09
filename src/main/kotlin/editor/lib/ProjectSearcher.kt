@@ -33,8 +33,12 @@ class ProjectSearcher {
         val matches = mutableListOf<ProjectSearchMatch>()
         Files.walk(root).use { paths ->
             paths.filter { it.isRegularFile() }.forEach { path ->
-                val name = path.fileName?.toString() ?: path.toString()
-                if (filterRegex != null && !filterRegex.containsMatchIn(name)) return@forEach
+                val relative = try {
+                    root.relativize(path).toString()
+                } catch (_: Exception) {
+                    path.fileName?.toString() ?: path.toString()
+                }
+                if (filterRegex != null && !filterRegex.containsMatchIn(relative)) return@forEach
                 val lines = runCatching { Files.readAllLines(path) }.getOrNull() ?: return@forEach
                 lines.forEachIndexed { idx, line ->
                     regex.findAll(line).forEach { mr ->

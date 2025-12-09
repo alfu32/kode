@@ -1,9 +1,8 @@
 # KODE - Code Editor
 
 
-![img_16.png](assets/img_16.png)
-
 ![img_14.png](assets/img_14.png)
+![img_17.png](assets/img_17.png)
 
 ![img_12.png](assets/img_12.png)
 ![img_10.png](assets/img_10.png)
@@ -43,6 +42,9 @@
 - Tasks: `generateTmScopes` builds `grammars/tm-scopes.css` from grammar scopes (optional if using TM4E). Keep README aligned when adding viewers, sliders, detector/grammar changes; style names live in `styles/app.css` (e.g., `slider-track`, `slider-indicator`, `image-*`, `code-*`).
 
 
+![img_16.png](assets/img_16.png)
+
+![img_14.png](assets/img_14.png)
 ![img_11.png](assets/img_11.png)
 ![img_10.png](assets/img_10.png)
 ![img_9.png](assets/img_9.png)
