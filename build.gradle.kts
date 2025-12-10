@@ -74,6 +74,7 @@ tasks.register<Jar>("fatJar") {
 
     manifest {
         attributes["Main-Class"] = "editor.app.MainKt"
+        attributes["Implementation-Version"] = project.latestTagOrVersion()
     }
 
     // include compiled classes/resources of this project

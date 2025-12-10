@@ -21,17 +21,42 @@ import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
 import editor.ui.GitPanelView
 import editor.ui.ProjectSearchDialog
+import editor.ui.AboutView
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Instant
 import editor.lib.FileTree
 import editor.lib.JGitService
 import java.io.File
+import java.lang.management.ManagementFactory
+import com.sun.management.OperatingSystemMXBean
+import java.util.Locale
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
+    val perf = PerformanceTracker()
     fun redraw() {
+        val totalCols = renderer.cols().coerceAtLeast(1)
+        val totalRows = renderer.rows().coerceAtLeast(0)
+        val contentRows = (totalRows - 1).coerceAtLeast(0)
         renderer.clear()
-        app.render(renderer)
+        val contentRenderer = if (contentRows > 0) {
+            ClippedCanvasRenderer(
+                base = renderer,
+                offsetX = 0,
+                offsetY = 0,
+                width = totalCols,
+                height = contentRows
+            )
+        } else renderer
+
+        perf.beforeFrame()
+        if (contentRows > 0) {
+            app.render(contentRenderer)
+        }
+        perf.afterFrame()
+        if (totalRows > 0) {
+            drawStatusLine(renderer, app.styleSheet, perf.snapshot(), totalCols, totalRows - 1)
+        }
         renderer.flush()
     }
 
@@ -55,13 +80,14 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
                 needsRender = app.dispatch(event) || event.kind == "resize"
             }
             val now = System.currentTimeMillis()
+            val perfDirty = perf.loopTick(now)
             if (now - lastTickMs >= 500) { // lightweight periodic tick
                 val ticked = (app as? Tickable)?.tick(now) ?: false
                 if (ticked) needsRender = true
                 lastTickMs = now
             }
 
-            if (needsRender) {
+            if (needsRender || perfDirty) {
                 redraw()
                 needsRender = false
             } else {
@@ -90,10 +116,11 @@ fun main() {
     resolveResource("styles/app.css", kodeHome)?.let { styleFiles.add(0, it) }
     resolveResource("grammars/tm-scopes.css", kodeHome)?.let { styleFiles += it }
     val styleSheet = StyleSheet.loadFromFiles(styleFiles)
+    val buildVersion = resolveBuildVersion()
     val renderer = AnsiCanvasRenderer()
 
     lateinit var app: SplitPanelsApp
-    app = SplitPanelsApp(styleSheet) {
+    app = SplitPanelsApp(styleSheet, buildVersion) {
         app.persistSession(force = true)
         renderer.requestExit()
     }
@@ -121,8 +148,15 @@ private fun resolveResource(rel: String, base: java.nio.file.Path?): String? {
     return candidates.firstOrNull { Files.exists(it) }?.toString()
 }
 
+private fun resolveBuildVersion(): String {
+    val fromPackage = SplitPanelsApp::class.java.`package`?.implementationVersion
+    if (!fromPackage.isNullOrBlank()) return fromPackage
+    return System.getProperty("kode.version")?.takeIf { it.isNotBlank() } ?: "dev"
+}
+
 private class SplitPanelsApp(
     styleSheet: StyleSheet,
+    private val buildVersion: String,
     private val onQuit: () -> Unit
 ) : BaseComponent(styleSheet), Tickable {
     // gotcha
@@ -148,6 +182,7 @@ private class SplitPanelsApp(
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val gitPanel = GitPanelView(styleSheet, JGitService(File(System.getProperty("user.dir"))))
+    private val aboutView = AboutView(styleSheet, buildVersion)
     private val projectSearchDialog = ProjectSearchDialog(
         styleSheet,
         onDismiss = { projectSearchVisible = false },
@@ -175,7 +210,7 @@ private class SplitPanelsApp(
     }
     private val leftTabs = TabView(
         styleSheet = styleSheet,
-        titles = listOf("Files", "Git", "Settings"),
+        titles = listOf("Files", "Git", "About", "Settings"),
         tabComponents = listOf(
             FilesTabView(
                 styleSheet,
@@ -196,6 +231,7 @@ private class SplitPanelsApp(
                 onRemoveRecent = { entry -> removeRecent(entry) }
             ),
             gitPanel,
+            aboutView,
             PlaceholderPane(styleSheet, "Settings")
         ),
         initialIndex = 0
@@ -263,6 +299,13 @@ private class SplitPanelsApp(
                 projectSearchDialog.setInitialInputs(prefillQuery, prefillFilter)
                 projectSearchVisible = true
                 return true
+            }
+        }
+
+        if (event.kind.startsWith("mouse") && lastRows > 0) {
+            val y = event.y
+            if (y != null && y >= lastRows) {
+                return false
             }
         }
 
@@ -656,4 +699,89 @@ private interface Tickable {
      * Called periodically from the main loop. Return true to request a repaint.
      */
     fun tick(nowMs: Long): Boolean
+}
+
+private data class PerfSnapshot(
+    val loopFps: Int,
+    val renderFps: Int,
+    val usedMb: Long,
+    val cpuPercent: Double
+)
+
+private class PerformanceTracker {
+    private val osBean: OperatingSystemMXBean? =
+        ManagementFactory.getOperatingSystemMXBean() as? OperatingSystemMXBean
+    private var lastCpuTimeNs: Long = osBean?.processCpuTime ?: 0L
+    private var lastCpuSampleMs: Long = System.currentTimeMillis()
+    private var cpuPercent: Double = 0.0
+    private var loopCount: Int = 0
+    private var loopFps: Int = 0
+    private var lastLoopSampleMs: Long = System.currentTimeMillis()
+    private var renderCount: Int = 0
+    private var renderFps: Int = 0
+    private var lastRenderSampleMs: Long = System.currentTimeMillis()
+
+    fun loopTick(nowMs: Long): Boolean {
+        var dirty = false
+        loopCount++
+        if (nowMs - lastLoopSampleMs >= 1000) {
+            loopFps = loopCount
+            loopCount = 0
+            lastLoopSampleMs = nowMs
+            dirty = true
+        }
+        if (updateCpu(nowMs)) dirty = true
+        return dirty
+    }
+
+    fun beforeFrame() {
+        renderCount++
+    }
+
+    fun afterFrame() {
+        val now = System.currentTimeMillis()
+        if (now - lastRenderSampleMs >= 1000) {
+            renderFps = renderCount
+            renderCount = 0
+            lastRenderSampleMs = now
+        }
+    }
+
+    private fun updateCpu(nowMs: Long): Boolean {
+        val bean = osBean ?: return false
+        val elapsedMs = nowMs - lastCpuSampleMs
+        if (elapsedMs < 500) return false
+        val cpuTimeNs = bean.processCpuTime
+        val deltaCpuMs = (cpuTimeNs - lastCpuTimeNs) / 1_000_000.0
+        val cores = bean.availableProcessors.toDouble().coerceAtLeast(1.0)
+        if (elapsedMs > 0) {
+            cpuPercent = ((deltaCpuMs / (elapsedMs * cores)) * 100.0).coerceIn(0.0, 100.0)
+        }
+        lastCpuTimeNs = cpuTimeNs
+        lastCpuSampleMs = nowMs
+        return true
+    }
+
+    fun snapshot(): PerfSnapshot {
+        val runtime = Runtime.getRuntime()
+        val usedMb = ((runtime.totalMemory() - runtime.freeMemory()) / 1_048_576L).coerceAtLeast(0)
+        return PerfSnapshot(loopFps = loopFps, renderFps = renderFps, usedMb = usedMb, cpuPercent = cpuPercent)
+    }
+}
+
+private fun drawStatusLine(
+    renderer: CanvasRenderer,
+    styleSheet: StyleSheet,
+    stats: PerfSnapshot,
+    cols: Int,
+    row: Int
+) {
+    val statusStyle = styleSheet.getStyle("status")
+    val textWidth = (cols - 2).coerceAtLeast(0)
+    val cpuText = String.format(Locale.US, "%.1f", stats.cpuPercent)
+    val label = "Loop: ${stats.loopFps}/s  Draw: ${stats.renderFps}/s  Mem: ${stats.usedMb} MB  CPU: $cpuText%"
+    renderer.withStyle(statusStyle) {
+        drawRect(0, row, cols, 1)
+        drawText(1, row, label.take(textWidth))
+    }
 }
