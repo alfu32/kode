@@ -43,9 +43,9 @@ data class EditorSessionState(
 enum class ViewerType { CODE, HEX, IMAGE }
 
 class ProjectSessionManager(
-    projectRoot: String = System.getProperty("user.dir")
+    projectRoot: Path = Paths.get(System.getProperty("user.dir"))
     ) {
-    private val root: Path = Paths.get(projectRoot).toAbsolutePath().normalize()
+    private val root: Path = projectRoot.toAbsolutePath().normalize()
     private val stateFile: Path = root.resolve(".kode.json")
     private val json = Json {
         prettyPrint = true

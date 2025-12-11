@@ -23,6 +23,7 @@ import editor.ui.GitPanelView
 import editor.ui.ProjectSearchDialog
 import editor.ui.AboutView
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.Instant
 import editor.lib.FileTree
@@ -31,6 +32,7 @@ import java.io.File
 import java.lang.management.ManagementFactory
 import com.sun.management.OperatingSystemMXBean
 import java.util.Locale
+import kotlin.system.exitProcess
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     val perf = PerformanceTracker()
@@ -110,7 +112,7 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
     }
 }
 
-fun main() {
+fun main(args: Array<String>) {
     val styleFiles = mutableListOf("styles/app.css")
     val kodeHome = kodeHome()
     resolveResource("styles/app.css", kodeHome)?.let { styleFiles.add(0, it) }
@@ -118,15 +120,28 @@ fun main() {
     val styleSheet = StyleSheet.loadFromFiles(styleFiles)
     val buildVersion = resolveBuildVersion()
     val renderer = AnsiCanvasRenderer()
+    val workingDir = resolveWorkingDirectory(args)
 
     lateinit var app: SplitPanelsApp
-    app = SplitPanelsApp(styleSheet, buildVersion) {
+    app = SplitPanelsApp(styleSheet, buildVersion, workingDir) {
         app.persistSession(force = true)
         renderer.requestExit()
     }
 
     runApp(app, renderer)
     app.persistSession(force = true)
+}
+
+private fun resolveWorkingDirectory(args: Array<String>): Path {
+    val defaultDir = Paths.get("").toAbsolutePath().normalize()
+    val requested = args.firstOrNull()?.takeIf { it.isNotBlank() } ?: return defaultDir
+    val candidate = Paths.get(requested)
+    val resolved = (if (candidate.isAbsolute) candidate else defaultDir.resolve(candidate)).toAbsolutePath().normalize()
+    if (!Files.exists(resolved) || !Files.isDirectory(resolved)) {
+        System.err.println("Working directory must be an existing folder: $resolved")
+        exitProcess(1)
+    }
+    return resolved
 }
 
 private fun kodeHome(): java.nio.file.Path? {
@@ -157,10 +172,11 @@ private fun resolveBuildVersion(): String {
 private class SplitPanelsApp(
     styleSheet: StyleSheet,
     private val buildVersion: String,
+    private val projectRoot: Path,
     private val onQuit: () -> Unit
 ) : BaseComponent(styleSheet), Tickable {
     // gotcha
-    private val sessionManager = ProjectSessionManager(System.getProperty("user.dir"))
+    private val sessionManager = ProjectSessionManager(projectRoot)
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
     private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
     private var lastPersistMs: Long = 0L
@@ -181,14 +197,14 @@ private class SplitPanelsApp(
     private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
-    private val gitPanel = GitPanelView(styleSheet, JGitService(File(System.getProperty("user.dir"))))
+    private val gitPanel = GitPanelView(styleSheet, JGitService(File(projectRoot.toString())))
     private val aboutView = AboutView(styleSheet, buildVersion)
     private val projectSearchDialog = ProjectSearchDialog(
         styleSheet,
         onDismiss = { projectSearchVisible = false },
         syntaxProvider = regexProvider,
         onDirtyFile = { path, state -> recordRecentFromSearch(path, state) },
-        projectRoot = java.nio.file.Paths.get(System.getProperty("user.dir"))
+        projectRoot = projectRoot
     )
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
@@ -214,7 +230,7 @@ private class SplitPanelsApp(
         tabComponents = listOf(
             FilesTabView(
                 styleSheet,
-                FileTree.newFileTree(System.getProperty("user.dir")),
+                FileTree.newFileTree(projectRoot.toString()),
                 recentFilesProvider = {
                     recentFiles
                         .sortedBy { it.path.lowercase() }
