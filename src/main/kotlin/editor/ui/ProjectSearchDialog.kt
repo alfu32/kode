@@ -24,7 +24,7 @@ class ProjectSearchDialog(
     private val onDismiss: () -> Unit,
     private val syntaxProvider: SyntaxProvider? = null,
     private val onDirtyFile: (String, EditorSessionState?) -> Unit = { _, _ -> },
-    private val projectRoot: Path = Paths.get(System.getProperty("user.dir")),
+    private var projectRoot: Path = Paths.get(System.getProperty("user.dir")),
     private val searcher: ProjectSearcher = ProjectSearcher(),
     private val mimeDetector: DefaultMimeTypeDetector = DefaultMimeTypeDetector()
 ) : BaseComponent(styleSheet) {
@@ -135,6 +135,11 @@ class ProjectSearchDialog(
         filterState.cursor = filterState.text.length
         filterState.clampCursor()
         setFocus(FocusTarget.SEARCH)
+        runSearch()
+    }
+
+    fun setProjectRoot(root: Path) {
+        projectRoot = root
         runSearch()
     }
 

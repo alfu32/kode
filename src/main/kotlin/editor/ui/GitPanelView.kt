@@ -12,7 +12,7 @@ import react.renderer.CanvasRenderer
 
 class GitPanelView(
     styleSheet: StyleSheet,
-    private val git: IGitService
+    private var git: IGitService
 ) : BaseComponent(styleSheet) {
 
     private var statusEntries: List<GitStatusEntry> = emptyList()
@@ -29,6 +29,11 @@ class GitPanelView(
             path = "[commit-message]",
             detection = MimeTypeResult("text/plain", extension = ".txt", language = "plain-text")
         )
+    }
+
+    fun setGitService(service: IGitService) {
+        git = service
+        refreshData()
     }
 
     fun refreshData() {

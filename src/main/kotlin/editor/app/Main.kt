@@ -22,6 +22,7 @@ import editor.ui.ImageViewerView
 import editor.ui.GitPanelView
 import editor.ui.ProjectSearchDialog
 import editor.ui.AboutView
+import editor.ui.WorkspacePickerDialog
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -172,11 +173,11 @@ private fun resolveBuildVersion(): String {
 private class SplitPanelsApp(
     styleSheet: StyleSheet,
     private val buildVersion: String,
-    private val projectRoot: Path,
+    private var projectRoot: Path,
     private val onQuit: () -> Unit
 ) : BaseComponent(styleSheet), Tickable {
     // gotcha
-    private val sessionManager = ProjectSessionManager(projectRoot)
+    private var sessionManager = ProjectSessionManager(projectRoot)
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
     private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
     private var lastPersistMs: Long = 0L
@@ -194,7 +195,7 @@ private class SplitPanelsApp(
     private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
     private val regexProvider = KeywordSyntaxProvider
-    private val codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
+    private var codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val gitPanel = GitPanelView(styleSheet, JGitService(File(projectRoot.toString())))
@@ -206,8 +207,30 @@ private class SplitPanelsApp(
         onDirtyFile = { path, state -> recordRecentFromSearch(path, state) },
         projectRoot = projectRoot
     )
+    private val filesTabView = FilesTabView(
+        styleSheet,
+        FileTree.newFileTree(projectRoot.toString()),
+        currentRootProvider = { projectRoot.toString() },
+        onChangeWorkspace = { showWorkspacePicker() },
+        recentFilesProvider = {
+            recentFiles
+                .sortedBy { it.path.lowercase() }
+                .map { it.copy(path = sessionManager.toRelative(it.path)) }
+        },
+        currentPathProvider = { currentRelativePath() },
+        onSelectFile = { entry, mime ->
+            saveCurrentEditorState()
+            val detected = mime?.let { MimeTypeResult(it, language = null) }
+                ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath))
+            openInViewer(entry.fullPath, detected)
+        },
+        onSelectRecent = { entry -> openRecent(entry) },
+        onRemoveRecent = { entry -> removeRecent(entry) }
+    )
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
+    private var workspacePickerVisible = false
+    private var workspacePicker: WorkspacePickerDialog? = null
     private var lastFileRefreshMs: Long = 0L
     private var lastGitRefreshMs: Long = 0L
     private val refreshIntervalMs: Long = 5_000L
@@ -228,24 +251,7 @@ private class SplitPanelsApp(
         styleSheet = styleSheet,
         titles = listOf("Files", "Git", "About", "Settings"),
         tabComponents = listOf(
-            FilesTabView(
-                styleSheet,
-                FileTree.newFileTree(projectRoot.toString()),
-                recentFilesProvider = {
-                    recentFiles
-                        .sortedBy { it.path.lowercase() }
-                        .map { it.copy(path = sessionManager.toRelative(it.path)) }
-                },
-                currentPathProvider = { currentRelativePath() },
-                onSelectFile = { entry, mime ->
-                    saveCurrentEditorState()
-                    val detected = mime?.let { MimeTypeResult(it, language = null) }
-                        ?: mimeDetector.detectFile(java.nio.file.Path.of(entry.fullPath))
-                    openInViewer(entry.fullPath, detected)
-                },
-                onSelectRecent = { entry -> openRecent(entry) },
-                onRemoveRecent = { entry -> removeRecent(entry) }
-            ),
+            filesTabView,
             gitPanel,
             aboutView,
             PlaceholderPane(styleSheet, "Settings")
@@ -299,12 +305,19 @@ private class SplitPanelsApp(
         if (projectSearchVisible) {
             projectSearchDialog.render(canvas)
         }
+        if (workspacePickerVisible) {
+            workspacePicker?.render(canvas)
+        }
 
         lastCols = cols
         leftRatio = splitterX.toDouble() / cols.toDouble().coerceAtLeast(1.0)
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        if (workspacePickerVisible) {
+            val handled = workspacePicker?.dispatch(event) ?: false
+            return handled
+        }
         if (event.kind == "key_down") {
             val key = event.key
             if (key != null && !event.ctrl && event.alt && key.equals("f", ignoreCase = true)) {
@@ -459,6 +472,59 @@ private class SplitPanelsApp(
                 recordRecent(path, null, ViewerType.HEX)
             }
         }
+    }
+
+    private fun showWorkspacePicker() {
+        workspacePicker = WorkspacePickerDialog(
+            styleSheet,
+            projectRoot,
+            onConfirm = { newRoot -> changeWorkspace(newRoot) },
+            onDismiss = {
+                workspacePickerVisible = false
+                workspacePicker = null
+            }
+        )
+        workspacePickerVisible = true
+    }
+
+    private fun changeWorkspace(newRoot: Path) {
+        val normalized = newRoot.toAbsolutePath().normalize()
+        if (normalized == projectRoot) {
+            workspacePickerVisible = false
+            workspacePicker = null
+            return
+        }
+        persistSession(force = true)
+        projectRoot = normalized
+        sessionManager = ProjectSessionManager(projectRoot)
+        recentFiles.clear()
+        savedEditors.clear()
+        currentOpenPath = ""
+        projectSearchVisible = false
+
+        val loaded = sessionManager.load()
+        recentFiles = loaded.recentFiles.map { entry ->
+            entry.copy(
+                path = sessionManager.toAbsolute(entry.path),
+                editor = entry.editor?.copy(path = sessionManager.toAbsolute(entry.editor.path))
+            )
+        }.toMutableList()
+        savedEditors = loaded.openEditors.associateBy { sessionManager.toAbsolute(it.path) }
+            .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
+            .toMutableMap()
+
+        codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
+        focus = FocusTarget.FILES
+        rightFocus = FocusTarget.CODE
+        filesTabView.setRoot(projectRoot.toString())
+        gitPanel.setGitService(JGitService(File(projectRoot.toString())))
+        projectSearchDialog.setProjectRoot(projectRoot)
+        lastFileRefreshMs = 0L
+        lastGitRefreshMs = 0L
+        workspacePickerVisible = false
+        workspacePicker = null
+        restoreLastSession()
+        persistSession(force = true)
     }
 
     private fun openRecent(entry: RecentFileEntry) {

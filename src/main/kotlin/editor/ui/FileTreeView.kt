@@ -11,7 +11,7 @@ import java.io.File
 
 class FileTreeView(
     styleSheet: StyleSheet,
-    private val tree: IFileTree = FileTree.newFileTree(System.getProperty("user.dir")),
+    private var tree: IFileTree = FileTree.newFileTree(System.getProperty("user.dir")),
     private val onSelect: (FileTreeEntry, String?) -> Unit = { _, _ -> }
 ) : BaseComponent(styleSheet) {
 
@@ -26,6 +26,16 @@ class FileTreeView(
 
     fun refreshFileTree() {
         tree.refreshOpenNodes()
+    }
+
+    fun setTree(newTree: IFileTree) {
+        tree = newTree
+        selectedPath = null
+        scrollOffset = 0
+        renameTarget = null
+        renameRow = -1
+        renameInput.text = ""
+        renameInput.cursor = 0
     }
 
     override fun render(canvas: CanvasRenderer) {

@@ -15,7 +15,9 @@ import react.renderer.CanvasRenderer
  */
 class FilesTabView(
     styleSheet: StyleSheet,
-    private val tree: IFileTree = FileTree.newFileTree(System.getProperty("user.dir")),
+    private var tree: IFileTree = FileTree.newFileTree(System.getProperty("user.dir")),
+    private val currentRootProvider: () -> String = { System.getProperty("user.dir") },
+    private val onChangeWorkspace: () -> Unit = {},
     private val recentFilesProvider: () -> List<RecentFileEntry> = { emptyList() },
     private val currentPathProvider: () -> String? = { null },
     private val onSelectFile: (FileTreeEntry, String?) -> Unit = { _, _ -> },
@@ -27,17 +29,26 @@ class FilesTabView(
     private var recentHeight: Int = 0
     private var recentScroll: Int = 0
     private var lastRows: Int = 0
+    private var rootButtonRange: IntRange = IntRange.EMPTY
 
     fun refreshFileTree() {
         tree.refreshOpenNodes()
+    }
+
+    fun setRoot(root: String) {
+        tree = FileTree.newFileTree(root)
+        fileTreeView.setTree(tree)
     }
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(0)
         lastRows = rows
+        renderRootBar(canvas, cols)
+
+        val contentRows = (rows - 1).coerceAtLeast(0)
         val recents = recentFilesProvider()
-        recentHeight = if (recents.isNotEmpty()) computeRecentHeight(rows) else 0
+        recentHeight = if (recents.isNotEmpty()) computeRecentHeight(contentRows) else 0
         val visible = (recentHeight - 1).coerceAtLeast(0)
         val maxScroll = (recents.size - visible).coerceAtLeast(0)
         recentScroll = recentScroll.coerceIn(0, maxScroll)
@@ -45,14 +56,14 @@ class FilesTabView(
         val hasRecents = recentHeight > 0
         if (hasRecents) {
             val separatorY = (recentHeight - 1).coerceAtLeast(0)
-            if (separatorY < rows) {
+            if (separatorY < contentRows) {
                 val sepStyle = styleSheet.getStyle("splitter")
                 canvas.withStyle(sepStyle) {
-                    drawText(0, separatorY, "-".repeat(cols))
+                    drawText(0, separatorY + 1, "-".repeat(cols))
                 }
             }
         }
-        val offsetY = if (hasRecents) recentHeight else 0
+        val offsetY = 1 + if (hasRecents) recentHeight else 0
         val remaining = (rows - offsetY).coerceAtLeast(0)
         if (remaining <= 0) return
 
@@ -68,14 +79,22 @@ class FilesTabView(
 
     override fun dispatch(event: UIEvent): Boolean {
         val rows = (event.rows ?: 0).let { if (it > 0) it else lastRows }
+        val y = event.y ?: 0
+        if (event.kind == "mouse_down" && y == 0) {
+            val x = event.x ?: -1
+            if (rootButtonRange.contains(x)) {
+                onChangeWorkspace()
+                return true
+            }
+        }
+        if (y == 0) return false
         val recents = recentFilesProvider()
-        val headerRows = if (recents.isNotEmpty()) computeRecentHeight(rows) else 0
+        val headerRows = if (recents.isNotEmpty()) computeRecentHeight((rows - 1).coerceAtLeast(0)) else 0
         val hasRecents = headerRows > 0
         if (event.kind.startsWith("mouse")) {
-            val y = event.y ?: 0
-            if (hasRecents && y < headerRows) {
+            if (hasRecents && y in 1 until (headerRows + 1)) {
                 if (event.kind == "mouse_down") {
-                    val idx = (y - 1 + recentScroll)
+                    val idx = (y - 2 + recentScroll)
                     if (idx in recents.indices) {
                         val relX = event.x ?: 0
                         // Column 0 is indicator ('x' or '*'), clicking it clears the entry.
@@ -102,9 +121,9 @@ class FilesTabView(
             UIEvent(
                 kind = event.kind,
                 x = event.x,
-                y = event.y?.let { it - if (hasRecents) headerRows else 0 },
+                y = event.y?.let { it - 1 - if (hasRecents) headerRows else 0 },
                 relX = event.relX,
-                relY = event.relY?.let { it - if (hasRecents) headerRows else 0 },
+                relY = event.relY?.let { it - 1 - if (hasRecents) headerRows else 0 },
                 button = event.button,
                 scrollDelta = event.scrollDelta,
                 key = event.key,
@@ -114,7 +133,7 @@ class FilesTabView(
                 meta = event.meta,
                 focusId = event.focusId,
                 cols = event.cols,
-                rows = event.rows?.let { it - if (hasRecents) headerRows else 0 },
+                rows = event.rows?.let { it - 1 - if (hasRecents) headerRows else 0 },
                 raw = event.raw
             )
         )
@@ -127,7 +146,7 @@ class FilesTabView(
         val selectedStyle = styleSheet.getStyle("file-entry:selected")
         canvas.withStyle(lineStyle) {
             val header = "Recent".take(cols).padEnd(cols, ' ')
-            drawText(0, 0, header)
+            drawText(0, 1, header)
             val available = height - 1
             val slice = recents.drop(recentScroll).take(available)
             val current = currentPathProvider()?.let { it.trim() }
@@ -138,7 +157,7 @@ class FilesTabView(
                     val indicator = if (entry.dirty) "*" else "x"
                     val label = entry.path.take((cols - 2).coerceAtLeast(1))
                     val line = "$indicator $label".padEnd(cols, ' ')
-                    drawText(0, idx + 1, line)
+                    drawText(0, idx + 2, line)
                 }
             }
         }
@@ -147,5 +166,22 @@ class FilesTabView(
     private fun computeRecentHeight(totalRows: Int): Int {
         val target = (totalRows * 0.3).toInt().coerceAtLeast(3)
         return target.coerceAtMost(totalRows)
+    }
+
+    private fun renderRootBar(canvas: CanvasRenderer, cols: Int) {
+        rootButtonRange = IntRange.EMPTY
+        if (cols <= 0) return
+        val lineStyle = styleSheet.getStyle("file-entry")
+        val changeLabel = "[change]"
+        val buttonStart = (cols - changeLabel.length).coerceAtLeast(0)
+        val rootPath = currentRootProvider()
+        val rootText = rootPath.take(buttonStart).padEnd(buttonStart, ' ')
+        canvas.withStyle(lineStyle) {
+            drawText(0, 0, rootText.take(cols))
+            if (buttonStart < cols) {
+                drawText(buttonStart, 0, changeLabel.take(cols - buttonStart))
+                rootButtonRange = buttonStart until (buttonStart + changeLabel.length).coerceAtMost(cols)
+            }
+        }
     }
 }
