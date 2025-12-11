@@ -50,6 +50,42 @@ class FileTree private constructor(
         return entries
     }
 
+    override fun openPath(path: String) {
+        val target = File(path).canonicalFile.path
+        if (!target.startsWith(root)) return
+        var current = root
+        ensureChildren(current)
+        if (target == root) return
+
+        val rootFile = File(root)
+        val relative = target.removePrefix(rootFile.path)
+            .trimStart(File.separatorChar)
+        if (relative.isEmpty()) return
+
+        val parts = relative.split(File.separatorChar).filter { it.isNotEmpty() }
+        parts.forEach { part ->
+            val next = File(current, part).canonicalFile.path
+            nodes.getOrPut(next) {
+                FileTreeItem(
+                    name = File(next).name,
+                    fullPath = next,
+                    isDir = File(next).isDirectory,
+                    isOpen = false
+                )
+            }
+            val parent = nodes[current]
+            if (parent != null && !parent.children.contains(next)) {
+                parent.children = (parent.children + next).sorted()
+            }
+            val item = nodes[next]
+            if (item != null && item.isDir && !item.isOpen) {
+                item.isOpen = true
+            }
+            ensureChildren(next)
+            current = next
+        }
+    }
+
     override fun refreshOpenNodes() {
         refreshRecursive(root)
     }

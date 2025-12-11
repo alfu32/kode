@@ -8,7 +8,9 @@ import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
 import java.nio.file.Path
+import java.nio.file.Paths
 import kotlin.math.max
+import java.io.File
 
 class WorkspacePickerDialog(
     styleSheet: StyleSheet,
@@ -17,10 +19,20 @@ class WorkspacePickerDialog(
     private val onDismiss: () -> Unit
 ) : BaseComponent(styleSheet) {
 
-    private var tree: IFileTree = FileTree.newFileTree(initialRoot.toString())
-    private var selectedPath: String = tree.root
+    private data class Bounds(val x: Int, val y: Int, val width: Int, val height: Int) {
+        fun contains(px: Int, py: Int): Boolean =
+            px in x until (x + width) && py in y until (y + height)
+    }
+
+    private val initialSelection: Path = initialRoot.toAbsolutePath().normalize()
+    private val rootPath: Path = initialSelection.root ?: Paths.get(File.separator)
+    private var tree: IFileTree = FileTree.newFileTree(rootPath.toString())
+    private var selectedPath: String = initialSelection.toString()
     private var scrollOffset: Int = 0
     private var contentHeight: Int = 0
+    private var bounds: Bounds = Bounds(0, 0, 0, 0)
+    private val headerRows = 2
+    private var needsFocus = true
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
@@ -33,6 +45,12 @@ class WorkspacePickerDialog(
         val border = styleSheet.getStyle("project-search-dialog-border").withDefaults(style.fg, style.bg)
 
         contentHeight = (dialogHeight - 4).coerceAtLeast(1)
+        bounds = Bounds(startX, startY, dialogWidth, dialogHeight)
+
+        if (needsFocus) {
+            focusSelection(contentHeight)
+            needsFocus = false
+        }
 
         canvas.withStyle(style) {
             drawRect(startX, startY, dialogWidth, dialogHeight)
@@ -62,6 +80,11 @@ class WorkspacePickerDialog(
     override fun dispatch(event: UIEvent): Boolean {
         when (event.kind) {
             "mouse_scroll" -> {
+                val ex = event.x ?: return false
+                val ey = event.y ?: return false
+                if (!bounds.contains(ex, ey)) return false
+                val localY = ey - bounds.y
+                if (localY < headerRows || localY >= headerRows + contentHeight) return false
                 val entries = directoryEntries()
                 val visible = (contentHeight - 1).coerceAtLeast(0)
                 val delta = event.scrollDelta ?: 0
@@ -71,9 +94,10 @@ class WorkspacePickerDialog(
                 return scrollOffset != prev
             }
             "mouse_down" -> {
-                val y = event.y ?: return false
-                val x = event.x ?: -1
-                val headerRows = 2 // title + instruction rows
+                val ex = event.x ?: return false
+                val ey = event.y ?: return false
+                if (!bounds.contains(ex, ey)) return false
+                val y = ey - bounds.y
                 val treeStart = headerRows
                 if (y < treeStart || y >= treeStart + contentHeight) return false
                 val entries = directoryEntries()
@@ -100,12 +124,18 @@ class WorkspacePickerDialog(
                     "home" -> moveSelection(entries, currentIdx, -currentIdx)
                     "end" -> moveSelection(entries, currentIdx, entries.lastIndex - currentIdx)
                     "left" -> {
-                        tree.toggle(selectedPath)
-                        true
+                        entries.getOrNull(currentIdx)?.takeIf { it.typ == "folder" }?.let {
+                            tree.toggle(it.fullPath)
+                            return true
+                        }
+                        false
                     }
                     "right" -> {
-                        tree.toggle(selectedPath)
-                        true
+                        entries.getOrNull(currentIdx)?.takeIf { it.typ == "folder" }?.let {
+                            tree.toggle(it.fullPath)
+                            return true
+                        }
+                        false
                     }
                     "enter" -> {
                         onConfirm(Path.of(selectedPath))
@@ -190,5 +220,16 @@ class WorkspacePickerDialog(
             .filter { it.typ == "folder" }
             .map { it.copy(padding = it.padding + 1) }
         return listOf(rootEntry) + children
+    }
+
+    private fun focusSelection(visibleRows: Int) {
+        tree.openPath(selectedPath)
+        val entries = directoryEntries()
+        val idx = entries.indexOfFirst { it.fullPath == selectedPath }.coerceAtLeast(0)
+        val usableRows = (visibleRows - 1).coerceAtLeast(0)
+        scrollOffset = when {
+            idx < usableRows -> 0
+            else -> (idx - usableRows + 1).coerceAtLeast(0)
+        }
     }
 }

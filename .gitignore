@@ -45,6 +45,7 @@ bin/
 
 ### Mac OS ###
 .DS_Store
-/.venv
+.venv
 
-/.kode.json
+.kode.json
+

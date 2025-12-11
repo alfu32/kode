@@ -16,6 +16,7 @@ interface IFileTree {
     val root: String
 
     fun toggle(path: String)
+    fun openPath(path: String)
     fun flattened(): List<FileTreeEntry>
     fun refreshOpenNodes()
 }
