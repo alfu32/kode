@@ -31,6 +31,7 @@ class CodeEditorView(
     private var grammarAvailable: Boolean = false
     private var grammarLanguage: String? = null
     private var scrollTop: Int = 0
+    private var lastLayout: VisualLayout? = null
     private var dragging = false
     private var lastCols: Int = 0
     private var lastRows: Int = 0
@@ -137,38 +138,64 @@ class CodeEditorView(
         val bodyRows = (rows - bodyStartRow).coerceAtLeast(0)
         if (bodyRows == 0) return
 
-        val visibleLines = buffer.text().split("\n").drop(scrollTop).take(bodyRows)
+        val gutterWidth = computeGutterWidth()
+        val contentCols = (cols - gutterWidth).coerceAtLeast(0)
+        val lines = buffer.text().split("\n")
+        val layout = buildLayout(lines, contentCols)
+        lastLayout = layout
+
+        val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
+        scrollTop = scrollTop.coerceIn(0, maxOffset)
+
+        val visibleRows = layout.wrapped.drop(scrollTop).take(bodyRows)
+        if (visibleRows.isEmpty()) return
+
         val selection = buffer.selectionRange()
+        val searchTokensByLine = buffer.foundTokens().groupBy { it.line }
+        val firstVisibleLine = visibleRows.first().lineIndex
+        val lastVisibleLine = visibleRows.last().lineIndex
         val tokensByLine = if (grammarAvailable && syntaxProvider != null && grammarLanguage != null) {
-            syntaxProvider.tokensForLines(scrollTop, visibleLines, grammarLanguage!!).groupBy { it.line }
+            val sliceEnd = (lastVisibleLine + 1).coerceAtMost(lines.size)
+            val lineSlice = lines.subList(firstVisibleLine, sliceEnd)
+            syntaxProvider.tokensForLines(firstVisibleLine, lineSlice, grammarLanguage!!).groupBy { it.line }
         } else {
             emptyMap()
         }
-        val searchTokensByLine = buffer.foundTokens().groupBy { it.line }
-        val gutterWidth = computeGutterWidth()
+
         canvas.withStyle(bodyStyle) {
             drawRect(0, bodyStartRow, cols, bodyRows)
-            visibleLines.forEachIndexed { idx, textLine ->
-                val lineNumber = scrollTop + idx
-                // gutter
+            visibleRows.forEachIndexed { idx, wrapped ->
+                val lineNumber = wrapped.lineIndex
+                val y = bodyStartRow + idx
+                val lineText = lines.getOrElse(lineNumber) { "" }
+
                 canvas.withStyle(gutterStyle) {
-                    val g = (lineNumber + 1).toString().padStart(gutterWidth - 1, ' ') + " "
-                    drawText(0, bodyStartRow + idx, g.take(gutterWidth))
+                    val g = if (wrapped.startColumn == 0) {
+                        (lineNumber + 1).toString().padStart(gutterWidth - 1, ' ') + " "
+                    } else {
+                        " ".repeat(gutterWidth)
+                    }
+                    drawText(0, y, g.take(gutterWidth))
                 }
-                val contentCols = (cols - gutterWidth).coerceAtLeast(0)
+
                 if (contentCols <= 0) return@forEachIndexed
+                val chunkText = lineText.substring(wrapped.startColumn, wrapped.endColumn)
                 val tokens = tokensByLine[lineNumber] ?: emptyList()
-                val selectionCols = selectionRangeForLine(selection, lineNumber, textLine)
-                val highlights = searchTokensByLine[lineNumber] ?: emptyList()
+                val chunkTokens = sliceTokens(tokens, wrapped.startColumn, wrapped.endColumn)
+                val selectionCols = selectionRangeForLine(selection, lineNumber, lineText)
+                val chunkSelection = selectionCols?.let { trimSelectionToChunk(it, wrapped.startColumn, wrapped.endColumn) }
+                val highlights = searchTokensByLine[lineNumber]?.mapNotNull {
+                    trimHighlightToChunk(it, wrapped.startColumn, wrapped.endColumn)
+                } ?: emptyList()
                 renderLineWithTokens(
                     canvas = this,
-                    text = textLine,
-                    y = bodyStartRow + idx,
+                    text = chunkText,
+                    y = y,
                     startX = gutterWidth,
                     maxCols = contentCols,
-                    tokens = tokens,
+                    tokens = chunkTokens,
                     baseStyle = bodyStyle,
-                    selection = selectionCols,
+                    selection = chunkSelection,
                     selectionStyle = selectionStyle,
                     highlights = highlights,
                     highlightStyle = searchMatchStyle,
@@ -178,10 +205,14 @@ class CodeEditorView(
         }
 
         val cursor = buffer.cursorPosition()
-        val cx = (gutterWidth + cursor.column).coerceAtMost(cols - 1)
-        val cy = bodyStartRow + (cursor.line - scrollTop)
-        if (cy in bodyStartRow until rows) {
-            val ch = visibleLines.getOrNull(cursor.line - scrollTop)?.getOrNull(cursor.column)?.toString() ?: " "
+        val cursorRow = visualRowForPosition(cursor, layout)
+        val cursorChunk = chunkForPosition(cursor, layout)
+        val cy = bodyStartRow + (cursorRow - scrollTop)
+        if (cursorChunk != null && cy in bodyStartRow until rows) {
+            val cursorCol = (cursor.column - cursorChunk.startColumn).coerceAtLeast(0)
+            val cx = (gutterWidth + cursorCol).coerceAtMost(cols - 1)
+            val lineText = lines.getOrElse(cursorChunk.lineIndex) { "" }
+            val ch = lineText.getOrNull(cursor.column)?.toString() ?: " "
             canvas.withStyle(cursorStyle) {
                 drawText(cx, cy, ch)
             }
@@ -189,7 +220,11 @@ class CodeEditorView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        val cols = (event.cols ?: lastCols).coerceAtLeast(1)
         val rows = (event.rows ?: lastRows).coerceAtLeast(1)
+        val gutterWidth = computeGutterWidth()
+        val contentCols = (cols - gutterWidth).coerceAtLeast(0)
+        val layout = buildLayout(buffer.text().split("\n"), contentCols).also { lastLayout = it }
         val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyRows = (rows - 1 - searchHeight).coerceAtLeast(0)
         val bodyStartRow = 1 + searchHeight
@@ -227,7 +262,7 @@ class CodeEditorView(
                 if (handled) {
                     searchHasFocus = searchVisible
                     syncSearchUiFromBuffer()
-                    ensureCursorVisible(rows, searchHeight)
+                    ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
                     return true
                 }
             }
@@ -237,7 +272,7 @@ class CodeEditorView(
             val handled = searchBar.dispatch(event)
             if (handled) {
                 syncSearchUiFromBuffer()
-                ensureCursorVisible(rows, searchHeight)
+                ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
             }
             return true
         }
@@ -245,7 +280,7 @@ class CodeEditorView(
         when (event.kind) {
             "mouse_scroll" -> {
                 val delta = event.scrollDelta ?: return false
-                val maxOffset = (buffer.totalLines() - bodyRows).coerceAtLeast(0)
+                val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
                 val prev = scrollTop
                 scrollTop = (scrollTop - delta).coerceIn(0, maxOffset)
                 return scrollTop != prev
@@ -256,7 +291,14 @@ class CodeEditorView(
                 if (searchVisible && y in 1 until bodyStartRow) return true
                 searchHasFocus = false
                 dragging = true
-                return handleMouse(event, bodyRows, bodyStartRow, startSelection = true, extendSelection = false)
+                return handleMouse(
+                    event = event,
+                    bodyStartRow = bodyStartRow,
+                    layout = layout,
+                    gutterWidth = gutterWidth,
+                    startSelection = true,
+                    extendSelection = false
+                )
             }
             "mouse_up" -> {
                 dragging = false
@@ -264,7 +306,14 @@ class CodeEditorView(
             }
             "mouse_move" -> {
                 if (!dragging) return false
-                return handleMouse(event, bodyRows, bodyStartRow, startSelection = false, extendSelection = true)
+                return handleMouse(
+                    event = event,
+                    bodyStartRow = bodyStartRow,
+                    layout = layout,
+                    gutterWidth = gutterWidth,
+                    startSelection = false,
+                    extendSelection = true
+                )
             }
             "key_down" -> {
                 val key = event.key?.lowercase()
@@ -276,7 +325,7 @@ class CodeEditorView(
                     val delta = if (key == "pageup") -bodyRows else bodyRows
                     val newLine = (buffer.cursorPosition().line + delta).coerceIn(0, buffer.totalLines().coerceAtLeast(1) - 1)
                     buffer.moveCursorTo(Position(newLine, buffer.cursorPosition().column), expand = event.shift)
-                    ensureCursorVisible(rows, searchHeight)
+                    ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
                     return true
                 }
                 val beforeCursor = buffer.cursorPosition()
@@ -287,60 +336,60 @@ class CodeEditorView(
                 val afterSelection = if (buffer.hasSelection()) buffer.selectionText() else null
                 val moved = beforeCursor != afterCursor || beforeSelection != afterSelection
                 val textChanged = beforeText != buffer.text()
-                ensureCursorVisible(rows, searchHeight)
+                ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
                 return changed || moved || textChanged
             }
         }
         return true
     }
 
-    private fun ensureCursorVisible(totalRows: Int, searchHeight: Int) {
+    private fun ensureCursorVisible(
+        totalRows: Int,
+        searchHeight: Int,
+        layout: VisualLayout? = lastLayout,
+        gutterWidth: Int = computeGutterWidth()
+    ) {
         val bodyRows = (totalRows - 1 - searchHeight).coerceAtLeast(0)
         if (bodyRows == 0) return
-        val cursor = buffer.cursorPosition()
-        if (cursor.line < scrollTop) {
-            scrollTop = cursor.line
-        } else if (cursor.line >= scrollTop + bodyRows) {
-            scrollTop = cursor.line - bodyRows + 1
-        }
+        val contentCols = (lastCols - gutterWidth).coerceAtLeast(0)
+        val activeLayout = layout ?: buildLayout(buffer.text().split("\n"), contentCols).also { lastLayout = it }
+        if (activeLayout.wrapped.isEmpty()) return
+        val cursorRow = visualRowForPosition(buffer.cursorPosition(), activeLayout)
+        val maxOffset = (activeLayout.wrapped.size - bodyRows).coerceAtLeast(0)
+        val newScroll = when {
+            cursorRow < scrollTop -> cursorRow
+            cursorRow >= scrollTop + bodyRows -> cursorRow - bodyRows + 1
+            else -> scrollTop
+        }.coerceIn(0, maxOffset)
+        scrollTop = newScroll
     }
 
-    private fun handleMouse(event: UIEvent, bodyRows: Int, bodyStartRow: Int, startSelection: Boolean, extendSelection: Boolean): Boolean {
+    private fun handleMouse(
+        event: UIEvent,
+        bodyStartRow: Int,
+        layout: VisualLayout,
+        gutterWidth: Int,
+        startSelection: Boolean,
+        extendSelection: Boolean
+    ): Boolean {
         val ex = event.x ?: return false
         val ey = event.y ?: return false
         if (ey < bodyStartRow) return false
-        val gutterWidth = computeGutterWidth()
-        val relX = (ex - gutterWidth).coerceAtLeast(0) + 1 // +1 because handler subtracts 1
+        if (layout.wrapped.isEmpty()) return false
+        val relX = (ex - gutterWidth).coerceAtLeast(0)
         val relY = ey - bodyStartRow
-        val mapped = event.alterCopy(
-            UIEvent(
-                kind = event.kind,
-                x = event.x,
-                y = event.y,
-                relX = relX,
-                relY = relY,
-                button = event.button,
-                scrollDelta = event.scrollDelta,
-                key = event.key,
-                ctrl = event.ctrl,
-                alt = event.alt,
-                shift = event.shift,
-                meta = event.meta,
-                focusId = event.focusId,
-                cols = event.cols ?: (gutterWidth + (event.cols ?: 0)),
-                rows = event.rows,
-                raw = event.raw
-            )
-        )
-        handleMouseToBuffer(
-            buffer = buffer,
-            ev = mapped,
-            singleLine = false,
-            scrollOffset = scrollTop,
-            startSelection = startSelection,
-            extendSelection = extendSelection
-        )
-        ensureCursorVisible((event.rows ?: 0), bodyStartRow - 1)
+        val visualIndex = (scrollTop + relY).coerceAtLeast(0)
+        val wrapped = layout.wrapped.getOrNull(visualIndex) ?: layout.wrapped.last()
+        val lineText = layout.lines.getOrElse(wrapped.lineIndex) { "" }
+        val targetCol = (wrapped.startColumn + relX).coerceAtMost(lineText.length)
+        val pos = Position(wrapped.lineIndex, targetCol)
+        if (startSelection) {
+            buffer.startSelection(pos)
+        } else if (extendSelection) {
+            buffer.selectTo(pos)
+        }
+        buffer.moveCursorTo(pos, expand = extendSelection)
+        ensureCursorVisible((event.rows ?: 0), bodyStartRow - 1, layout, gutterWidth)
         return true
     }
 
@@ -387,11 +436,18 @@ class CodeEditorView(
         buffer.selectTo(end)
         val currentRows = lastRows.coerceAtLeast(1)
         val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(currentRows - 1) else 0
+        val gutterWidth = computeGutterWidth()
+        val layout = lastLayout ?: buildLayout(
+            buffer.text().split("\n"),
+            (lastCols - gutterWidth).coerceAtLeast(0)
+        ).also { lastLayout = it }
         if (center) {
             val bodyRows = (currentRows - 1 - searchHeight).coerceAtLeast(1)
-            scrollTop = (start.line - bodyRows / 2).coerceIn(0, buffer.totalLines().coerceAtLeast(1) - 1)
+            val targetRow = visualRowForPosition(start, layout)
+            val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
+            scrollTop = (targetRow - bodyRows / 2).coerceIn(0, maxOffset)
         }
-        ensureCursorVisible(currentRows, searchHeight)
+        ensureCursorVisible(currentRows, searchHeight, layout, gutterWidth)
     }
 
     fun isDirty(): Boolean = buffer.isDirty()
@@ -423,7 +479,12 @@ class CodeEditorView(
         syncSearchUiFromBuffer()
         val currentRows = lastRows.coerceAtLeast(1)
         val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(currentRows - 1) else 0
-        ensureCursorVisible(currentRows, searchHeight)
+        val gutterWidth = computeGutterWidth()
+        val layout = lastLayout ?: buildLayout(
+            buffer.text().split("\n"),
+            (lastCols - gutterWidth).coerceAtLeast(0)
+        ).also { lastLayout = it }
+        ensureCursorVisible(currentRows, searchHeight, layout, gutterWidth)
     }
 
     private fun syncSearchUiFromBuffer() {
@@ -578,4 +639,91 @@ class CodeEditorView(
         }
         return out
     }
+
+    private fun trimSelectionToChunk(selection: IntRange, chunkStart: Int, chunkEnd: Int): IntRange? {
+        val selStart = maxOf(selection.first, chunkStart)
+        val selEndExclusive = minOf(selection.last + 1, chunkEnd)
+        if (selStart >= selEndExclusive) return null
+        return selStart - chunkStart until selEndExclusive - chunkStart
+    }
+
+    private fun sliceTokens(
+        tokens: List<editor.grammars.Token>,
+        chunkStart: Int,
+        chunkEnd: Int
+    ): List<editor.grammars.Token> =
+        tokens.mapNotNull { token ->
+            val start = maxOf(token.start, chunkStart)
+            val end = minOf(token.end, chunkEnd)
+            if (start >= end) return@mapNotNull null
+            token.copy(start = start - chunkStart, end = end - chunkStart)
+        }
+
+    private fun trimHighlightToChunk(token: FoundToken, chunkStart: Int, chunkEnd: Int): FoundToken? {
+        val start = maxOf(token.startColumn, chunkStart)
+        val end = minOf(token.endColumn, chunkEnd)
+        if (start >= end) return null
+        return token.copy(startColumn = start - chunkStart, endColumn = end - chunkStart)
+    }
+
+    private fun buildLayout(lines: List<String>, contentCols: Int): VisualLayout {
+        val width = contentCols.coerceAtLeast(1)
+        val wrapped = mutableListOf<WrappedLine>()
+        val lineOffsets = IntArray(lines.size)
+        val wrapCounts = IntArray(lines.size)
+        lines.forEachIndexed { idx, line ->
+            lineOffsets[idx] = wrapped.size
+            val len = line.length
+            if (len == 0) {
+                wrapped.add(WrappedLine(idx, 0, 0))
+                wrapCounts[idx] = 1
+            } else {
+                var start = 0
+                var count = 0
+                while (start < len) {
+                    val end = (start + width).coerceAtMost(len)
+                    wrapped.add(WrappedLine(idx, start, end))
+                    start = end
+                    count++
+                }
+                wrapCounts[idx] = maxOf(1, count)
+            }
+        }
+        if (lines.isEmpty()) {
+            wrapped.add(WrappedLine(0, 0, 0))
+        }
+        return VisualLayout(lines, wrapped, lineOffsets, wrapCounts, width)
+    }
+
+    private fun visualRowForPosition(pos: Position, layout: VisualLayout): Int {
+        if (layout.wrapped.isEmpty()) return 0
+        val line = pos.line.coerceIn(0, layout.lines.lastIndex)
+        val offset = layout.lineOffsets.getOrElse(line) { 0 }
+        val width = layout.contentWidth.coerceAtLeast(1)
+        val lineLength = layout.lines.getOrElse(line) { "" }.length
+        val wraps = layout.wrapCounts.getOrElse(line) { 1 }.coerceAtLeast(1)
+        val chunkIndex = (pos.column.coerceAtMost(lineLength) / width).coerceAtMost(wraps - 1)
+        return offset + chunkIndex
+    }
+
+    private fun chunkForPosition(pos: Position, layout: VisualLayout): WrappedLine? {
+        if (layout.wrapped.isEmpty()) return null
+        val line = pos.line.coerceIn(0, layout.lines.lastIndex)
+        val offset = layout.lineOffsets.getOrElse(line) { 0 }
+        val width = layout.contentWidth.coerceAtLeast(1)
+        val lineLength = layout.lines.getOrElse(line) { "" }.length
+        val wraps = layout.wrapCounts.getOrElse(line) { 1 }.coerceAtLeast(1)
+        val idxInLine = (pos.column.coerceAtMost(lineLength) / width).coerceAtMost(wraps - 1)
+        val index = offset + idxInLine
+        return layout.wrapped.getOrNull(index)
+    }
+
+    private data class WrappedLine(val lineIndex: Int, val startColumn: Int, val endColumn: Int)
+    private data class VisualLayout(
+        val lines: List<String>,
+        val wrapped: List<WrappedLine>,
+        val lineOffsets: IntArray,
+        val wrapCounts: IntArray,
+        val contentWidth: Int
+    )
 }
