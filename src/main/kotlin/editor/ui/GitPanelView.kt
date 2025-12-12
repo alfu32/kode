@@ -26,6 +26,9 @@ class GitPanelView(
     private var selectedCommitIdx: Int = -1
     private var selectedStatusIdx: Int = -1
     private var commitScroll: Int = 0
+    private var commitRows: List<CommitRow> = emptyList()
+    private val expandedCommits = mutableSetOf<Int>()
+    private val commitFilesCache = mutableMapOf<String, List<String>>()
     private val commitEditor = CodeEditorView(styleSheet)
     private val selectStarted: Boolean = false
     private var initButtonRow: Int = -1
@@ -57,6 +60,7 @@ class GitPanelView(
         statusEntries = svc.statusPorcelain().sortedBy { it.path }
         commitEntries = svc.listCommits()
         commitScroll = commitScroll.coerceIn(0, (commitEntries.size - 1).coerceAtLeast(0))
+        commitRows = buildCommitRows()
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -137,15 +141,22 @@ class GitPanelView(
         clipped.withStyle(lineStyle) {
             val header = "Commits".take(cols).padEnd(cols, ' ')
             drawText(0, 0, header)
-            val visible = (height - 1).coerceAtLeast(0)
-            val slice = commitEntries.drop(commitScroll).take(visible)
-            slice.forEachIndexed { idx, commit ->
-                val absoluteIdx = commitScroll + idx
-                val style = if (absoluteIdx == selectedCommitIdx) selectedStyle else lineStyle
+            val visibleRows = (height - 1).coerceAtLeast(0)
+            val rowsToDraw = commitRows.drop(commitScroll).take(visibleRows)
+            rowsToDraw.forEachIndexed { idx, row ->
+                val style = if (row.commitIndex == selectedCommitIdx && row.type == CommitRowType.HEADER) selectedStyle else lineStyle
                 withStyle(style) {
-                    val label = commit.message.lineSequence().firstOrNull().orEmpty()
-                    val line = label.take(cols).padEnd(cols, ' ')
-                    drawText(0, idx + 1, line)
+                    val y = idx + 1
+                    val text = when (row.type) {
+                        CommitRowType.HEADER -> {
+                            val expanded = row.commitIndex in expandedCommits
+                            val prefix = if (expanded) "[-]" else "[+]"
+                            val title = commitEntries.getOrNull(row.commitIndex)?.message?.lineSequence()?.firstOrNull().orEmpty()
+                            "$prefix $title"
+                        }
+                        CommitRowType.FILE -> " - ${row.fileName}"
+                    }
+                    drawText(0, y, text.take(cols).padEnd(cols, ' '))
                 }
             }
         }
@@ -250,10 +261,16 @@ class GitPanelView(
             }
             else -> { // commits
                 val relY = y - (topH + midH)
-                val idx = relY - 1 + commitScroll
-                if (idx in commitEntries.indices) {
-                    selectedCommitIdx = idx
-                    val commit = commitEntries[idx]
+                val row = commitRows.getOrNull(commitScroll + relY - 1) ?: return false
+                if (row.type == CommitRowType.HEADER) {
+                    val xRelative = event.x ?: 0
+                    val toggleZone = xRelative in 0..2 // "[+]" or "[-]"
+                    if (toggleZone) {
+                        toggleCommit(row.commitIndex)
+                        return true
+                    }
+                    selectedCommitIdx = row.commitIndex
+                    val commit = commitEntries.getOrNull(row.commitIndex) ?: return false
                     commitEditor.loadTextContent(commit.message)
                     return true
                 }
@@ -326,7 +343,7 @@ class GitPanelView(
         } else if (y >= topH + midH) {
             val bottomHeight = rows - topH - midH
             val visible = (bottomHeight - 1).coerceAtLeast(0)
-            val maxScroll = (commitEntries.size - visible).coerceAtLeast(0)
+            val maxScroll = (commitRows.size - visible).coerceAtLeast(0)
             val prev = commitScroll
             commitScroll = (commitScroll - delta).coerceIn(0, maxScroll)
             commitScroll != prev
@@ -334,4 +351,37 @@ class GitPanelView(
     }
 
     private fun handleKey(event: UIEvent): Boolean = commitEditor.dispatch(event)
+
+    private fun toggleCommit(idx: Int) {
+        if (idx in expandedCommits) expandedCommits.remove(idx) else expandedCommits.add(idx)
+        buildCommitRows().also {
+            commitRows = it
+            val maxScroll = (commitRows.size - 1).coerceAtLeast(0)
+            commitScroll = commitScroll.coerceIn(0, maxScroll)
+        }
+    }
+
+    private fun buildCommitRows(): List<CommitRow> {
+        val rows = mutableListOf<CommitRow>()
+        commitEntries.forEachIndexed { idx, commit ->
+            rows.add(CommitRow(commitIndex = idx, type = CommitRowType.HEADER))
+            if (idx in expandedCommits) {
+                val files = commitFilesCache.getOrPut(commit.hash) {
+                    runCatching { git?.filesForCommit(commit.hash) ?: emptyList() }.getOrDefault(emptyList())
+                }
+                files.forEach { path ->
+                    rows.add(CommitRow(commitIndex = idx, type = CommitRowType.FILE, fileName = path))
+                }
+            }
+        }
+        return rows
+    }
+
+    private data class CommitRow(
+        val commitIndex: Int,
+        val type: CommitRowType,
+        val fileName: String = ""
+    )
+
+    private enum class CommitRowType { HEADER, FILE }
 }

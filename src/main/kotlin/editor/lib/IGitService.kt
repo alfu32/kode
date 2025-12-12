@@ -10,6 +10,7 @@ import org.eclipse.jgit.diff.DiffFormatter
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.revwalk.RevObject
 import org.eclipse.jgit.revwalk.RevWalk
+import org.eclipse.jgit.treewalk.AbstractTreeIterator
 import org.eclipse.jgit.api.errors.NoHeadException
 import org.eclipse.jgit.errors.MissingObjectException
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
@@ -34,6 +35,7 @@ interface IGitService {
     fun checkoutBranch(name: String)
     fun diff(path: String, staged: Boolean = false): String
     fun diffContents(path: String, staged: Boolean = false): Pair<String, String>
+    fun filesForCommit(hash: String): List<String>
 
     // ----- Write -----
     fun stage(paths: List<String>)
@@ -195,6 +197,27 @@ class JGitService(root: File) : IGitService {
         return (oldText ?: "") to (newText ?: "")
     }
 
+    override fun filesForCommit(hash: String): List<String> {
+        val commit = RevWalk(repo).use { walk -> walk.parseCommit(ObjectId.fromString(hash)) }
+        val parent = commit.parents.firstOrNull()?.let { RevWalk(repo).use { w -> w.parseCommit(it) } }
+        val oldTree = parent?.let { prepareTreeParser(it) }
+        val newTree = prepareTreeParser(commit)
+        val output = mutableListOf<String>()
+        DiffFormatter(ByteArrayOutputStream()).use { fmt ->
+            fmt.setRepository(repo)
+            fmt.isDetectRenames = true
+            val diffs = fmt.scan(oldTree, newTree)
+            diffs.forEach { diff ->
+                val path = when (diff.changeType) {
+                    DiffEntry.ChangeType.DELETE -> diff.oldPath
+                    else -> diff.newPath
+                }
+                output += path
+            }
+        }
+        return output.distinct()
+    }
+
     private fun loadFromHead(path: String): String? {
         val headId = repo.resolve("HEAD^{tree}") ?: return null
         val tw = TreeWalk(repo)
@@ -217,6 +240,16 @@ class JGitService(root: File) : IGitService {
     private fun loadFromWorkingTree(path: String): String? {
         val file = File(repo.workTree, path)
         return runCatching { file.readText() }.getOrNull()
+    }
+
+    private fun prepareTreeParser(commit: org.eclipse.jgit.revwalk.RevCommit): AbstractTreeIterator {
+        val walk = RevWalk(repo)
+        val tree = walk.parseTree(commit.tree.id)
+        val treeParser = org.eclipse.jgit.treewalk.CanonicalTreeParser()
+        val reader = repo.newObjectReader()
+        treeParser.reset(reader, tree.id)
+        walk.dispose()
+        return treeParser
     }
 
     override fun stage(paths: List<String>) {
