@@ -18,6 +18,8 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
     private var lastBodyHeight: Int = 0
     private var lastLayout: Layout? = null
     private var onRestoreChunk: ((Int) -> Unit)? = null
+    private var showContext: Boolean = true
+    private var headerWidth: Int = 0
 
     fun showDiff(path: String, oldContent: String, newContent: String) {
         this.path = path
@@ -29,14 +31,30 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
         onRestoreChunk = callback
     }
 
+    fun setShowContext(show: Boolean) {
+        if (showContext == show) return
+        showContext = show
+        scrollTop = scrollTop.coerceIn(0, (displayRows().size - 1).coerceAtLeast(0))
+    }
+
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rowsAvailable = canvas.rows().coerceAtLeast(1)
         val headerStyle = styleSheet.getStyle("diff-header")
         canvas.withStyle(headerStyle) {
-            val label = "Diff: $path".take(cols).padEnd(cols, ' ')
-            drawText(0, 0, label)
+            val toggle = if (showContext) "[squash]" else "[unsquash]"
+            val label = "Diff: $path"
+            val content = buildString {
+                append(label)
+                if (cols > toggle.length + 1) {
+                    val pad = (cols - toggle.length - label.length - 1).coerceAtLeast(1)
+                    append(" ".repeat(pad))
+                    append(toggle)
+                }
+            }.take(cols).padEnd(cols, ' ')
+            drawText(0, 0, content)
         }
+        headerWidth = cols
         val bodyHeight = (rowsAvailable - 1).coerceAtLeast(0)
         lastBodyHeight = bodyHeight
         if (bodyHeight <= 0) return
@@ -51,7 +69,8 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
         val sepWidth = 3 // space + bar + space
         val sideWidth = ((cols - sepWidth) / 2).coerceAtLeast(1)
         lastLayout = Layout(gutterWidth, sepWidth, sideWidth, cols)
-        val visible = rows.drop(scrollTop).take(bodyHeight)
+        val visibleRows = displayRows()
+        val visible = visibleRows.drop(scrollTop).take(bodyHeight)
         visible.forEachIndexed { idx, row ->
             val y = idx + 1
             val leftStyle = styleForSide(row.kind, Side.LEFT, addedStyle, removedStyle, modifiedStyle, contextStyle)
@@ -69,7 +88,7 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
             }
             // Separator
             val absoluteRow = scrollTop + idx
-            val previousChunk = rows.getOrNull(absoluteRow - 1)?.chunkId
+            val previousChunk = visibleRows.getOrNull(absoluteRow - 1)?.chunkId
             val isFirstInChunk = row.chunkId != null && row.chunkId != previousChunk
             val marker = if (row.chunkId != null && row.kind != DiffKind.CONTEXT && isFirstInChunk) ">>" else " "
             val sepText = " $marker ".take(sepWidth)
@@ -95,7 +114,7 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                 val delta = event.scrollDelta ?: return false
                 val prev = scrollTop
                 val visible = (event.rows?.minus(1))?.coerceAtLeast(1) ?: (lastBodyHeight.coerceAtLeast(1))
-                val maxScroll = (rows.size - visible).coerceAtLeast(0)
+                val maxScroll = (displayRows().size - visible).coerceAtLeast(0)
                 scrollTop = (scrollTop - delta).coerceIn(0, maxScroll)
                 return scrollTop != prev
             }
@@ -103,9 +122,17 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                 val layout = lastLayout ?: return false
                 val ex = event.x ?: return false
                 val ey = event.y ?: return false
+                if (ey == 0 && headerWidth > 0) {
+                    val toggleLabel = if (showContext) "[squash]" else "[unsquash]"
+                    val start = (headerWidth - toggleLabel.length).coerceAtLeast(0)
+                    if (ex in start until headerWidth) {
+                        setShowContext(!showContext)
+                        return true
+                    }
+                }
                 if (ey <= 0) return false
                 val rowIdx = scrollTop + ey - 1
-                val row = rows.getOrNull(rowIdx) ?: return false
+                val row = displayRows().getOrNull(rowIdx) ?: return false
                 val sepStart = layout.sideWidth
                 if (ex in sepStart until (sepStart + layout.sepWidth) && row.chunkId != null && row.kind != DiffKind.CONTEXT) {
                     onRestoreChunk?.invoke(row.chunkId)
@@ -118,7 +145,7 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                         scrollTop = (scrollTop - 1).coerceAtLeast(0); return true
                     }
                     "down" -> {
-                        val maxScroll = (rows.size - lastBodyHeight).coerceAtLeast(0)
+                        val maxScroll = (displayRows().size - lastBodyHeight).coerceAtLeast(0)
                         scrollTop = (scrollTop + 1).coerceAtMost(maxScroll); return true
                     }
                     "pageup" -> {
@@ -127,8 +154,11 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                     }
                     "pagedown" -> {
                         val rowsVisible = ((event.rows ?: lastBodyHeight) - 1).coerceAtLeast(1)
-                        val maxScroll = (rows.size - rowsVisible).coerceAtLeast(0)
+                        val maxScroll = (displayRows().size - rowsVisible).coerceAtLeast(0)
                         scrollTop = (scrollTop + rowsVisible).coerceAtMost(maxScroll); return true
+                    }
+                    "c" -> {
+                        setShowContext(!showContext); return true
                     }
                 }
             }
@@ -247,8 +277,8 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
 
     private fun maxLeftLineNumberLength(): Int =
         listOf(
-            rows.maxOfOrNull { it.leftNumber ?: 0 } ?: 0,
-            rows.maxOfOrNull { it.rightNumber ?: 0 } ?: 0
+            displayRows().maxOfOrNull { it.leftNumber ?: 0 } ?: 0,
+            displayRows().maxOfOrNull { it.rightNumber ?: 0 } ?: 0
         ).maxOrNull()?.toString()?.length ?: 1
 
     private data class DiffRow(
@@ -284,4 +314,27 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
         val sideWidth: Int,
         val totalCols: Int
     )
+
+    private fun displayRows(): List<DiffRow> {
+        if (showContext) return rows
+        val out = mutableListOf<DiffRow>()
+        var prevChunk: Int? = null
+        rows.filter { it.kind != DiffKind.CONTEXT }.forEach { row ->
+            if (prevChunk != null && prevChunk != row.chunkId) {
+                out.add(
+                    DiffRow(
+                        leftNumber = null,
+                        leftText = "",
+                        rightNumber = null,
+                        rightText = "",
+                        kind = DiffKind.CONTEXT,
+                        chunkId = null
+                    )
+                )
+            }
+            out.add(row)
+            prevChunk = row.chunkId
+        }
+        return out
+    }
 }
