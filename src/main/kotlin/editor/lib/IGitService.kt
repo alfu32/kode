@@ -86,7 +86,7 @@ class JGitService(root: File) : IGitService {
         .setWorkTree(root)
         .setGitDir(File(root, ".git"))
         .readEnvironment()
-        .setup()
+        .build()
 
     private val git = Git(repo)
 
@@ -121,7 +121,8 @@ class JGitService(root: File) : IGitService {
         val tagMap: Map<String, List<String>> = tags.mapNotNull { ref ->
             val peeled = repo.refDatabase.peel(ref)
             val obj = peeled.peeledObjectId
-            obj?.name()?.let { hash -> hash to ref.name.substringAfterLast("/") }
+            val hash = obj?.name() ?: return@mapNotNull null
+            hash to ref.name.substringAfterLast("/")
         }.groupBy({ it.first }, { it.second })
 
         return commits.map {
@@ -180,17 +181,13 @@ class JGitService(root: File) : IGitService {
             throw IllegalStateException("tag already exists: $tag")
         }
 
+        val objId = repo.resolve(commitHash) ?: throw IllegalArgumentException("unknown commit: $commitHash")
+        val revObj = git.repository.parseAny(objId) as? RevObject
+            ?: throw IllegalArgumentException("unable to resolve object for $commitHash")
+
         git.tag()
             .setName(tag)
-            .setObjectId(repo.resolve(commitHash) as RevObject?)
+            .setObjectId(revObj)
             .call()
     }
-}
-
-private fun FileRepositoryBuilder.setup(): org.eclipse.jgit.lib.Repository {
-    val dir = gitDir
-    if (dir == null || !dir.exists()) {
-        throw IllegalStateException("Not a git repository at ${workTree?.path}")
-    }
-    return build()
 }
