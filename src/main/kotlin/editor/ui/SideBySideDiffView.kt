@@ -20,6 +20,7 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
     private var onRestoreChunk: ((Int) -> Unit)? = null
     private var showContext: Boolean = true
     private var headerWidth: Int = 0
+    private var lastWrappedLines: List<WrappedLine> = emptyList()
 
     fun showDiff(path: String, oldContent: String, newContent: String) {
         this.path = path
@@ -69,43 +70,54 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
         val sepWidth = 3 // space + bar + space
         val sideWidth = ((cols - sepWidth) / 2).coerceAtLeast(1)
         lastLayout = Layout(gutterWidth, sepWidth, sideWidth, cols)
-        val visibleRows = displayRows()
-        val visible = visibleRows.drop(scrollTop).take(bodyHeight)
-        visible.forEachIndexed { idx, row ->
+        val wrapped = wrapDisplayRows(displayRows(), gutterWidth, sepWidth, sideWidth, cols)
+        lastWrappedLines = wrapped
+        val visible = wrapped.drop(scrollTop).take(bodyHeight)
+        visible.forEachIndexed { idx, line ->
             val y = idx + 1
-            val leftStyle = styleForSide(row.kind, Side.LEFT, addedStyle, removedStyle, modifiedStyle, contextStyle)
-            val rightStyle = styleForSide(row.kind, Side.RIGHT, addedStyle, removedStyle, modifiedStyle, contextStyle)
-            // Left side
+            val leftStyle = styleForSide(line.kind, Side.LEFT, addedStyle, removedStyle, modifiedStyle, contextStyle)
+            val rightStyle = styleForSide(line.kind, Side.RIGHT, addedStyle, removedStyle, modifiedStyle, contextStyle)
             canvas.withStyle(gutterStyle) {
-                val num = row.leftNumber?.toString()?.padStart(gutterWidth - 1, ' ') ?: " ".repeat(gutterWidth)
+                val num = if (line.showLeftNumber) {
+                    line.leftNumber?.toString()?.padStart(gutterWidth - 1, ' ') ?: " ".repeat(gutterWidth)
+                } else " ".repeat(gutterWidth)
                 drawText(0, y, num.take(gutterWidth))
             }
             canvas.withStyle(leftStyle) {
                 val textWidth = (sideWidth - gutterWidth).coerceAtLeast(0)
-                val text = row.leftText.take(textWidth).padEnd(textWidth, ' ')
+                val text = line.leftText.padEnd(textWidth, ' ')
                 drawRect(gutterWidth, y, textWidth, 1)
-                drawText(gutterWidth, y, text)
+                drawText(gutterWidth, y, text.take(textWidth))
             }
-            // Separator
-            val absoluteRow = scrollTop + idx
-            val previousChunk = visibleRows.getOrNull(absoluteRow - 1)?.chunkId
-            val isFirstInChunk = row.chunkId != null && row.chunkId != previousChunk
-            val marker = if (row.chunkId != null && row.kind != DiffKind.CONTEXT && isFirstInChunk) ">>" else " "
-            val sepText = " $marker ".take(sepWidth)
+            val sepText = " ${line.marker} ".take(sepWidth)
             canvas.drawText(sideWidth, y, sepText)
-            // Right side
             canvas.withStyle(gutterStyle) {
-                val num = row.rightNumber?.toString()?.padStart(gutterWidth - 1, ' ') ?: " ".repeat(gutterWidth)
+                val num = if (line.showRightNumber) {
+                    line.rightNumber?.toString()?.padStart(gutterWidth - 1, ' ') ?: " ".repeat(gutterWidth)
+                } else " ".repeat(gutterWidth)
                 drawText(sideWidth + sepWidth, y, num.take(gutterWidth))
             }
             canvas.withStyle(rightStyle) {
                 val startX = sideWidth + sepWidth + gutterWidth
                 val space = (cols - startX).coerceAtLeast(0)
-                val text = row.rightText.take(space).padEnd(space, ' ')
+                val text = line.rightText.padEnd(space, ' ')
                 drawRect(startX, y, space, 1)
-                drawText(startX, y, text)
+                drawText(startX, y, text.take(space))
             }
         }
+    }
+
+    private fun wrapRow(text: String, width: Int): List<String> {
+        if (width <= 0) return listOf("")
+        if (text.length <= width) return listOf(text)
+        val out = mutableListOf<String>()
+        var idx = 0
+        while (idx < text.length) {
+            val end = (idx + width).coerceAtMost(text.length)
+            out.add(text.substring(idx, end))
+            idx = end
+        }
+        return out
     }
 
     override fun dispatch(event: UIEvent): Boolean {
@@ -114,7 +126,13 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                 val delta = event.scrollDelta ?: return false
                 val prev = scrollTop
                 val visible = (event.rows?.minus(1))?.coerceAtLeast(1) ?: (lastBodyHeight.coerceAtLeast(1))
-                val maxScroll = (displayRows().size - visible).coerceAtLeast(0)
+                val maxScroll = ((lastWrappedLines.takeIf { it.isNotEmpty() } ?: wrapDisplayRows(
+                    displayRows(),
+                    lastLayout?.gutterWidth ?: 0,
+                    lastLayout?.sepWidth ?: 0,
+                    lastLayout?.sideWidth ?: 0,
+                    lastLayout?.totalCols ?: 0
+                )).size - visible).coerceAtLeast(0)
                 scrollTop = (scrollTop - delta).coerceIn(0, maxScroll)
                 return scrollTop != prev
             }
@@ -132,10 +150,10 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                 }
                 if (ey <= 0) return false
                 val rowIdx = scrollTop + ey - 1
-                val row = displayRows().getOrNull(rowIdx) ?: return false
+                val line = lastWrappedLines.getOrNull(rowIdx) ?: return false
                 val sepStart = layout.sideWidth
-                if (ex in sepStart until (sepStart + layout.sepWidth) && row.chunkId != null && row.kind != DiffKind.CONTEXT) {
-                    onRestoreChunk?.invoke(row.chunkId)
+                if (ex in sepStart until (sepStart + layout.sepWidth) && line.chunkId != null && line.kind != DiffKind.CONTEXT && line.marker.isNotBlank()) {
+                    onRestoreChunk?.invoke(line.chunkId)
                     return true
                 }
             }
@@ -145,7 +163,7 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                         scrollTop = (scrollTop - 1).coerceAtLeast(0); return true
                     }
                     "down" -> {
-                        val maxScroll = (displayRows().size - lastBodyHeight).coerceAtLeast(0)
+                        val maxScroll = (lastWrappedLines.size - lastBodyHeight).coerceAtLeast(0)
                         scrollTop = (scrollTop + 1).coerceAtMost(maxScroll); return true
                     }
                     "pageup" -> {
@@ -154,7 +172,7 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                     }
                     "pagedown" -> {
                         val rowsVisible = ((event.rows ?: lastBodyHeight) - 1).coerceAtLeast(1)
-                        val maxScroll = (displayRows().size - rowsVisible).coerceAtLeast(0)
+                        val maxScroll = (lastWrappedLines.size - rowsVisible).coerceAtLeast(0)
                         scrollTop = (scrollTop + rowsVisible).coerceAtMost(maxScroll); return true
                     }
                     "c" -> {
@@ -315,6 +333,54 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
         val totalCols: Int
     )
 
+    private data class WrappedLine(
+        val leftText: String,
+        val rightText: String,
+        val leftNumber: Int?,
+        val rightNumber: Int?,
+        val showLeftNumber: Boolean,
+        val showRightNumber: Boolean,
+        val marker: String,
+        val chunkId: Int?,
+        val kind: DiffKind
+    )
+
+    private fun wrapDisplayRows(
+        rows: List<DiffRow>,
+        gutterWidth: Int,
+        sepWidth: Int,
+        sideWidth: Int,
+        totalCols: Int
+    ): List<WrappedLine> {
+        if (gutterWidth <= 0 || sideWidth <= 0 || totalCols <= 0) return emptyList()
+        val rightWidth = totalCols - (sideWidth + sepWidth + gutterWidth)
+        val out = mutableListOf<WrappedLine>()
+        rows.forEachIndexed { idx, row ->
+            val leftWrapped = wrapRow(row.leftText, sideWidth - gutterWidth)
+            val rightWrapped = wrapRow(row.rightText, rightWidth)
+            val linesToDraw = max(leftWrapped.size, rightWrapped.size).coerceAtLeast(1)
+            val prevChunk = rows.getOrNull(idx - 1)?.chunkId
+            val isFirstInChunk = row.chunkId != null && row.chunkId != prevChunk && row.kind != DiffKind.CONTEXT
+            for (lineIdx in 0 until linesToDraw) {
+                val marker = if (isFirstInChunk && lineIdx == 0) ">>" else " "
+                out.add(
+                    WrappedLine(
+                        leftText = leftWrapped.getOrNull(lineIdx) ?: "",
+                        rightText = rightWrapped.getOrNull(lineIdx) ?: "",
+                        leftNumber = row.leftNumber,
+                        rightNumber = row.rightNumber,
+                        showLeftNumber = lineIdx == 0,
+                        showRightNumber = lineIdx == 0,
+                        marker = marker,
+                        chunkId = row.chunkId,
+                        kind = row.kind
+                    )
+                )
+            }
+        }
+        return out
+    }
+
     private fun displayRows(): List<DiffRow> {
         if (showContext) return rows
         val out = mutableListOf<DiffRow>()
@@ -338,5 +404,3 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
         return out
     }
 }
-
-
