@@ -226,3 +226,30 @@ image-body {
     bg: #3f4e7e;
     fg: #000000;
 }
+
+diff-gutter{
+    bg: #3f4e7e;
+    fg: #b6b9c5;
+}
+
+diff-added{
+    bg: #3f7e58;
+    fg: #b6b9c5;
+}
+
+diff-removed{
+    bg: #7e3f65;
+    fg: #b6b9c5;
+}
+
+diff-modified{
+    bg: #2f4b70;
+    fg: #b6b9c5;
+}
+
+diff-context{
+    bg: #1a2237;
+    fg: #b6b9c5;
+}
+
+

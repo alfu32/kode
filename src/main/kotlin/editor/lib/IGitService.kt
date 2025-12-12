@@ -13,6 +13,8 @@ import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.api.errors.NoHeadException
 import org.eclipse.jgit.errors.MissingObjectException
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.dircache.DirCache
+import org.eclipse.jgit.treewalk.TreeWalk
 import org.eclipse.jgit.treewalk.filter.PathFilter
 import java.io.File
 import java.io.ByteArrayOutputStream
@@ -31,6 +33,7 @@ interface IGitService {
     fun currentBranch(): String
     fun checkoutBranch(name: String)
     fun diff(path: String, staged: Boolean = false): String
+    fun diffContents(path: String, staged: Boolean = false): Pair<String, String>
 
     // ----- Write -----
     fun stage(paths: List<String>)
@@ -184,6 +187,36 @@ class JGitService(root: File) : IGitService {
             }.trimEnd()
         }
         return "No diff available for $path"
+    }
+
+    override fun diffContents(path: String, staged: Boolean): Pair<String, String> {
+        val oldText = if (staged) loadFromHead(path) else loadFromIndex(path)
+        val newText = if (staged) loadFromIndex(path) else loadFromWorkingTree(path)
+        return (oldText ?: "") to (newText ?: "")
+    }
+
+    private fun loadFromHead(path: String): String? {
+        val headId = repo.resolve("HEAD^{tree}") ?: return null
+        val tw = TreeWalk(repo)
+        tw.addTree(headId)
+        tw.isRecursive = true
+        tw.filter = PathFilter.create(path)
+        return if (tw.next()) {
+            val objectId = tw.getObjectId(0)
+            repo.open(objectId).getCachedBytes(Int.MAX_VALUE).toString(StandardCharsets.UTF_8)
+        } else null
+    }
+
+    private fun loadFromIndex(path: String): String? {
+        val dirCache: DirCache = repo.readDirCache()
+        val entry = dirCache.getEntry(path) ?: return null
+        val objectId = entry.objectId ?: return null
+        return repo.open(objectId).getCachedBytes(Int.MAX_VALUE).toString(StandardCharsets.UTF_8)
+    }
+
+    private fun loadFromWorkingTree(path: String): String? {
+        val file = File(repo.workTree, path)
+        return runCatching { file.readText() }.getOrNull()
     }
 
     override fun stage(paths: List<String>) {

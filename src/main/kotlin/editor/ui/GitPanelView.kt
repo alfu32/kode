@@ -12,7 +12,7 @@ import react.UIEvent
 import react.renderer.CanvasRenderer
 import java.nio.file.Path
 
-data class GitDiff(val path: String, val staged: Boolean, val content: String)
+data class GitDiff(val path: String, val staged: Boolean, val oldContent: String, val newContent: String)
 
 class GitPanelView(
     styleSheet: StyleSheet,
@@ -44,6 +44,8 @@ class GitPanelView(
         git = service
         refreshData()
     }
+
+    fun currentGitService(): IGitService? = git
 
     fun refreshData() {
         val svc = git
@@ -203,9 +205,12 @@ class GitPanelView(
                         if (entry.staged) svc.unstage(entry.path) else svc.stage(entry.path)
                         refreshData()
                     } else {
-                        val diffText = runCatching { svc.diff(entry.path, staged = entry.staged) }
-                            .getOrElse { ex -> "Unable to load diff for ${entry.path}:\n${ex.message ?: ex}" }
-                        onShowDiff(GitDiff(entry.path, entry.staged, diffText))
+                        val (oldText, newText) = runCatching { svc.diffContents(entry.path, staged = entry.staged) }
+                            .getOrElse { ex ->
+                                val fallback = "Unable to load diff for ${entry.path}:\n${ex.message ?: ex}"
+                                fallback to fallback
+                            }
+                        onShowDiff(GitDiff(entry.path, entry.staged, oldText, newText))
                     }
                     return true
                 }

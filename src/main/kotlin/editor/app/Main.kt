@@ -21,7 +21,7 @@ import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
 import editor.ui.GitPanelView
 import editor.ui.GitDiff
-import editor.ui.DiffView
+import editor.ui.SideBySideDiffView
 import editor.ui.ProjectSearchDialog
 import editor.ui.AboutView
 import editor.ui.WorkspacePickerDialog
@@ -198,7 +198,7 @@ private class SplitPanelsApp(
     private val mimeDetector = DefaultMimeTypeDetector()
     private val regexProvider = KeywordSyntaxProvider
     private var codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
-    private val diffViewer = DiffView(styleSheet, syntaxProvider = regexProvider)
+    private val diffViewer = SideBySideDiffView(styleSheet)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
     private val gitPanel = GitPanelView(
@@ -488,7 +488,8 @@ private class SplitPanelsApp(
 
     private fun showDiffInMain(diff: GitDiff) {
         activeDiff = diff
-        diffViewer.showDiff(diff.path, diff.content)
+        diffViewer.setOnRestoreChunk { chunkId -> restoreDiffChunk(chunkId) }
+        diffViewer.showDiff(diff.path, diff.oldContent, diff.newContent)
         rightFocus = FocusTarget.DIFF
         focus = rightFocus
     }
@@ -506,6 +507,43 @@ private class SplitPanelsApp(
         if (selectedIndex != 1 && activeDiff != null) {
             clearDiffViewer()
         }
+    }
+
+    private fun restoreDiffChunk(chunkId: Int) {
+        val diff = activeDiff ?: return
+        // Only operate on unstaged (working tree) for now.
+        if (diff.staged) return
+        val svc = gitPanel.currentGitService() ?: return
+        val (oldText, newText) = svc.diffContents(diff.path, staged = false)
+        val edits = org.eclipse.jgit.diff.HistogramDiff().diff(
+            org.eclipse.jgit.diff.RawTextComparator.DEFAULT,
+            org.eclipse.jgit.diff.RawText(oldText.toByteArray()),
+            org.eclipse.jgit.diff.RawText(newText.toByteArray())
+        )
+        val targetEdit = edits.filter { it.type != org.eclipse.jgit.diff.Edit.Type.EMPTY }.getOrNull(chunkId) ?: return
+        val oldLines = oldText.split("\n", ignoreCase = false, limit = Int.MAX_VALUE)
+        val newLines = newText.split("\n", ignoreCase = false, limit = Int.MAX_VALUE).toMutableList()
+        val replacement = when (targetEdit.type) {
+            org.eclipse.jgit.diff.Edit.Type.INSERT -> emptyList()
+            org.eclipse.jgit.diff.Edit.Type.DELETE, org.eclipse.jgit.diff.Edit.Type.REPLACE ->
+                oldLines.subList(targetEdit.beginA, targetEdit.endA)
+            org.eclipse.jgit.diff.Edit.Type.EMPTY -> emptyList()
+        }
+        val start = targetEdit.beginB
+        val end = targetEdit.endB
+        val prefix = newLines.subList(0, start)
+        val suffix = newLines.subList(end, newLines.size)
+        val updated = (prefix + replacement + suffix).joinToString("\n")
+        val targetFile = projectRoot.resolve(diff.path).toFile()
+        runCatching { targetFile.writeText(updated) }.getOrElse { return }
+        // refresh views
+        gitPanel.refreshData()
+        if (currentOpenPath == targetFile.absolutePath) {
+            val detected = mimeDetector.detectFile(targetFile.toPath())
+            openInViewer(targetFile.absolutePath, detected)
+        }
+        val refreshed = svc.diffContents(diff.path, staged = false)
+        showDiffInMain(GitDiff(diff.path, diff.staged, refreshed.first, refreshed.second))
     }
 
     private fun showWorkspacePicker() {
