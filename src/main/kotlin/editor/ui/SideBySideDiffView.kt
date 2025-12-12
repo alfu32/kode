@@ -68,7 +68,10 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                 drawText(gutterWidth, y, text)
             }
             // Separator
-            val marker = if (row.chunkId != null && row.kind != DiffKind.CONTEXT) ">>" else "|"
+            val absoluteRow = scrollTop + idx
+            val previousChunk = rows.getOrNull(absoluteRow - 1)?.chunkId
+            val isFirstInChunk = row.chunkId != null && row.chunkId != previousChunk
+            val marker = if (row.chunkId != null && row.kind != DiffKind.CONTEXT && isFirstInChunk) ">>" else " "
             val sepText = " $marker ".take(sepWidth)
             canvas.drawText(sideWidth, y, sepText)
             // Right side
