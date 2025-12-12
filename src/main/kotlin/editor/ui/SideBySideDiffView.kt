@@ -54,18 +54,14 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
         val visible = rows.drop(scrollTop).take(bodyHeight)
         visible.forEachIndexed { idx, row ->
             val y = idx + 1
-            val style = when (row.kind) {
-                DiffKind.ADDED -> addedStyle
-                DiffKind.REMOVED -> removedStyle
-                DiffKind.MODIFIED -> modifiedStyle
-                DiffKind.CONTEXT -> contextStyle
-            }
+            val leftStyle = styleForSide(row.kind, Side.LEFT, addedStyle, removedStyle, modifiedStyle, contextStyle)
+            val rightStyle = styleForSide(row.kind, Side.RIGHT, addedStyle, removedStyle, modifiedStyle, contextStyle)
             // Left side
             canvas.withStyle(gutterStyle) {
                 val num = row.leftNumber?.toString()?.padStart(gutterWidth - 1, ' ') ?: " ".repeat(gutterWidth)
                 drawText(0, y, num.take(gutterWidth))
             }
-            canvas.withStyle(style) {
+            canvas.withStyle(leftStyle) {
                 val textWidth = (sideWidth - gutterWidth).coerceAtLeast(0)
                 val text = row.leftText.take(textWidth).padEnd(textWidth, ' ')
                 drawRect(gutterWidth, y, textWidth, 1)
@@ -80,7 +76,7 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                 val num = row.rightNumber?.toString()?.padStart(gutterWidth - 1, ' ') ?: " ".repeat(gutterWidth)
                 drawText(sideWidth + sepWidth, y, num.take(gutterWidth))
             }
-            canvas.withStyle(style) {
+            canvas.withStyle(rightStyle) {
                 val startX = sideWidth + sepWidth + gutterWidth
                 val space = (cols - startX).coerceAtLeast(0)
                 val text = row.rightText.take(space).padEnd(space, ' ')
@@ -202,16 +198,18 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                     val lenA = edit.endA - edit.beginA
                     val lenB = edit.endB - edit.beginB
                     val maxLen = max(lenA, lenB)
+                    val deleteOnly = lenB == 0 || rightLines.subList(edit.beginB, edit.endB).all { it.isBlank() }
                     for (i in 0 until maxLen) {
                         val lIdx = edit.beginA + i
                         val rIdx = edit.beginB + i
+                        val effectiveKind = if (deleteOnly) DiffKind.REMOVED else DiffKind.MODIFIED
                         out.add(
                             DiffRow(
                                 leftNumber = if (i < lenA) lIdx + 1 else null,
                                 leftText = if (i < lenA) leftLines.getOrElse(lIdx) { "" } else "",
                                 rightNumber = if (i < lenB) rIdx + 1 else null,
                                 rightText = if (i < lenB) rightLines.getOrElse(rIdx) { "" } else "",
-                                kind = DiffKind.MODIFIED,
+                                kind = effectiveKind,
                                 chunkId = chunkCounter
                             )
                         )
@@ -260,6 +258,22 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
     )
 
     private enum class DiffKind { CONTEXT, ADDED, REMOVED, MODIFIED }
+
+    private enum class Side { LEFT, RIGHT }
+
+    private fun styleForSide(
+        kind: DiffKind,
+        side: Side,
+        added: react.StyleSet,
+        removed: react.StyleSet,
+        modified: react.StyleSet,
+        context: react.StyleSet
+    ): react.StyleSet = when (kind) {
+        DiffKind.CONTEXT -> context
+        DiffKind.MODIFIED -> modified
+        DiffKind.ADDED -> if (side == Side.LEFT) removed else added
+        DiffKind.REMOVED -> if (side == Side.LEFT) removed else context
+    }
 
     private data class Layout(
         val gutterWidth: Int,
