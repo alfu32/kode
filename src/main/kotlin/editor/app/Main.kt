@@ -198,7 +198,7 @@ private class SplitPanelsApp(
     private var codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
-    private val gitPanel = GitPanelView(styleSheet, JGitService(File(projectRoot.toString())))
+    private val gitPanel = GitPanelView(styleSheet, projectRoot, createGitService(projectRoot))
     private val aboutView = AboutView(styleSheet, buildVersion)
     private val projectSearchDialog = ProjectSearchDialog(
         styleSheet,
@@ -517,7 +517,7 @@ private class SplitPanelsApp(
         focus = FocusTarget.FILES
         rightFocus = FocusTarget.CODE
         filesTabView.setRoot(projectRoot.toString())
-        gitPanel.setGitService(JGitService(File(projectRoot.toString())))
+        gitPanel.setGitService(createGitService(projectRoot), projectRoot)
         projectSearchDialog.setProjectRoot(projectRoot)
         lastFileRefreshMs = 0L
         lastGitRefreshMs = 0L
@@ -526,6 +526,9 @@ private class SplitPanelsApp(
         restoreLastSession()
         persistSession(force = true)
     }
+
+    private fun createGitService(root: Path): editor.lib.IGitService? =
+        runCatching { JGitService(File(root.toString())) }.getOrNull()
 
     private fun openRecent(entry: RecentFileEntry) {
         val absPath = sessionManager.toAbsolute(entry.path)
