@@ -84,9 +84,9 @@ class JGitService(root: File) : IGitService {
     private lateinit var objectId: ObjectId
     private val repo = FileRepositoryBuilder()
         .setWorkTree(root)
+        .setGitDir(File(root, ".git"))
         .readEnvironment()
-        .findGitDir(root)
-        .build()
+        .setup()
 
     private val git = Git(repo)
 
@@ -185,4 +185,12 @@ class JGitService(root: File) : IGitService {
             .setObjectId(repo.resolve(commitHash) as RevObject?)
             .call()
     }
+}
+
+private fun FileRepositoryBuilder.setup(): org.eclipse.jgit.lib.Repository {
+    val dir = gitDir
+    if (dir == null || !dir.exists()) {
+        throw IllegalStateException("Not a git repository at ${workTree?.path}")
+    }
+    return build()
 }

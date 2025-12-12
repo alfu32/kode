@@ -527,8 +527,11 @@ private class SplitPanelsApp(
         persistSession(force = true)
     }
 
-    private fun createGitService(root: Path): editor.lib.IGitService? =
-        runCatching { JGitService(File(root.toString())) }.getOrNull()
+    private fun createGitService(root: Path): editor.lib.IGitService? {
+        val gitDir = File(root.toFile(), ".git")
+        if (!gitDir.isDirectory) return null
+        return runCatching { JGitService(root.toFile()) }.getOrNull()
+    }
 
     private fun openRecent(entry: RecentFileEntry) {
         val absPath = sessionManager.toAbsolute(entry.path)
