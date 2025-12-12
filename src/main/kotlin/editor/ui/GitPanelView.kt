@@ -5,6 +5,7 @@ import editor.lib.GitStatusEntry
 import editor.lib.IGitService
 import editor.mime.MimeTypeResult
 import org.eclipse.jgit.api.Git
+import java.io.File
 import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSheet
@@ -272,6 +273,12 @@ class GitPanelView(
                     selectedCommitIdx = row.commitIndex
                     val commit = commitEntries.getOrNull(row.commitIndex) ?: return false
                     commitEditor.loadTextContent(commit.message)
+                    return true
+                } else if (row.type == CommitRowType.FILE) {
+                    val commit = commitEntries.getOrNull(row.commitIndex) ?: return false
+                    val oldText = runCatching { svc.contentAtCommit(commit.hash, row.fileName) }.getOrElse { "" } ?: ""
+                    val newText = runCatching { File(root.toFile(), row.fileName).readText() }.getOrElse { "" }
+                    onShowDiff(GitDiff(row.fileName, staged = false, oldContent = oldText, newContent = newText))
                     return true
                 }
             }

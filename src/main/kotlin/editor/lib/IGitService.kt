@@ -36,6 +36,7 @@ interface IGitService {
     fun diff(path: String, staged: Boolean = false): String
     fun diffContents(path: String, staged: Boolean = false): Pair<String, String>
     fun filesForCommit(hash: String): List<String>
+    fun contentAtCommit(hash: String, path: String): String?
 
     // ----- Write -----
     fun stage(paths: List<String>)
@@ -228,6 +229,20 @@ class JGitService(root: File) : IGitService {
             val objectId = tw.getObjectId(0)
             repo.open(objectId).getCachedBytes(Int.MAX_VALUE).toString(StandardCharsets.UTF_8)
         } else null
+    }
+
+    override fun contentAtCommit(hash: String, path: String): String? {
+        val commit = RevWalk(repo).use { walk -> walk.parseCommit(ObjectId.fromString(hash)) }
+        val tree = commit.tree
+        TreeWalk(repo).use { tw ->
+            tw.addTree(tree)
+            tw.isRecursive = true
+            tw.filter = PathFilter.create(path)
+            return if (tw.next()) {
+                val objectId = tw.getObjectId(0)
+                repo.open(objectId).getCachedBytes(Int.MAX_VALUE).toString(StandardCharsets.UTF_8)
+            } else null
+        }
     }
 
     private fun loadFromIndex(path: String): String? {
