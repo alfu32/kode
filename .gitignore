@@ -48,4 +48,6 @@ bin/
 .venv
 
 .kode.json
+.kode.log.json
+
 

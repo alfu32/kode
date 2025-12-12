@@ -63,21 +63,25 @@ object KeywordSyntaxProvider : SyntaxProvider {
                 if (trimmed.isEmpty() || trimmed.startsWith("#")) return@forEachIndexed
                 val parts = trimmed.split("=", limit = 2)
                 if (parts.size != 2) {
-                    throw IllegalArgumentException("Invalid line ${idx + 1} in $source: '$line'")
+                    val msg = "Invalid line ${idx + 1} in $source: '$line'"
+                    editor.app.Logger.logRegexError("keyword-patterns", msg, line)
+                    return@forEachIndexed
                 }
                 val lang = parts[0].trim()
                 val regex = parts[1].trim()
                 try {
                     map[lang] = Pattern.compile(regex)
                 } catch (e: Exception) {
-                    throw IllegalArgumentException("Invalid regex for language '$lang': '$regex'", e)
+                    val msg = "Invalid regex for language '$lang': '$regex' (${e.message})"
+                    editor.app.Logger.logRegexError("keyword-patterns", msg, regex)
                 }
             }
             return map
         } catch (e: Exception) {
-            System.err.println("Failed to load keyword-patterns.txt: ${e.message}")
-            e.printStackTrace()
-            throw e
+            val msg = "Failed to load keyword-patterns.txt: ${e.message}"
+            System.err.println(msg)
+            editor.app.Logger.logRegexError("keyword-patterns", msg, source?.toString() ?: "unknown")
+            return emptyMap()
         }
     }
 
