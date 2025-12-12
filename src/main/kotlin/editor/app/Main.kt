@@ -20,6 +20,8 @@ import editor.ui.FilesTabView
 import editor.ui.BinaryHexView
 import editor.ui.ImageViewerView
 import editor.ui.GitPanelView
+import editor.ui.GitDiff
+import editor.ui.DiffView
 import editor.ui.ProjectSearchDialog
 import editor.ui.AboutView
 import editor.ui.WorkspacePickerDialog
@@ -196,9 +198,15 @@ private class SplitPanelsApp(
     private val mimeDetector = DefaultMimeTypeDetector()
     private val regexProvider = KeywordSyntaxProvider
     private var codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
+    private val diffViewer = DiffView(styleSheet, syntaxProvider = regexProvider)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
-    private val gitPanel = GitPanelView(styleSheet, projectRoot, createGitService(projectRoot))
+    private val gitPanel = GitPanelView(
+        styleSheet,
+        projectRoot,
+        createGitService(projectRoot),
+        onShowDiff = { showDiffInMain(it) }
+    )
     private val aboutView = AboutView(styleSheet, buildVersion)
     private val projectSearchDialog = ProjectSearchDialog(
         styleSheet,
@@ -234,6 +242,7 @@ private class SplitPanelsApp(
     private var lastFileRefreshMs: Long = 0L
     private var lastGitRefreshMs: Long = 0L
     private val refreshIntervalMs: Long = 5_000L
+    private var activeDiff: GitDiff? = null
     init {
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -256,7 +265,8 @@ private class SplitPanelsApp(
             aboutView,
             PlaceholderPane(styleSheet, "Settings")
         ),
-        initialIndex = 0
+        initialIndex = 0,
+        onSelect = { idx -> handleLeftTabChanged(idx) }
     )
 
     override fun render(canvas: CanvasRenderer) {
@@ -434,6 +444,7 @@ private class SplitPanelsApp(
                 FocusTarget.CODE -> codeEditor.dispatch(event)
                 FocusTarget.HEX -> hexViewer.dispatch(event)
                 FocusTarget.IMAGE -> imageViewer.dispatch(event)
+                FocusTarget.DIFF -> diffViewer.dispatch(event)
             }
             schedulePersist()
             return handled
@@ -447,6 +458,7 @@ private class SplitPanelsApp(
 
     private fun openInViewer(path: String, detected: MimeTypeResult) {
         saveCurrentEditorState()
+        clearDiffViewer()
         when (detected.mimeTypeCategory) {
             MimeTypeCategory.IMAGE -> {
                 imageViewer.openFile(path, detected)
@@ -471,6 +483,28 @@ private class SplitPanelsApp(
                 currentOpenPath = path
                 recordRecent(path, null, ViewerType.HEX)
             }
+        }
+    }
+
+    private fun showDiffInMain(diff: GitDiff) {
+        activeDiff = diff
+        diffViewer.showDiff(diff.path, diff.content)
+        rightFocus = FocusTarget.DIFF
+        focus = rightFocus
+    }
+
+    private fun clearDiffViewer() {
+        activeDiff = null
+        if (rightFocus == FocusTarget.DIFF) {
+            rightFocus = FocusTarget.CODE
+            focus = rightFocus
+        }
+    }
+
+    private fun handleLeftTabChanged(selectedIndex: Int) {
+        // Index 1 corresponds to Git tab in leftTabs.
+        if (selectedIndex != 1 && activeDiff != null) {
+            clearDiffViewer()
         }
     }
 
@@ -567,6 +601,7 @@ private class SplitPanelsApp(
     }
 
     private fun openEditorState(state: EditorSessionState) {
+        clearDiffViewer()
         codeEditor.restoreState(state)
         rightFocus = FocusTarget.CODE
         focus = rightFocus
@@ -582,6 +617,7 @@ private class SplitPanelsApp(
             FocusTarget.CODE -> codeEditor.dispatch(event)
             FocusTarget.HEX -> hexViewer.dispatch(event)
             FocusTarget.IMAGE -> imageViewer.dispatch(event)
+            FocusTarget.DIFF -> diffViewer.dispatch(event)
             FocusTarget.FILES -> codeEditor.dispatch(event)
         }
         if (handled && targetFocus != FocusTarget.FILES) {
@@ -747,6 +783,7 @@ private class SplitPanelsApp(
             FocusTarget.CODE -> codeEditor.render(clipped)
             FocusTarget.HEX -> hexViewer.render(clipped)
             FocusTarget.IMAGE -> imageViewer.render(clipped)
+            FocusTarget.DIFF -> diffViewer.render(clipped)
             FocusTarget.FILES -> codeEditor.render(clipped)
         }
     }
@@ -767,7 +804,7 @@ private class SplitPanelsApp(
     }
 }
 
-private enum class FocusTarget { FILES, CODE, HEX, IMAGE }
+private enum class FocusTarget { FILES, CODE, HEX, IMAGE, DIFF }
 
 private class PlaceholderPane(
     styleSheet: StyleSheet,

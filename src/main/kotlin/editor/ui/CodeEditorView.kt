@@ -38,6 +38,7 @@ class CodeEditorView(
     private var searchVisible = false
     private var searchHasFocus = false
     private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet, this::handleSearchAction)
+    private var readOnly: Boolean = false
 
     fun textContent(): String = buffer.text()
 
@@ -68,6 +69,20 @@ class CodeEditorView(
         grammarLanguage = state.grammarLanguage ?: state.language
         buffer.restoreState(state.buffer)
         scrollTop = state.scrollTop.coerceAtLeast(0)
+    }
+
+    fun loadVirtualContent(label: String, content: String, language: String? = null) {
+        filePath = label
+        mime = "text/plain"
+        this.language = language
+        grammarLanguage = language
+        grammarAvailable = language != null && syntaxProvider?.languages()?.contains(language) == true
+        buffer.loadText(content)
+        scrollTop = 0
+    }
+
+    fun setReadOnly(value: Boolean) {
+        readOnly = value
     }
 
     fun currentPath(): String = filePath
@@ -317,6 +332,14 @@ class CodeEditorView(
             }
             "key_down" -> {
                 val key = event.key?.lowercase()
+                if (readOnly) {
+                    val mutating = when (key) {
+                        "backspace", "delete", "enter" -> true
+                        else -> false
+                    } || (!event.ctrl && !event.alt && (event.key?.length == 1)) ||
+                        (event.ctrl && (key == "x" || key == "v"))
+                    if (mutating) return true
+                }
                 if (event.ctrl && key == "s") {
                     if (filePath.isNotEmpty()) buffer.saveToFile(filePath)
                     return true
