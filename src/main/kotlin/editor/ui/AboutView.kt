@@ -31,12 +31,6 @@ class AboutView(
             sourceUrl = "https://github.com/korlibs/korlibs"
         ),
         Credit(
-            name = "pty4j 0.13.1",
-            license = "Apache-2.0",
-            licenseUrl = "https://www.apache.org/licenses/LICENSE-2.0",
-            sourceUrl = "https://github.com/JetBrains/pty4j"
-        ),
-        Credit(
             name = "kotlinx-coroutines 1.10.2",
             license = "Apache-2.0",
             licenseUrl = "https://www.apache.org/licenses/LICENSE-2.0",

@@ -25,7 +25,6 @@ dependencies {
     implementation("org.eclipse.jgit:org.eclipse.jgit:7.4.0.202509020913-r")
     implementation("com.soywiz.korlibs.korim:korim:4.0.10")
     implementation("com.soywiz.korlibs.korio:korio:4.0.10")
-    implementation("org.jetbrains.pty4j:pty4j:0.13.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 }
