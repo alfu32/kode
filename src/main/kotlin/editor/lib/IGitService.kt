@@ -7,6 +7,8 @@ package editor.lib
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.revwalk.RevObject
+import org.eclipse.jgit.api.errors.NoHeadException
+import org.eclipse.jgit.errors.MissingObjectException
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import java.io.File
 import java.time.Instant
@@ -103,11 +105,17 @@ class JGitService(root: File) : IGitService {
     }
 
     override fun listCommits(limit: Int?): List<GitCommitEntry> {
-        val call = git.log()
-        if (limit != null) call.setMaxCount(limit)
-
-        val commits = call.call()
-        val tags = git.tagList().call()
+        val commits = runCatching {
+            val call = git.log()
+            if (limit != null) call.setMaxCount(limit)
+            call.call().toList()
+        }.getOrElse { ex ->
+            return when (ex) {
+                is NoHeadException, is MissingObjectException -> emptyList()
+                else -> throw ex
+            }
+        }
+        val tags = runCatching { git.tagList().call() }.getOrDefault(emptyList())
 
         // Map commit->tags
         val tagMap: Map<String, List<String>> = tags.mapNotNull { ref ->
@@ -135,10 +143,11 @@ class JGitService(root: File) : IGitService {
     }
 
     override fun listBranches(): List<String> =
-        git.branchList().call().map { it.name.substringAfterLast("/") }
+        runCatching { git.branchList().call().map { it.name.substringAfterLast("/") } }
+            .getOrDefault(emptyList())
 
     override fun currentBranch(): String =
-        repo.branch
+        runCatching { repo.fullBranch ?: "(no branch)" }.getOrDefault("(no branch)")
 
     override fun checkoutBranch(name: String) {
         git.checkout().setName(name).call()
