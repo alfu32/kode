@@ -1,6 +1,7 @@
 # KODE - Code Editor
 
 
+
 ![img_14.png](assets/img_14.png)
 
 ![img_18.png](assets/img_18.png)
@@ -68,3 +69,4 @@ usage of the file management features : renaming file
 ![img_2.png](assets/img_2.png)
 ![img_1.png](assets/img_1.png)
 ![img.png](assets/img.png)
+

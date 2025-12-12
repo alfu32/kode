@@ -5,14 +5,19 @@ package editor.lib
 // =============================================================
 
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.diff.DiffEntry
+import org.eclipse.jgit.diff.DiffFormatter
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.revwalk.RevObject
 import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.api.errors.NoHeadException
 import org.eclipse.jgit.errors.MissingObjectException
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.treewalk.filter.PathFilter
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.time.Instant
+import java.nio.charset.StandardCharsets
 
 // =============================================================
 // Interface + Data Classes
@@ -25,6 +30,7 @@ interface IGitService {
     fun listBranches(): List<String>
     fun currentBranch(): String
     fun checkoutBranch(name: String)
+    fun diff(path: String, staged: Boolean = false): String
 
     // ----- Write -----
     fun stage(paths: List<String>)
@@ -153,6 +159,31 @@ class JGitService(root: File) : IGitService {
 
     override fun checkoutBranch(name: String) {
         git.checkout().setName(name).call()
+    }
+
+    override fun diff(path: String, staged: Boolean): String {
+        val entries: List<DiffEntry> = git.diff()
+            .setPathFilter(PathFilter.create(path))
+            .setCached(staged)
+            .call()
+        val output = ByteArrayOutputStream()
+        DiffFormatter(output).use { fmt ->
+            fmt.setRepository(repo)
+            fmt.isDetectRenames = true
+            fmt.format(entries)
+        }
+        val rendered = output.toString(StandardCharsets.UTF_8)
+        if (rendered.isNotBlank()) return rendered
+        val file = File(repo.workTree, path)
+        if (file.exists()) {
+            val content = runCatching { file.readText() }.getOrDefault("")
+            return buildString {
+                appendLine("--- /dev/null")
+                appendLine("+++ b/$path")
+                content.lineSequence().forEach { appendLine("+$it") }
+            }.trimEnd()
+        }
+        return "No diff available for $path"
     }
 
     override fun stage(paths: List<String>) {

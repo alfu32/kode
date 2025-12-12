@@ -24,6 +24,8 @@ class GitPanelView(
     private var selectedStatusIdx: Int = -1
     private var commitScroll: Int = 0
     private val commitEditor = CodeEditorView(styleSheet)
+    private var commitMessageDraft: String = ""
+    private var activeDiffPath: String? = null
     private val selectStarted: Boolean = false
     private var initButtonRow: Int = -1
     private var initButtonRange: IntRange = IntRange.EMPTY
@@ -34,6 +36,7 @@ class GitPanelView(
             path = "[commit-message]",
             detection = MimeTypeResult("text/plain", extension = ".txt", language = "plain-text")
         )
+        commitMessageDraft = ""
     }
 
     fun setGitService(service: IGitService?, newRoot: Path) {
@@ -52,6 +55,13 @@ class GitPanelView(
         statusEntries = svc.statusPorcelain().sortedBy { it.path }
         commitEntries = svc.listCommits()
         commitScroll = commitScroll.coerceIn(0, (commitEntries.size - 1).coerceAtLeast(0))
+        // clear stale diff if selection no longer valid
+        activeDiffPath?.let { path ->
+            if (statusEntries.none { it.path == path }) {
+                activeDiffPath = null
+                commitEditor.loadTextContent(commitMessageDraft)
+            }
+        }
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -184,6 +194,7 @@ class GitPanelView(
     private fun handleClick(event: UIEvent, allowCommit: Boolean): Boolean {
         val svc = git ?: return false
         val y = event.y ?: return false
+        val x = event.x ?: return false
         val rows = event.rows ?: return false
         val section = rows / 3
         val topH = section
@@ -194,8 +205,13 @@ class GitPanelView(
                 if (idx in statusEntries.indices) {
                     selectedStatusIdx = idx
                     val entry = statusEntries[idx]
-                    if (entry.staged) svc.unstage(entry.path) else svc.stage(entry.path)
-                    refreshData()
+                    val stageBoxWidth = 3 // "[S]" or "[ ]"
+                    if (x in 0 until stageBoxWidth) {
+                        if (entry.staged) svc.unstage(entry.path) else svc.stage(entry.path)
+                        refreshData()
+                    } else {
+                        showDiff(entry)
+                    }
                     return true
                 }
             }
@@ -204,11 +220,15 @@ class GitPanelView(
                 val editorHeight = (midH - 1).coerceAtLeast(1)
                 if (relY >= editorHeight) {
                     if (!allowCommit) return true
-                    svc.commit(commitEditor.textContent())
+                    val message = currentCommitMessage()
+                    svc.commit(message)
+                    commitMessageDraft = ""
+                    activeDiffPath = null
                     commitEditor.loadTextContent("")
                     refreshData()
                     return true
                 }
+                restoreCommitEditor()
                 val forwarded = event.alterCopy(
                     UIEvent(
                         kind = event.kind,
@@ -229,7 +249,9 @@ class GitPanelView(
                         raw = event.raw
                     )
                 )
-                return commitEditor.dispatch(forwarded)
+                val handled = commitEditor.dispatch(forwarded)
+                captureCommitDraft()
+                return handled
             }
             else -> { // commits
                 val relY = y - (topH + midH)
@@ -272,9 +294,11 @@ class GitPanelView(
                     cols = event.cols,
                     rows = editorHeight,
                     raw = event.raw
-                )
             )
-            return commitEditor.dispatch(forwarded)
+            )
+            val handled = commitEditor.dispatch(forwarded)
+            captureCommitDraft()
+            return handled
         }
         return false
     }
@@ -288,7 +312,7 @@ class GitPanelView(
         val midH = section
         val editorHeight = (midH - 1).coerceAtLeast(1)
         return if (y in topH until (topH + editorHeight)) {
-            commitEditor.dispatch(event.alterCopy(UIEvent(
+            val handled = commitEditor.dispatch(event.alterCopy(UIEvent(
                 kind = event.kind,
                 x = event.x,
                 y = event.y?.minus(topH),
@@ -306,6 +330,8 @@ class GitPanelView(
                 rows = editorHeight,
                 raw = event.raw
             )))
+            captureCommitDraft()
+            handled
         } else if (y >= topH + midH) {
             val bottomHeight = rows - topH - midH
             val visible = (bottomHeight - 1).coerceAtLeast(0)
@@ -316,5 +342,36 @@ class GitPanelView(
         } else false
     }
 
-    private fun handleKey(event: UIEvent): Boolean = commitEditor.dispatch(event)
+    private fun handleKey(event: UIEvent): Boolean {
+        val handled = commitEditor.dispatch(event)
+        captureCommitDraft()
+        return handled
+    }
+
+    private fun showDiff(entry: GitStatusEntry) {
+        val svc = git ?: return
+        if (activeDiffPath == null) {
+            commitMessageDraft = commitEditor.textContent()
+        }
+        activeDiffPath = entry.path
+        val diffText = runCatching { svc.diff(entry.path, staged = entry.staged) }
+            .getOrElse { ex -> "Unable to load diff for ${entry.path}:\n${ex.message ?: ex}" }
+        commitEditor.loadTextContent(diffText)
+    }
+
+    private fun restoreCommitEditor() {
+        if (activeDiffPath != null) {
+            activeDiffPath = null
+            commitEditor.loadTextContent(commitMessageDraft)
+        }
+    }
+
+    private fun captureCommitDraft() {
+        if (activeDiffPath == null) {
+            commitMessageDraft = commitEditor.textContent()
+        }
+    }
+
+    private fun currentCommitMessage(): String =
+        if (activeDiffPath == null) commitEditor.textContent() else commitMessageDraft
 }
