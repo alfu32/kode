@@ -18,6 +18,10 @@ class DefaultMimeTypeDetector(
     private val extensionMap = ConcurrentHashMap<String, SampleMimeTable.Entry>().apply {
         // Hints derived from repository samples.
         putAll(SampleMimeTable.extensionToEntry)
+        // Common C/C++ header variants
+        putIfAbsent("hh", SampleMimeTable.Entry(language="cpp", extension=".hh", mime="text/cpp", mimeTypeCategory = MimeTypeCategory.TEXT))
+        putIfAbsent("hpp", SampleMimeTable.Entry(language="cpp", extension=".hpp", mime="text/cpp", mimeTypeCategory = MimeTypeCategory.TEXT))
+        putIfAbsent("hxx", SampleMimeTable.Entry(language="cpp", extension=".hxx", mime="text/cpp", mimeTypeCategory = MimeTypeCategory.TEXT))
     }
 
     override fun detect(bytes: ByteArray): MimeTypeResult {
