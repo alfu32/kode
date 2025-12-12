@@ -7,6 +7,7 @@ package editor.lib
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.revwalk.RevObject
+import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.api.errors.NoHeadException
 import org.eclipse.jgit.errors.MissingObjectException
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
@@ -182,8 +183,10 @@ class JGitService(root: File) : IGitService {
         }
 
         val objId = repo.resolve(commitHash) ?: throw IllegalArgumentException("unknown commit: $commitHash")
-        val revObj = git.repository.parseAny(objId) as? RevObject
-            ?: throw IllegalArgumentException("unable to resolve object for $commitHash")
+        val revObj = RevWalk(repo).use { walk ->
+            val any = walk.parseAny(objId)
+            any as? RevObject ?: throw IllegalArgumentException("unable to resolve object for $commitHash")
+        }
 
         git.tag()
             .setName(tag)
