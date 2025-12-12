@@ -42,7 +42,7 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
         val rowsAvailable = canvas.rows().coerceAtLeast(1)
         val headerStyle = styleSheet.getStyle("diff-header")
         canvas.withStyle(headerStyle) {
-            val toggle = if (showContext) "[squash]" else "[unsquash]"
+            val toggle = if (showContext) "[squashed]" else "[unsquashed]"
             val label = "Diff: $path"
             val content = buildString {
                 append(label)
@@ -123,7 +123,7 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
                 val ex = event.x ?: return false
                 val ey = event.y ?: return false
                 if (ey == 0 && headerWidth > 0) {
-                    val toggleLabel = if (showContext) "[squash]" else "[unsquash]"
+                    val toggleLabel = if (showContext) "[squashed]" else "[unsquashed]"
                     val start = (headerWidth - toggleLabel.length).coerceAtLeast(0)
                     if (ex in start until headerWidth) {
                         setShowContext(!showContext)
@@ -338,3 +338,5 @@ class SideBySideDiffView(styleSheet: StyleSheet) : BaseComponent(styleSheet) {
         return out
     }
 }
+
+

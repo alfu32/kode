@@ -354,7 +354,7 @@ private class SplitPanelsApp(
         }
 
         when (event.kind) {
-            "key_down" -> if (event.key?.lowercase() == "q") {
+            "key_down" -> if (event.ctrl && event.key?.lowercase() == "q") {
                 onQuit()
             }
             "mouse_down" -> {
