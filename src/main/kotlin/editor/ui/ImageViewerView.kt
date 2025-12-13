@@ -2,7 +2,7 @@ package editor.ui
 
 import editor.lib.AsciiImageRenderer
 import editor.lib.BrailleAsciiImageRenderer
-import editor.lib.KorimAsciiImageRenderer
+import editor.lib.BixelAsciiImageRenderer
 import editor.mime.MimeTypeResult
 import korlibs.image.format.readBitmap
 import korlibs.io.file.std.localVfs
@@ -20,7 +20,7 @@ import kotlin.math.min
  */
 class ImageViewerView(
     styleSheet: StyleSheet,
-    private val asciiRenderer: AsciiImageRenderer = KorimAsciiImageRenderer(),
+    private val asciiRenderer: AsciiImageRenderer = BixelAsciiImageRenderer(),
     private val brailleRenderer: AsciiImageRenderer = BrailleAsciiImageRenderer()
 ) : BaseComponent(styleSheet) {
 
@@ -105,14 +105,13 @@ class ImageViewerView(
         canvas.withStyle(bodyStyle) {
             drawRect(0, 1, cols, bodyRows)
             ensureAscii(cols, bodyRows)
-            val sliderRows = sliders.size
-            if (!sliders[0].isDragging()) sliders[0].setValueSilently(targetWidth.toDouble())
-            if (!sliders[1].isDragging()) sliders[1].setValueSilently(grayThreshold)
-            if (!sliders[2].isDragging()) sliders[2].setValueSilently(scatterThreshold)
-            sliders.forEachIndexed { idx, slider ->
+            val visibleSliders = visibleSliders()
+            val sliderRows = visibleSliders.size
+            if (!visibleSliders[0].isDragging()) visibleSliders[0].setValueSilently(targetWidth.toDouble())
+            visibleSliders.forEachIndexed { idx, slider ->
                 slider.renderAt(canvas, 1 + idx, cols)
             }
-            lastButtonRegion = renderButton(canvas, 1, cols, buttonStyle, "[ Toggle mode ]")
+            lastButtonRegion = null
             val availableRows = bodyRows - sliderRows
             if (availableRows <= 0) return@withStyle
             ascii.take(availableRows).forEachIndexed { idx, line ->
@@ -126,42 +125,23 @@ class ImageViewerView(
         when (event.kind) {
             "key_down" -> {
                 val key = event.key?.lowercase() ?: return false
-                val prevWidth = targetWidth
-                val prevGray = grayThreshold
-                val prevContrast = scatterThreshold
                 when (key) {
                     "left" -> targetWidth = (targetWidth - 4).coerceAtLeast(8)
                     "right" -> targetWidth = min(targetWidth + 4, (event.cols ?: targetWidth + 4))
-                    "up" -> grayThreshold = (grayThreshold + 0.05).coerceAtMost(1.0)
-                    "down" -> grayThreshold = (grayThreshold - 0.05).coerceAtLeast(0.0)
-                    "c" -> scatterThreshold = (scatterThreshold + 200).coerceAtMost(8000.0)
-                    "x" -> scatterThreshold = (scatterThreshold - 200).coerceAtLeast(0.0)
-                    "b" -> useBraille = !useBraille
                     else -> return false
                 }
-                if (prevWidth != targetWidth || prevGray != grayThreshold || prevContrast != scatterThreshold) {
-                    needsRender = true
-                    return true
-                }
-                if (event.key?.lowercase() == "b") {
-                    needsRender = true
-                    return true
-                }
+                needsRender = true
+                return true
             }
             "mouse_down" -> {
                 val x = event.x ?: return false
                 val y = event.y ?: return false
-                if (lastButtonRegion?.contains(x, y) == true) {
-                    useBraille = !useBraille
-                    needsRender = true
-                    return true
-                }
-                sliders.forEach { slider ->
+                visibleSliders().forEach { slider ->
                     if (slider.onMouseDown(x, y)) return true
                 }
             }
             "mouse_move" -> {
-                sliders.forEach { slider ->
+                visibleSliders().forEach { slider ->
                     if (slider.onMouseMove(event.x, event.y)) {
                         needsRender = true
                         return true
@@ -170,7 +150,7 @@ class ImageViewerView(
             }
             "mouse_up" -> {
                 var released = false
-                sliders.forEach { slider ->
+                visibleSliders().forEach { slider ->
                     if (slider.onMouseUp()) {
                         released = true
                     }
@@ -200,7 +180,7 @@ class ImageViewerView(
 
     private fun ensureAscii(cols: Int, bodyRows: Int) {
         if (!imageDirty || filePath.isEmpty()) return
-        val sliderRows = 3
+        val sliderRows = visibleSliders().size
         val availableRows = bodyRows - sliderRows
         if (availableRows <= 0) return
         val width = min(targetWidth, cols.coerceAtLeast(8))
@@ -249,24 +229,32 @@ class ImageViewerView(
                 if (end > idx) {
                     flush()
                     val codes = line.substring(idx + 2, end).split(';')
-                    when {
-                        codes.size >= 5 && codes[0] == "38" && codes[1] == "2" -> {
-                            val r = codes.getOrNull(2)?.toIntOrNull() ?: defaultFg.r
-                            val g = codes.getOrNull(3)?.toIntOrNull() ?: defaultFg.g
-                            val b = codes.getOrNull(4)?.toIntOrNull() ?: defaultFg.b
-                            fg = react.Color(r, g, b)
+                    var i = 0
+                    while (i < codes.size) {
+                        when (codes[i]) {
+                            "38" -> if (codes.getOrNull(i + 1) == "2") {
+                                val r = codes.getOrNull(i + 2)?.trimEnd('m')?.toIntOrNull() ?: defaultFg.r
+                                val g = codes.getOrNull(i + 3)?.trimEnd('m')?.toIntOrNull() ?: defaultFg.g
+                                val b = codes.getOrNull(i + 4)?.trimEnd('m')?.toIntOrNull() ?: defaultFg.b
+                                fg = react.Color(r, g, b)
+                                i += 5
+                                continue
+                            }
+                            "48" -> if (codes.getOrNull(i + 1) == "2") {
+                                val r = codes.getOrNull(i + 2)?.trimEnd('m')?.toIntOrNull() ?: defaultBg.r
+                                val g = codes.getOrNull(i + 3)?.trimEnd('m')?.toIntOrNull() ?: defaultBg.g
+                                val b = codes.getOrNull(i + 4)?.trimEnd('m')?.toIntOrNull() ?: defaultBg.b
+                                bg = react.Color(r, g, b)
+                                i += 5
+                                continue
+                            }
+                            "0" -> {
+                                fg = defaultFg
+                                bg = defaultBg
+                                canvas.setBackgroundColor(defaultBg.r, defaultBg.g, defaultBg.b)
+                            }
                         }
-                        codes.size >= 5 && codes[0] == "48" && codes[1] == "2" -> {
-                            val r = codes.getOrNull(2)?.toIntOrNull() ?: defaultBg.r
-                            val g = codes.getOrNull(3)?.toIntOrNull() ?: defaultBg.g
-                            val b = codes.getOrNull(4)?.toIntOrNull() ?: defaultBg.b
-                            bg = react.Color(r, g, b)
-                        }
-                        codes.size == 1 && codes[0] == "0" -> {
-                            fg = defaultFg
-                            bg = defaultBg
-                            canvas.setBackgroundColor(defaultBg.r, defaultBg.g, defaultBg.b)
-                        }
+                        i++
                     }
                     idx = end + 1
                     continue
@@ -291,6 +279,8 @@ class ImageViewerView(
         return 4
     }
 
+    private fun visibleSliders(): List<SliderControl> = listOf(sliders[0])
+
     private fun loadMetadata() {
         if (filePath.isEmpty()) return
         runCatching {
@@ -305,4 +295,3 @@ class ImageViewerView(
         }
     }
 }
-

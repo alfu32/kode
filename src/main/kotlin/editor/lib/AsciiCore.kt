@@ -194,4 +194,67 @@ object AsciiCore {
         sb.append("\u001B[0m")
         return sb.toString()
     }
+
+    /**
+     * Render using half-block characters (`▄`) so each cell carries two vertical pixels:
+     * bg = top color, fg = bottom color. This improves aspect ratio (roughly square pixels).
+     */
+    fun pixelsToBixels(
+        outWidth: Int,
+        outHeight: Int,
+        srcWidth: Int,
+        srcHeight: Int,
+        pixelAt: (x: Int, y: Int) -> Int
+    ): String {
+        require(outWidth > 0 && outHeight > 0) { "outWidth/outHeight must be > 0" }
+        require(srcWidth > 0 && srcHeight > 0) { "srcWidth/srcHeight must be > 0" }
+
+        val sb = StringBuilder()
+        val scaleX = srcWidth.toDouble() / outWidth.toDouble()
+        val scaleY = srcHeight.toDouble() / (outHeight * 2.0)
+
+        fun avgColor(yStart: Double, yEnd: Double, xStart: Double, xEnd: Double): Triple<Int, Int, Int> {
+            val sxStart = xStart.toInt().coerceIn(0, srcWidth - 1)
+            val sxEnd = xEnd.toInt().coerceIn(sxStart, srcWidth - 1)
+            val syStart = yStart.toInt().coerceIn(0, srcHeight - 1)
+            val syEnd = yEnd.toInt().coerceIn(syStart, srcHeight - 1)
+            var rSum = 0
+            var gSum = 0
+            var bSum = 0
+            var count = 0
+            for (yy in syStart..syEnd) {
+                for (xx in sxStart..sxEnd) {
+                    val argb = pixelAt(xx, yy)
+                    rSum += (argb shr 16) and 0xFF
+                    gSum += (argb shr 8) and 0xFF
+                    bSum += argb and 0xFF
+                    count++
+                }
+            }
+            val c = count.coerceAtLeast(1)
+            return Triple(rSum / c, gSum / c, bSum / c)
+        }
+
+        for (row in 0 until outHeight) {
+            val topYStart = row * 2 * scaleY
+            val topYEnd = (row * 2 + 1) * scaleY
+            val bottomYStart = (row * 2 + 1) * scaleY
+            val bottomYEnd = (row * 2 + 2) * scaleY
+
+            for (col in 0 until outWidth) {
+                val xStart = col * scaleX
+                val xEnd = (col + 1) * scaleX
+                val (tr, tg, tb) = avgColor(topYStart, topYEnd, xStart, xEnd)
+                val (br, bg, bb) = avgColor(bottomYStart, bottomYEnd, xStart, xEnd)
+                // Emit background (top) then foreground (bottom) explicitly to
+                // avoid parsers that ignore combined 48/38 codes in one sequence.
+                sb.append("\u001B[48;2;${tr};${tg};${tb}m")
+                sb.append("\u001B[38;2;${br};${bg};${bb}m")
+                sb.append('▄')
+            }
+            sb.append("\u001B[0m\n")
+        }
+        sb.append("\u001B[0m")
+        return sb.toString()
+    }
 }

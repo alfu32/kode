@@ -1,6 +1,6 @@
 # KODE - Code Editor
 
-
+![img_20.png](assets/img_20.png)
 
 ![img_14.png](assets/img_14.png)
 
