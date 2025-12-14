@@ -4,6 +4,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import editor.codeintel.SymbolKind
+import java.nio.file.Files
+import kotlin.io.path.createTempDirectory
+import kotlin.io.path.writeText
 
 class CodeIntelServiceTest {
 
@@ -70,6 +74,88 @@ class CodeIntelServiceTest {
         assertTrue(tokensV2.any { it.scopes.contains("codeintel.usage") && it.text == "Widget" })
         } finally {
             service.shutdown()
+        }
+    }
+
+    @Test
+    fun loadsPatternsFromJsonRegistry() {
+        val service = CodeIntelService(debounceMs = 0L)
+        try {
+            val goPath = "main.go"
+            val goText = """
+                // should ignore this fake struct Foo
+                package main
+                func main() {}
+                type User struct {}
+            """.trimIndent()
+            service.indexDocument(goPath, "go", goText, version = 1)
+
+            val sqlPath = "report.sql"
+            val sqlText = """
+                -- ignore fake CREATE FUNCTION bogus()
+                CREATE FUNCTION report_sales() RETURNS void AS $$
+                BEGIN
+                    RETURN;
+                END;
+                $$ LANGUAGE plpgsql;
+            """.trimIndent()
+            service.indexDocument(sqlPath, "sql", sqlText, version = 1)
+
+            val tsPath = "index.ts"
+            val tsText = """
+                // TypeScript alias test
+                function greet() {}
+            """.trimIndent()
+            service.indexDocument(tsPath, "ts", tsText, version = 1)
+
+            service.waitForIdle()
+
+            val goOutline = service.documentOutline(goPath)
+            assertTrue(goOutline.any { it.name == "main" && it.kind == SymbolKind.FUNCTION })
+            assertTrue(goOutline.any { it.name == "User" && it.kind == SymbolKind.CLASS })
+
+            val sqlOutline = service.documentOutline(sqlPath)
+            assertTrue(sqlOutline.any { it.name.equals("report_sales", ignoreCase = true) })
+
+            val tsOutline = service.documentOutline(tsPath)
+            assertTrue(tsOutline.any { it.name == "greet" })
+        } finally {
+            service.shutdown()
+        }
+    }
+
+    @Test
+    fun externalDefinitionsOverrideResource() {
+        val tempDir = createTempDirectory()
+        val externalFile = tempDir.resolve("defs.json")
+        val custom = """
+            {
+              "languages": [
+                {
+                  "language": "customlang",
+                  "patterns": [
+                    {"kind": "FUNCTION", "regex": "\\bspice_([A-Za-z_][A-Za-z0-9_]*)"}
+                  ]
+                }
+              ]
+            }
+        """.trimIndent()
+        Files.writeString(externalFile, custom)
+        val oldProp = System.getProperty("kode.codeintel.path")
+        System.setProperty("kode.codeintel.path", externalFile.toString())
+        val service = CodeIntelService(debounceMs = 0L)
+        try {
+            val path = "test.custom"
+            val text = "spice_run()"
+            service.indexDocument(path, "customlang", text, version = 1)
+            service.waitForIdle()
+            val outline = service.documentOutline(path)
+            assertTrue(outline.any { it.name == "run" && it.kind == SymbolKind.FUNCTION })
+        } finally {
+            if (oldProp != null) System.setProperty("kode.codeintel.path", oldProp) else System.clearProperty("kode.codeintel.path")
+            service.shutdown()
+            Files.deleteIfExists(externalFile)
+            Files.deleteIfExists(tempDir)
         }
     }
 }

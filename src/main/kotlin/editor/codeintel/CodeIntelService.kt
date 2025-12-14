@@ -2,10 +2,15 @@ package editor.codeintel
 
 import editor.grammars.Token
 import react.Color
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 enum class SymbolKind { CLASS, FUNCTION, VARIABLE, INTERFACE, ENUM, OBJECT, MODULE }
 
@@ -197,22 +202,39 @@ class CodeIntelService(
     }
 }
 
-private class RegexDefinitionExtractor : DefinitionExtractor {
+private class RegexDefinitionExtractor(
+    private val configs: List<LanguageDefinitionConfig> = loadDefaultConfigs()
+) : DefinitionExtractor {
 
     private data class DefinitionPattern(val regex: Regex, val kind: SymbolKind, val groupIndex: Int = 1)
     private data class SanitizedLine(val text: String, val inBlockComment: Boolean)
 
+    private val configByLanguage: Map<String, LanguageDefinitionConfig> =
+        configs.associateBy { it.language.lowercase(Locale.ROOT) }
+    private val aliasMap: Map<String, String> = configs
+        .flatMap { cfg -> cfg.aliases.map { it.lowercase(Locale.ROOT) to cfg.language.lowercase(Locale.ROOT) } }
+        .toMap()
+    private val blockTrackers: MutableMap<String, BlockTracker> = mutableMapOf()
+
     override fun extract(text: String, language: String?): ExtractedSymbols {
+        val langKey = language?.lowercase(Locale.ROOT)
+        val cfg = configFor(langKey)
         val lines = text.split("\n")
-        val sanitized = sanitizeLines(lines)
+        val sanitized = sanitizeLines(lines, cfg)
         val offsets = lineStartOffsets(lines)
         val symbols = mutableListOf<LocalSymbol>()
         val identifiers = mutableMapOf<Int, MutableList<IdentifierToken>>()
-        val patterns = patternsForLanguage(language)
+        val patterns = patternsForLanguage(cfg)
         val declRanges = mutableMapOf<Int, MutableList<IntRange>>()
+
+        val tracker = blockTrackers.getOrPut(cfg?.language ?: "__default") {
+            val mode = cfg?.blockMode ?: BlockMode.BRACE
+            BlockTracker(mode, cfg?.beginBlockRegex, cfg?.endBlockRegex)
+        }.also { it.reset() }
 
         sanitized.forEachIndexed { idx, sanitizedLine ->
             if (sanitizedLine.text.isBlank()) return@forEachIndexed
+            tracker.update(sanitizedLine.text)
             patterns.forEach { pattern ->
                 pattern.regex.findAll(sanitizedLine.text).forEach { match ->
                     val group = match.groups[pattern.groupIndex] ?: return@forEach
@@ -249,10 +271,12 @@ private class RegexDefinitionExtractor : DefinitionExtractor {
         val names = symbols.map { it.name }.toSet()
         if (names.isNotEmpty()) {
             val pattern = Regex("\\b(${names.joinToString("|") { Regex.escape(it) }})\\b")
-            sanitized.forEachIndexed { idx, sanitizedLine ->
-                if (sanitizedLine.text.isBlank()) return@forEachIndexed
-                pattern.findAll(sanitizedLine.text).forEach { match ->
-                    val name = match.groupValues[1]
+        tracker.reset()
+        sanitized.forEachIndexed { idx, sanitizedLine ->
+            if (sanitizedLine.text.isBlank()) return@forEachIndexed
+            tracker.update(sanitizedLine.text)
+            pattern.findAll(sanitizedLine.text).forEach { match ->
+                val name = match.groupValues[1]
                     val start = match.range.first
                     val end = match.range.last + 1
                     if (isInsideDeclaration(idx, start, end, declRanges)) return@forEach
@@ -273,42 +297,55 @@ private class RegexDefinitionExtractor : DefinitionExtractor {
         return ExtractedSymbols(symbols, immutableIdentifiers)
     }
 
-    private fun sanitizeLines(lines: List<String>): List<SanitizedLine> {
+    private fun sanitizeLines(
+        lines: List<String>,
+        cfg: LanguageDefinitionConfig?
+    ): List<SanitizedLine> {
         var inBlockComment = false
+        val lineComments = cfg?.lineComments?.takeIf { it.isNotEmpty() } ?: DEFAULT_LINE_COMMENTS
+        val blockStart = cfg?.blockCommentStart ?: "/*"
+        val blockEnd = cfg?.blockCommentEnd ?: "*/"
         return lines.map { line ->
-            val sanitized = sanitizeLine(line, inBlockComment)
+            val sanitized = sanitizeLine(line, inBlockComment, lineComments, blockStart, blockEnd)
             inBlockComment = sanitized.inBlockComment
             sanitized
         }
     }
 
-    private fun sanitizeLine(line: String, inComment: Boolean): SanitizedLine {
+    private fun sanitizeLine(
+        line: String,
+        inComment: Boolean,
+        lineComments: List<String>,
+        blockStart: String?,
+        blockEnd: String?
+    ): SanitizedLine {
         val out = StringBuilder(line.length)
         var idx = 0
         var inBlock = inComment
         while (idx < line.length) {
-            if (inBlock) {
-                val end = line.indexOf("*/", idx)
+            if (inBlock && !blockEnd.isNullOrEmpty()) {
+                val end = line.indexOf(blockEnd, idx)
                 if (end == -1) {
                     repeat(line.length - idx) { out.append(' ') }
                     return SanitizedLine(out.toString(), true)
                 }
-                repeat(end + 2 - idx) { out.append(' ') }
-                idx = end + 2
+                repeat(end + blockEnd.length - idx) { out.append(' ') }
+                idx = end + blockEnd.length
                 inBlock = false
                 continue
             }
-            if (idx + 1 < line.length && line[idx] == '/' && line[idx + 1] == '*') {
+            if (!blockStart.isNullOrEmpty() && idx + blockStart.length <= line.length &&
+                line.regionMatches(idx, blockStart, 0, blockStart.length)
+            ) {
                 inBlock = true
-                out.append(' ').append(' ')
-                idx += 2
+                repeat(blockStart.length) { out.append(' ') }
+                idx += blockStart.length
                 continue
             }
-            if (idx + 1 < line.length && line[idx] == '/' && line[idx + 1] == '/') {
-                repeat(line.length - idx) { out.append(' ') }
-                break
+            val lineComment = lineComments.firstOrNull { comment ->
+                idx + comment.length <= line.length && line.regionMatches(idx, comment, 0, comment.length)
             }
-            if (line[idx] == '#') {
+            if (lineComment != null) {
                 repeat(line.length - idx) { out.append(' ') }
                 break
             }
@@ -355,9 +392,27 @@ private class RegexDefinitionExtractor : DefinitionExtractor {
         return offsets
     }
 
-    private fun patternsForLanguage(language: String?): List<DefinitionPattern> {
-        val lang = language?.lowercase(Locale.ROOT) ?: ""
-        val kotlinLike = listOf(
+    private fun patternsForLanguage(cfg: LanguageDefinitionConfig?): List<DefinitionPattern> {
+        val defs = cfg?.patterns?.mapNotNull { pattern ->
+            val regex = runCatching { Regex(pattern.regex, setOf(RegexOption.IGNORE_CASE)) }.getOrNull()
+                ?: return@mapNotNull null
+            DefinitionPattern(regex, pattern.kind.toSymbolKind(), pattern.groupIndex)
+        }
+        if (!defs.isNullOrEmpty()) return defs
+        return DEFAULT_PATTERNS
+    }
+
+    private fun configFor(langKey: String?): LanguageDefinitionConfig? {
+        if (langKey == null) return null
+        val primary = configByLanguage[langKey]
+        if (primary != null) return primary
+        val resolved = aliasMap[langKey]
+        return resolved?.let { configByLanguage[it] }
+    }
+
+    companion object {
+        private val DEFAULT_LINE_COMMENTS = listOf("//", "#", "--")
+        private val DEFAULT_PATTERNS = listOf(
             DefinitionPattern(Regex("\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.CLASS),
             DefinitionPattern(Regex("\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.INTERFACE),
             DefinitionPattern(Regex("\\bobject\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.OBJECT),
@@ -365,24 +420,70 @@ private class RegexDefinitionExtractor : DefinitionExtractor {
             DefinitionPattern(Regex("\\bfun\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.FUNCTION),
             DefinitionPattern(Regex("\\b(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.VARIABLE)
         )
-        val cStyle = listOf(
-            DefinitionPattern(Regex("\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.CLASS),
-            DefinitionPattern(Regex("\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.INTERFACE),
-            DefinitionPattern(Regex("\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.ENUM),
-            DefinitionPattern(Regex("\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.FUNCTION),
-            DefinitionPattern(Regex("\\b(?:const|let|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.VARIABLE)
-        )
-        val python = listOf(
-            DefinitionPattern(Regex("\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.CLASS),
-            DefinitionPattern(Regex("\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"), SymbolKind.FUNCTION)
-        )
+        private val json = Json { ignoreUnknownKeys = true }
 
-        return when {
-            lang.contains("kotlin") -> kotlinLike
-            lang.contains("java") || lang.contains("c#") -> kotlinLike
-            lang.contains("js") || lang.contains("ts") || lang.contains("javascript") || lang.contains("typescript") -> cStyle
-            lang.contains("python") || lang == "py" -> python
-            else -> kotlinLike + cStyle + python
+        private fun loadDefaultConfigs(): List<LanguageDefinitionConfig> {
+            val external = resolveExternalDefinitions()
+            if (external != null) {
+                val text = runCatching { Files.readString(external) }.getOrNull()
+                if (!text.isNullOrBlank()) {
+                    val parsed = runCatching {
+                        json.decodeFromString(LanguageDefinitionBundle.serializer(), text)
+                    }.getOrNull()
+                    if (parsed != null && parsed.languages.isNotEmpty()) return parsed.languages
+                }
+            }
+            val stream = RegexDefinitionExtractor::class.java.getResourceAsStream("/codeintel/definitions.json")
+                ?: return emptyList()
+            val content = stream.use { it.readBytes().toString(Charsets.UTF_8) }
+            return runCatching { json.decodeFromString(LanguageDefinitionBundle.serializer(), content).languages }
+                .getOrElse { emptyList() }
+        }
+
+        private fun resolveExternalDefinitions(): Path? {
+            System.getProperty("kode.codeintel.path")?.let {
+                val p = Paths.get(it)
+                if (Files.exists(p)) return p
+            }
+            System.getenv("KODE_CODEINTEL_PATH")?.let {
+                val p = Paths.get(it)
+                if (Files.exists(p)) return p
+            }
+            val candidates = listOfNotNull(
+                System.getProperty("kode.home")?.let { Paths.get(it).resolve("codeintel/definitions.json") },
+                System.getenv("KODE_HOME")?.let { Paths.get(it).resolve("codeintel/definitions.json") },
+                Paths.get("codeintel/definitions.json")
+            )
+            return candidates.firstOrNull { Files.exists(it) }
         }
     }
 }
+
+@Serializable
+data class LanguageDefinitionBundle(val languages: List<LanguageDefinitionConfig> = emptyList())
+
+@Serializable
+data class LanguageDefinitionConfig(
+    val language: String,
+    val aliases: List<String> = emptyList(),
+    val lineComments: List<String> = emptyList(),
+    val blockCommentStart: String? = null,
+    val blockCommentEnd: String? = null,
+    val blockMode: BlockMode = BlockMode.BRACE,
+    val beginBlockRegex: String? = null,
+    val endBlockRegex: String? = null,
+    val patterns: List<PatternConfig> = emptyList()
+)
+
+@Serializable
+data class PatternConfig(
+    val regex: String,
+    val kind: String,
+    val groupIndex: Int = 1
+)
+
+@Serializable
+enum class BlockMode { BRACE, INDENT, PAREN, REGEX, SQL, NONE }
+
+private fun String.toSymbolKind(): SymbolKind =
+    runCatching { SymbolKind.valueOf(this.uppercase(Locale.ROOT)) }.getOrDefault(SymbolKind.VARIABLE)
