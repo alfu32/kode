@@ -619,7 +619,7 @@ private class SplitPanelsApp(
     }
 
     private fun navigateTo(path: String, position: editor.lib.Position) {
-        val absPath = sessionManager.toAbsolute(path)
+        val absPath = if (java.io.File(path).isAbsolute) path else sessionManager.toAbsolute(path)
         val detected = mimeDetector.detectFile(java.nio.file.Path.of(absPath))
         openInViewer(absPath, detected)
         codeEditor.setSelection(position, position, center = true)

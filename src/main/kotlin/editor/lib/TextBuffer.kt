@@ -987,3 +987,5 @@ private fun BufferSnapshotState.toSnapshot(): BufferSnapshot =
 data class Notification(val kind: NotificationKind, val text: String)
 enum class NotificationKind { COPY, CUT }
 
+
+
