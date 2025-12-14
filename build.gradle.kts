@@ -106,6 +106,10 @@ tasks.register<Copy>("distBundle") {
     val distDir = layout.projectDirectory.dir("dist")
     from(fat.map { it.archiveFile }) { rename { "kode.jar" } }
     externalColorMap.asFile.takeIf { it.exists() }?.let { from(it) }
+    val codeIntelFile = layout.projectDirectory.file("codeintel/definitions.json").asFile
+    if (codeIntelFile.exists()) {
+        from(codeIntelFile) { into("codeintel") }
+    }
     layout.projectDirectory.file("keyword-patterns.txt").asFile.takeIf { it.exists() }?.let { from(it) }
     layout.projectDirectory.file("styles/app.css").asFile.takeIf { it.exists() }?.let { css ->
         from(css) { into("styles") }
@@ -131,6 +135,10 @@ tasks.register<Copy>("releaseBundle") {
     val tag = latestTagOrVersion()
     val relDir = layout.projectDirectory.dir("kode-rel-$tag")
     from(fat.map { it.archiveFile }) { rename { "kode.jar" } }
+    val codeIntelFile = layout.projectDirectory.file("codeintel/definitions.json").asFile
+    if (codeIntelFile.exists()) {
+        from(codeIntelFile) { into("codeintel") }
+    }
     listOf("keyword-patterns.txt", "token-colors.txt", "README.md").forEach { path ->
         val file = layout.projectDirectory.file(path).asFile
         if (file.exists()) from(file)
