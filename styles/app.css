@@ -209,6 +209,14 @@ code-search-active {
     bg: #d8e6ff;
     fg: #13203c;
 }
+codeintel.usage {
+    fg: #5da9ff;
+    text-decoration: underline italic;
+}
+codeintel.declaration {
+    fg: #5da9ff;
+    text-decoration: bold;
+}
 slider-track {
     bg: #3f4e7e;
     fg: #b6b9c5;
@@ -251,5 +259,3 @@ diff-context{
     bg: #1a2237;
     fg: #b6b9c5;
 }
-
-
