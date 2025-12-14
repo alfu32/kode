@@ -23,7 +23,8 @@ class CodeEditorView(
     styleSheet: StyleSheet,
     private val buffer: TextBuffer = TextBuffer(),
     private val syntaxProvider: SyntaxProvider? = null,
-    private val codeIntel: CodeIntelService? = null
+    private val codeIntel: CodeIntelService? = null,
+    private val navigationHandler: ((String, Position) -> Unit)? = null
 ) : BaseComponent(styleSheet) {
 
     private var localStyleSheet: StyleSheet = styleSheet
@@ -42,6 +43,8 @@ class CodeEditorView(
     private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet, this::handleSearchAction)
     private var readOnly: Boolean = false
     private var lastIndexedVersion: Long = -1
+    private var usagePopup: UsagePopup? = null
+    private var renderedPopup: RenderedPopup? = null
 
     fun textContent(): String = buffer.text()
 
@@ -262,6 +265,8 @@ class CodeEditorView(
                 drawText(cx, cy, ch)
             }
         }
+
+        renderUsagePopup(canvas, bodyStartRow, gutterWidth, cols, rows, layout)
     }
 
     override fun dispatch(event: UIEvent): Boolean {
@@ -334,6 +339,9 @@ class CodeEditorView(
                 val y = event.y ?: return false
                 if (y == 0) return false // header
                 if (searchVisible && y in 1 until bodyStartRow) return true
+                if (event.ctrl && handleCtrlClick(event, bodyStartRow, layout, gutterWidth)) {
+                    return true
+                }
                 searchHasFocus = false
                 dragging = true
                 return handleMouse(
@@ -346,9 +354,17 @@ class CodeEditorView(
                 )
             }
             "mouse_up" -> {
-                dragging = false
-                return true
+        dragging = false
+        // hide popup on click release outside
+        val rp = renderedPopup
+        if (rp != null && event.x != null && event.y != null) {
+            if (event.x !in rp.x until (rp.x + rp.width) || event.y !in rp.y until (rp.y + rp.height)) {
+                usagePopup = null
+                renderedPopup = null
             }
+        }
+        return true
+    }
             "mouse_move" -> {
                 if (!dragging) return false
                 return handleMouse(
@@ -395,6 +411,71 @@ class CodeEditorView(
             }
         }
         return true
+    }
+
+    private fun handleCtrlClick(
+        event: UIEvent,
+        bodyStartRow: Int,
+        layout: VisualLayout,
+        gutterWidth: Int
+    ): Boolean {
+        val ex = event.x ?: return false
+        val ey = event.y ?: return false
+        val popupBox = renderedPopup
+        if (popupBox != null && ex in popupBox.x until (popupBox.x + popupBox.width) &&
+            ey in popupBox.y until (popupBox.y + popupBox.height)
+        ) {
+            val idx = ey - popupBox.y - 1
+            val popup = usagePopup
+            if (popup != null && idx in popup.entries.indices) {
+                val entry = popup.entries[idx]
+                navigationHandler?.invoke(entry.file, Position(entry.line, entry.column))
+                usagePopup = null
+                renderedPopup = null
+            }
+            return true
+        }
+
+        val relY = ey - bodyStartRow
+        val visualIndex = (scrollTop + relY).coerceAtLeast(0)
+        val wrapped = layout.wrapped.getOrNull(visualIndex) ?: return false
+        val line = wrapped.lineIndex
+        val lineText = layout.lines.getOrElse(line) { "" }
+        val col = (ex - gutterWidth + wrapped.startColumn).coerceAtMost(lineText.length)
+        val token = identifyCodeIntelToken(line, col, lineText) ?: return false
+
+        usagePopup = null
+        renderedPopup = null
+
+        val name = token.text
+        openDefinition(name)
+
+        val isDeclaration = token.scopes.any { it.contains("codeintel.declaration") }
+        if (isDeclaration) {
+            val usages = codeIntel?.usages(name).orEmpty()
+            if (usages.isNotEmpty()) {
+                val entries = usages.map {
+                    val label = "${it.filePath}:${it.line + 1}:${it.startColumn + 1}"
+                    UsageEntry(it.filePath, it.line, it.startColumn, label)
+                }
+                usagePopup = UsagePopup(Position(line, col), entries)
+            }
+        }
+        return true
+    }
+
+    private fun identifyCodeIntelToken(line: Int, column: Int, lineText: String): editor.grammars.Token? {
+        val service = codeIntel ?: return null
+        if (filePath.isEmpty()) return null
+        val tokens = service.tokensForLines(filePath, line, listOf(lineText), buffer.version())
+        return tokens.firstOrNull { column in it.start until it.end }
+    }
+
+    private fun openDefinition(name: String) {
+        val defs = codeIntel?.definitionCandidates(name).orEmpty()
+        val target = defs.firstOrNull() ?: return
+        val pos = Position(target.line ?: 0, target.startColumn ?: 0)
+        navigationHandler?.invoke(target.filePath, pos)
     }
 
     private fun ensureCursorVisible(
@@ -789,6 +870,42 @@ class CodeEditorView(
         return layout.wrapped.getOrNull(index)
     }
 
+    private fun renderUsagePopup(
+        canvas: CanvasRenderer,
+        bodyStartRow: Int,
+        gutterWidth: Int,
+        cols: Int,
+        rows: Int,
+        layout: VisualLayout
+    ) {
+        val popup = usagePopup ?: run {
+            renderedPopup = null
+            return
+        }
+        val anchorRow = visualRowForPosition(popup.anchor, layout)
+        val screenRow = bodyStartRow + (anchorRow - scrollTop)
+        val x = (gutterWidth + popup.anchor.column).coerceAtLeast(gutterWidth)
+        val maxLabel = popup.entries.take(10).maxOfOrNull { it.label.length } ?: 0
+        val width = (maxLabel + 2).coerceAtMost((cols - x).coerceAtLeast(8))
+        val height = (popup.entries.take(10).size + 1).coerceAtMost((rows - screenRow - 1).coerceAtLeast(1))
+        if (height < 2) {
+            renderedPopup = null
+            return
+        }
+        val finalX = x.coerceIn(0, (cols - width).coerceAtLeast(0))
+        val finalY = screenRow.coerceIn(bodyStartRow, (rows - height).coerceAtLeast(bodyStartRow))
+        val style = localStyleSheet.getStyle("code-search-bar").withDefaults()
+        canvas.withStyle(style) {
+            drawRect(finalX, finalY, width, height)
+            val entries = popup.entries.take(height - 1)
+            entries.forEachIndexed { idx, entry ->
+                val text = entry.label.take(width - 2).padEnd(width - 2, ' ')
+                drawText(finalX + 1, finalY + idx + 1, text)
+            }
+        }
+        renderedPopup = RenderedPopup(finalX, finalY, width, height)
+    }
+
     private data class WrappedLine(val lineIndex: Int, val startColumn: Int, val endColumn: Int)
     private data class VisualLayout(
         val lines: List<String>,
@@ -797,4 +914,8 @@ class CodeEditorView(
         val wrapCounts: IntArray,
         val contentWidth: Int
     )
+
+    private data class UsageEntry(val file: String, val line: Int, val column: Int, val label: String)
+    private data class UsagePopup(val anchor: Position, val entries: List<UsageEntry>)
+    private data class RenderedPopup(val x: Int, val y: Int, val width: Int, val height: Int)
 }

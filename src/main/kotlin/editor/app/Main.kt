@@ -199,7 +199,12 @@ private class SplitPanelsApp(
     private val mimeDetector = DefaultMimeTypeDetector()
     private val regexProvider = KeywordSyntaxProvider
     private val codeIntel = CodeIntelService()
-    private var codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider, codeIntel = codeIntel)
+    private var codeEditor = CodeEditorView(
+        styleSheet,
+        syntaxProvider = regexProvider,
+        codeIntel = codeIntel,
+        navigationHandler = this::navigateTo
+    )
     private val diffViewer = SideBySideDiffView(styleSheet)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
@@ -588,7 +593,12 @@ private class SplitPanelsApp(
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
 
-        codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider, codeIntel = codeIntel)
+        codeEditor = CodeEditorView(
+            styleSheet,
+            syntaxProvider = regexProvider,
+            codeIntel = codeIntel,
+            navigationHandler = this::navigateTo
+        )
         focus = FocusTarget.FILES
         rightFocus = FocusTarget.CODE
         filesTabView.setRoot(projectRoot.toString())
@@ -606,6 +616,13 @@ private class SplitPanelsApp(
         val gitDir = File(root.toFile(), ".git")
         if (!gitDir.isDirectory) return null
         return runCatching { JGitService(root.toFile()) }.getOrNull()
+    }
+
+    private fun navigateTo(path: String, position: editor.lib.Position) {
+        val absPath = sessionManager.toAbsolute(path)
+        val detected = mimeDetector.detectFile(java.nio.file.Path.of(absPath))
+        openInViewer(absPath, detected)
+        codeEditor.setSelection(position, position, center = true)
     }
 
     private fun openRecent(entry: RecentFileEntry) {

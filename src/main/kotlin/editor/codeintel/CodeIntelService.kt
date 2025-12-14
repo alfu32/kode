@@ -19,7 +19,9 @@ data class SymbolDef(
     val kind: SymbolKind,
     val filePath: String,
     val range: IntRange,
-    val container: String? = null
+    val container: String? = null,
+    val line: Int? = null,
+    val startColumn: Int? = null
 )
 
 data class IdentifierToken(
@@ -27,7 +29,8 @@ data class IdentifierToken(
     val start: Int,
     val end: Int,
     val declaration: Boolean,
-    val name: String
+    val name: String,
+    val filePath: String? = null
 )
 
 data class LocalSymbol(
@@ -37,7 +40,8 @@ data class LocalSymbol(
     val endOffset: Int,
     val line: Int,
     val startColumn: Int,
-    val endColumn: Int
+    val endColumn: Int,
+    val filePath: String
 )
 
 data class ExtractedSymbols(
@@ -52,7 +56,7 @@ private data class DocumentIndex(
 )
 
 interface DefinitionExtractor {
-    fun extract(text: String, language: String?): ExtractedSymbols
+    fun extract(path: String, text: String, language: String?): ExtractedSymbols
 }
 
 class CodeIntelService(
@@ -68,6 +72,7 @@ class CodeIntelService(
     private val documents = mutableMapOf<String, DocumentIndex>()
     private val defsByPath = mutableMapOf<String, List<SymbolDef>>()
     private val workspaceIndex = mutableMapOf<String, MutableList<SymbolDef>>()
+    private val usagesIndex = mutableMapOf<String, MutableList<IdentifierToken>>()
     private val lock = Any()
 
     fun indexDocument(path: String, language: String?, text: String, version: Long) {
@@ -105,6 +110,16 @@ class CodeIntelService(
         if (name.isBlank()) return emptyList()
         val lower = name.lowercase(Locale.ROOT)
         return synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
+    }
+
+    fun usages(name: String): List<UsageLocation> {
+        if (name.isBlank()) return emptyList()
+        val lower = name.lowercase(Locale.ROOT)
+        val tokens = synchronized(lock) { usagesIndex[lower]?.toList().orEmpty() }
+        return tokens.mapNotNull { tok ->
+            val path = tok.filePath ?: return@mapNotNull null
+            UsageLocation(path, tok.line, tok.start, tok.end)
+        }
     }
 
     fun tokensForLines(path: String, startLine: Int, lines: List<String>, currentVersion: Long): List<Token> {
@@ -158,13 +173,15 @@ class CodeIntelService(
     private fun performIndex(path: String, language: String?, text: String, version: Long) {
         val latestVersion = synchronized(lock) { latestVersionByPath[path] }
         if (latestVersion != version) return
-        val extracted = extractor.extract(text, language)
+        val extracted = extractor.extract(path, text, language)
         val defs = extracted.symbols.map {
             SymbolDef(
                 name = it.name,
                 kind = it.kind,
                 filePath = path,
-                range = it.startOffset until it.endOffset
+                range = it.startOffset until it.endOffset,
+                line = it.line,
+                startColumn = it.startColumn
             )
         }
         val docIndex = DocumentIndex(
@@ -176,6 +193,7 @@ class CodeIntelService(
             pendingJobs.remove(path)
             documents[path] = docIndex
             rebuildWorkspaceIndex(path, defs)
+            rebuildUsagesIndex(path, extracted.identifiersByLine)
         }
     }
 
@@ -193,6 +211,18 @@ class CodeIntelService(
             val key = def.name.lowercase(Locale.ROOT)
             val bucket = workspaceIndex.getOrPut(key) { mutableListOf() }
             bucket.add(def)
+        }
+    }
+
+    private fun rebuildUsagesIndex(path: String, identifiersByLine: Map<Int, List<IdentifierToken>>) {
+        // remove old entries for this path
+        usagesIndex.forEach { (_, list) ->
+            list.removeIf { it.filePath == path }
+        }
+        identifiersByLine.values.flatten().filter { !it.declaration }.forEach { tok ->
+            val key = tok.name.lowercase(Locale.ROOT)
+            val bucket = usagesIndex.getOrPut(key) { mutableListOf() }
+            bucket.add(tok)
         }
     }
 
@@ -216,7 +246,7 @@ private class RegexDefinitionExtractor(
         .toMap()
     private val blockTrackers: MutableMap<String, BlockTracker> = mutableMapOf()
 
-    override fun extract(text: String, language: String?): ExtractedSymbols {
+    override fun extract(path: String, text: String, language: String?): ExtractedSymbols {
         val langKey = language?.lowercase(Locale.ROOT)
         val cfg = configFor(langKey)
         val lines = text.split("\n")
@@ -251,7 +281,8 @@ private class RegexDefinitionExtractor(
                         endOffset = endOffset,
                         line = idx,
                         startColumn = startCol,
-                        endColumn = endCol
+                        endColumn = endCol,
+                        filePath = path
                     )
                     symbols += symbol
                     declRanges.getOrPut(idx) { mutableListOf() }.add(startCol until endCol)
@@ -261,7 +292,8 @@ private class RegexDefinitionExtractor(
                             start = startCol,
                             end = endCol,
                             declaration = true,
-                            name = name
+                            name = name,
+                            filePath = path
                         )
                     )
                 }
@@ -271,12 +303,12 @@ private class RegexDefinitionExtractor(
         val names = symbols.map { it.name }.toSet()
         if (names.isNotEmpty()) {
             val pattern = Regex("\\b(${names.joinToString("|") { Regex.escape(it) }})\\b")
-        tracker.reset()
-        sanitized.forEachIndexed { idx, sanitizedLine ->
-            if (sanitizedLine.text.isBlank()) return@forEachIndexed
-            tracker.update(sanitizedLine.text)
-            pattern.findAll(sanitizedLine.text).forEach { match ->
-                val name = match.groupValues[1]
+            tracker.reset()
+            sanitized.forEachIndexed { idx, sanitizedLine ->
+                if (sanitizedLine.text.isBlank()) return@forEachIndexed
+                tracker.update(sanitizedLine.text)
+                pattern.findAll(sanitizedLine.text).forEach { match ->
+                    val name = match.groupValues[1]
                     val start = match.range.first
                     val end = match.range.last + 1
                     if (isInsideDeclaration(idx, start, end, declRanges)) return@forEach
@@ -286,7 +318,8 @@ private class RegexDefinitionExtractor(
                             start = start,
                             end = end,
                             declaration = false,
-                            name = name
+                            name = name,
+                            filePath = path
                         )
                     )
                 }
@@ -484,6 +517,13 @@ data class PatternConfig(
 
 @Serializable
 enum class BlockMode { BRACE, INDENT, PAREN, REGEX, SQL, NONE }
+
+data class UsageLocation(
+    val filePath: String,
+    val line: Int,
+    val startColumn: Int,
+    val endColumn: Int
+)
 
 private fun String.toSymbolKind(): SymbolKind =
     runCatching { SymbolKind.valueOf(this.uppercase(Locale.ROOT)) }.getOrDefault(SymbolKind.VARIABLE)
