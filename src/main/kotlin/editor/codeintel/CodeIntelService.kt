@@ -112,6 +112,22 @@ class CodeIntelService(
         return synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
     }
 
+    fun suggestions(prefix: String, limit: Int = 50): List<SymbolDef> {
+        val trimmed = prefix.trim()
+        synchronized(lock) {
+            if (trimmed.isEmpty()) {
+                return workspaceIndex.values.flatten().take(limit)
+            }
+            val lower = trimmed.lowercase(Locale.ROOT)
+            return workspaceIndex.entries
+                .asSequence()
+                .filter { (name, _) -> name.startsWith(lower) }
+                .flatMap { it.value.asSequence() }
+                .take(limit)
+                .toList()
+        }
+    }
+
     fun usages(name: String): List<UsageLocation> {
         if (name.isBlank()) return emptyList()
         val lower = name.lowercase(Locale.ROOT)

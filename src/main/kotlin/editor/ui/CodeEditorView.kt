@@ -45,6 +45,8 @@ class CodeEditorView(
     private var lastIndexedVersion: Long = -1
     private var usagePopup: UsagePopup? = null
     private var renderedPopup: RenderedPopup? = null
+    private var suggestionPopup: SuggestionPopup? = null
+    private var renderedSuggestion: RenderedPopup? = null
 
     fun textContent(): String = buffer.text()
 
@@ -267,6 +269,7 @@ class CodeEditorView(
         }
 
         renderUsagePopup(canvas, bodyStartRow, gutterWidth, cols, rows, layout)
+        renderSuggestionPopup(canvas, bodyStartRow, gutterWidth, cols, rows, layout)
     }
 
     override fun dispatch(event: UIEvent): Boolean {
@@ -333,12 +336,15 @@ class CodeEditorView(
                 val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
                 val prev = scrollTop
                 scrollTop = (scrollTop - delta).coerceIn(0, maxOffset)
+                suggestionPopup = null
+                renderedSuggestion = null
                 return scrollTop != prev
             }
             "mouse_down" -> {
                 val y = event.y ?: return false
                 if (y == 0) return false // header
                 if (searchVisible && y in 1 until bodyStartRow) return true
+                if (handleSuggestionClick(event)) return true
                 if (event.ctrl && handleCtrlClick(event, bodyStartRow, layout, gutterWidth)) {
                     return true
                 }
@@ -361,6 +367,13 @@ class CodeEditorView(
             if (event.x !in rp.x until (rp.x + rp.width) || event.y !in rp.y until (rp.y + rp.height)) {
                 usagePopup = null
                 renderedPopup = null
+            }
+        }
+        val rs = renderedSuggestion
+        if (rs != null && event.x != null && event.y != null) {
+            if (event.x !in rs.x until (rs.x + rs.width) || event.y !in rs.y until (rs.y + rs.height)) {
+                suggestionPopup = null
+                renderedSuggestion = null
             }
         }
         return true
@@ -397,6 +410,10 @@ class CodeEditorView(
                     ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
                     return true
                 }
+                if (event.ctrl && (key == " " || key == "space")) {
+                    openSuggestions()
+                    return true
+                }
                 val beforeCursor = buffer.cursorPosition()
                 val beforeSelection = if (buffer.hasSelection()) buffer.selectionText() else null
                 val beforeText = buffer.text()
@@ -406,7 +423,11 @@ class CodeEditorView(
                 val moved = beforeCursor != afterCursor || beforeSelection != afterSelection
                 val textChanged = beforeText != buffer.text()
                 ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
-                if (textChanged) triggerCodeIntel()
+                if (textChanged) {
+                    triggerCodeIntel()
+                    suggestionPopup = null
+                    renderedSuggestion = null
+                }
                 return changed || moved || textChanged
             }
         }
@@ -446,6 +467,8 @@ class CodeEditorView(
 
         usagePopup = null
         renderedPopup = null
+        suggestionPopup = null
+        renderedSuggestion = null
 
         val name = token.text
         openDefinition(name)
@@ -476,6 +499,77 @@ class CodeEditorView(
         val target = defs.firstOrNull() ?: return
         val pos = Position(target.line ?: 0, target.startColumn ?: 0)
         navigationHandler?.invoke(target.filePath, pos)
+    }
+
+    private fun handleSuggestionClick(event: UIEvent): Boolean {
+        val rs = renderedSuggestion ?: return false
+        val popup = suggestionPopup ?: return false
+        val ex = event.x ?: return false
+        val ey = event.y ?: return false
+        if (ex !in rs.x until (rs.x + rs.width) || ey !in rs.y until (rs.y + rs.height)) return false
+        val idx = ey - rs.y - 1
+        if (idx !in popup.entries.indices) return true
+        val entry = popup.entries[idx]
+        applySuggestion(entry.name, popup.prefix)
+        suggestionPopup = null
+        renderedSuggestion = null
+        return true
+    }
+
+    private fun applySuggestion(suggestion: String, prefix: String) {
+        val cursor = buffer.cursorPosition()
+        val startCol = (cursor.column - prefix.length).coerceAtLeast(0)
+        val startPos = Position(cursor.line, startCol)
+        buffer.startSelection(startPos)
+        buffer.selectTo(cursor)
+        buffer.deleteBackspace()
+        buffer.insertText(suggestion)
+        val newCursor = Position(cursor.line, startCol + suggestion.length)
+        buffer.moveCursorTo(newCursor, expand = false)
+    }
+
+    private fun openSuggestions() {
+        val prefix = currentPrefix()
+        val entries = suggestionEntries(prefix)
+        if (entries.isEmpty()) {
+            suggestionPopup = null
+            renderedSuggestion = null
+            return
+        }
+        suggestionPopup = SuggestionPopup(buffer.cursorPosition(), prefix, entries)
+    }
+
+    private fun currentPrefix(): String {
+        val cursor = buffer.cursorPosition()
+        val lines = buffer.text().split("\n")
+        val lineText = lines.getOrElse(cursor.line) { "" }
+        if (lineText.isEmpty() || cursor.column == 0) return ""
+        val start = lineText.take(cursor.column).takeLastWhile { it.isLetterOrDigit() || it == '_' }
+        return start
+    }
+
+    private fun suggestionEntries(prefix: String): List<SuggestionEntry> {
+        val names = mutableSetOf<String>()
+        val results = mutableListOf<SuggestionEntry>()
+
+        fun add(name: String, detail: String? = null) {
+            if (name.isBlank()) return
+            if (names.add(name)) results.add(SuggestionEntry(name, detail))
+        }
+
+        val defs = codeIntel?.suggestions(prefix).orEmpty()
+        defs.forEach { def ->
+            add(def.name, def.filePath.substringAfterLast('/'))
+        }
+
+        val locals = buffer.text()
+        val regex = Regex("\\b([A-Za-z_][A-Za-z0-9_]*)\\b")
+        regex.findAll(locals).forEach { mr ->
+            val name = mr.groupValues[1]
+            if (prefix.isEmpty() || name.startsWith(prefix)) add(name, "local")
+        }
+
+        return results.take(50)
     }
 
     private fun ensureCursorVisible(
@@ -906,6 +1000,46 @@ class CodeEditorView(
         renderedPopup = RenderedPopup(finalX, finalY, width, height)
     }
 
+    private fun renderSuggestionPopup(
+        canvas: CanvasRenderer,
+        bodyStartRow: Int,
+        gutterWidth: Int,
+        cols: Int,
+        rows: Int,
+        layout: VisualLayout
+    ) {
+        val popup = suggestionPopup ?: run {
+            renderedSuggestion = null
+            return
+        }
+        val anchorRow = visualRowForPosition(popup.anchor, layout)
+        val screenRow = bodyStartRow + (anchorRow - scrollTop)
+        val x = (gutterWidth + popup.anchor.column).coerceAtLeast(gutterWidth)
+        val maxLabel = popup.entries.take(10).maxOfOrNull { it.name.length + (it.detail?.length ?: 0) + 3 } ?: 0
+        val width = (maxLabel + 2).coerceAtMost((cols - x).coerceAtLeast(12))
+        val height = (popup.entries.take(10).size + 1).coerceAtMost((rows - screenRow - 1).coerceAtLeast(1))
+        if (height < 2) {
+            renderedSuggestion = null
+            return
+        }
+        val finalX = x.coerceIn(0, (cols - width).coerceAtLeast(0))
+        val finalY = screenRow.coerceIn(bodyStartRow, (rows - height).coerceAtLeast(bodyStartRow))
+        val style = localStyleSheet.getStyle("code-search-bar").withDefaults()
+        canvas.withStyle(style) {
+            drawRect(finalX, finalY, width, height)
+            val entries = popup.entries.take(height - 1)
+            entries.forEachIndexed { idx, entry ->
+                val label = buildString {
+                    append(entry.name)
+                    entry.detail?.let { append("  ").append(it) }
+                }
+                val text = label.take(width - 2).padEnd(width - 2, ' ')
+                drawText(finalX + 1, finalY + idx + 1, text)
+            }
+        }
+        renderedSuggestion = RenderedPopup(finalX, finalY, width, height)
+    }
+
     private data class WrappedLine(val lineIndex: Int, val startColumn: Int, val endColumn: Int)
     private data class VisualLayout(
         val lines: List<String>,
@@ -918,4 +1052,6 @@ class CodeEditorView(
     private data class UsageEntry(val file: String, val line: Int, val column: Int, val label: String)
     private data class UsagePopup(val anchor: Position, val entries: List<UsageEntry>)
     private data class RenderedPopup(val x: Int, val y: Int, val width: Int, val height: Int)
+    private data class SuggestionEntry(val name: String, val detail: String?)
+    private data class SuggestionPopup(val anchor: Position, val prefix: String, val entries: List<SuggestionEntry>)
 }
