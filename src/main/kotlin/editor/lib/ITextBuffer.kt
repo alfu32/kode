@@ -21,6 +21,7 @@ interface ITextBuffer {
     fun bom(): String
     fun encoding(): String
     fun isDirty(): Boolean
+    fun version(): Long
 
     fun loadText(text: String)
     fun undo(): Boolean

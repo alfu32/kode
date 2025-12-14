@@ -1,5 +1,6 @@
 package editor.ui
 
+import editor.codeintel.CodeIntelService
 import editor.lib.FoundToken
 import editor.lib.Position
 import editor.lib.SelectionRange
@@ -21,7 +22,8 @@ import editor.ui.SearchReplaceBar.SearchCommand
 class CodeEditorView(
     styleSheet: StyleSheet,
     private val buffer: TextBuffer = TextBuffer(),
-    private val syntaxProvider: SyntaxProvider? = null
+    private val syntaxProvider: SyntaxProvider? = null,
+    private val codeIntel: CodeIntelService? = null
 ) : BaseComponent(styleSheet) {
 
     private var localStyleSheet: StyleSheet = styleSheet
@@ -39,12 +41,24 @@ class CodeEditorView(
     private var searchHasFocus = false
     private var searchBar: SearchReplaceBar = SearchReplaceBar(styleSheet, this::handleSearchAction)
     private var readOnly: Boolean = false
+    private var lastIndexedVersion: Long = -1
 
     fun textContent(): String = buffer.text()
 
     fun loadTextContent(text: String) {
         buffer.loadText(text)
         scrollTop = 0
+        lastIndexedVersion = -1
+        triggerCodeIntel(force = true)
+    }
+
+    private fun triggerCodeIntel(force: Boolean = false) {
+        val service = codeIntel ?: return
+        if (filePath.isEmpty()) return
+        val version = buffer.version()
+        if (!force && version == lastIndexedVersion) return
+        lastIndexedVersion = version
+        service.indexDocument(filePath, grammarLanguage ?: language, buffer.text(), version)
     }
 
     fun captureState(lastModifiedMillis: Long? = null): EditorSessionState? {
@@ -69,6 +83,8 @@ class CodeEditorView(
         grammarLanguage = state.grammarLanguage ?: state.language
         buffer.restoreState(state.buffer)
         scrollTop = state.scrollTop.coerceAtLeast(0)
+        lastIndexedVersion = -1
+        triggerCodeIntel(force = true)
     }
 
     fun loadVirtualContent(label: String, content: String, language: String? = null) {
@@ -79,6 +95,8 @@ class CodeEditorView(
         grammarAvailable = language != null && syntaxProvider?.languages()?.contains(language) == true
         buffer.loadText(content)
         scrollTop = 0
+        lastIndexedVersion = -1
+        triggerCodeIntel(force = true)
     }
 
     fun setReadOnly(value: Boolean) {
@@ -105,6 +123,8 @@ class CodeEditorView(
         this.grammarAvailable = grammarAvailable
         this.grammarLanguage = grammarLanguage ?: detection?.language
         scrollTop = 0
+        lastIndexedVersion = -1
+        triggerCodeIntel(force = true)
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -176,6 +196,13 @@ class CodeEditorView(
         } else {
             emptyMap()
         }
+        val codeIntelTokensByLine = if (codeIntel != null && filePath.isNotEmpty()) {
+            val sliceEnd = (lastVisibleLine + 1).coerceAtMost(lines.size)
+            val lineSlice = lines.subList(firstVisibleLine, sliceEnd)
+            codeIntel.tokensForLines(filePath, firstVisibleLine, lineSlice, buffer.version()).groupBy { it.line }
+        } else {
+            emptyMap()
+        }
 
         canvas.withStyle(bodyStyle) {
             drawRect(0, bodyStartRow, cols, bodyRows)
@@ -197,6 +224,8 @@ class CodeEditorView(
                 val chunkText = lineText.substring(wrapped.startColumn, wrapped.endColumn)
                 val tokens = tokensByLine[lineNumber] ?: emptyList()
                 val chunkTokens = sliceTokens(tokens, wrapped.startColumn, wrapped.endColumn)
+                val intelTokens = codeIntelTokensByLine[lineNumber] ?: emptyList()
+                val chunkIntelTokens = sliceTokens(intelTokens, wrapped.startColumn, wrapped.endColumn)
                 val selectionCols = selectionRangeForLine(selection, lineNumber, lineText)
                 val chunkSelection = selectionCols?.let { trimSelectionToChunk(it, wrapped.startColumn, wrapped.endColumn) }
                 val highlights = searchTokensByLine[lineNumber]?.mapNotNull {
@@ -210,6 +239,7 @@ class CodeEditorView(
                     maxCols = contentCols,
                     tokens = chunkTokens,
                     baseStyle = bodyStyle,
+                    overlayTokens = chunkIntelTokens,
                     selection = chunkSelection,
                     selectionStyle = selectionStyle,
                     highlights = highlights,
@@ -360,6 +390,7 @@ class CodeEditorView(
                 val moved = beforeCursor != afterCursor || beforeSelection != afterSelection
                 val textChanged = beforeText != buffer.text()
                 ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
+                if (textChanged) triggerCodeIntel()
                 return changed || moved || textChanged
             }
         }
@@ -430,13 +461,13 @@ class CodeEditorView(
         scope.replace(' ', '_').replace(":", "-").replace(",", "-")
 
     private fun styleForToken(token: editor.grammars.Token, base: StyleSet): StyleSet {
+        val scoped = token.scopes.lastOrNull()?.let { cachedStyle(it).withDefaults(base.fg, base.bg) } ?: base
         token.fg?.let { color ->
-            val copy = base.copy()
+            val copy = scoped.copy()
             copy.fg = color
             return copy
         }
-        val scope = token.scopes.lastOrNull() ?: return base
-        return cachedStyle(scope).withDefaults(base.fg, base.bg)
+        return scoped
     }
 
     private val styleCache = mutableMapOf<String, StyleSet>()
@@ -507,6 +538,7 @@ class CodeEditorView(
             buffer.text().split("\n"),
             (lastCols - gutterWidth).coerceAtLeast(0)
         ).also { lastLayout = it }
+        triggerCodeIntel()
         ensureCursorVisible(currentRows, searchHeight, layout, gutterWidth)
     }
 
@@ -522,6 +554,7 @@ class CodeEditorView(
         startX: Int,
         maxCols: Int,
         tokens: List<editor.grammars.Token>,
+        overlayTokens: List<editor.grammars.Token> = emptyList(),
         baseStyle: StyleSet,
         selection: IntRange?,
         selectionStyle: StyleSet,
@@ -531,7 +564,8 @@ class CodeEditorView(
     ) {
         if (maxCols <= 0) return
         val baseSegments = buildSegments(text, tokens, baseStyle)
-        val withHighlights = applyHighlights(baseSegments, highlights, highlightStyle, activeHighlightStyle)
+        val withCodeIntel = applyTokenOverlays(baseSegments, overlayTokens, baseStyle)
+        val withHighlights = applyHighlights(withCodeIntel, highlights, highlightStyle, activeHighlightStyle)
         val withSelection = applySelection(withHighlights, selection, selectionStyle)
         withSelection.forEach { seg ->
             if (seg.start >= maxCols) return
@@ -631,6 +665,20 @@ class CodeEditorView(
         highlights.sortedBy { it.startColumn }.forEach { token ->
             val style = if (token.active) activeHighlightStyle else highlightStyle
             current = overlayRange(current, token.startColumn, token.endColumn, style)
+        }
+        return current
+    }
+
+    private fun applyTokenOverlays(
+        segments: List<StyledSegment>,
+        overlays: List<editor.grammars.Token>,
+        baseStyle: StyleSet
+    ): List<StyledSegment> {
+        if (overlays.isEmpty()) return segments
+        var current = segments
+        overlays.sortedBy { it.start }.forEach { tok ->
+            val style = styleForToken(tok, baseStyle)
+            current = overlayRange(current, tok.start, tok.end, style)
         }
         return current
     }

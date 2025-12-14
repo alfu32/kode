@@ -22,6 +22,7 @@
 - Status line: bottom row shows FPS, used memory (MB), and CPU% while leaving the rest of the canvas for the app surface.
 - File tree uses [+]/[-]/[=] icons, expands/collapses, and opens files in the right viewer; focus follows click for correct input routing.
 - Code editor: guttered view, full mouse/keyboard navigation (select, word-jump, page up/down), cursor/selection rendering, and focus-aware input. Undo/Redo via `Ctrl+Z` and `Ctrl+Shift+Z`/`Ctrl+Y` (redo stack clears on new edits).
+- Code intelligence: background regex scanning indexes declarations/usages per file and across the workspace; declarations render blue + bold, usages render blue + italic underline, with debounced version-gated updates to avoid stalls while typing.
 - Project state: Kode writes `.kode.json` in the project root (debounced ~3s) to persist recent files and open editor state (cursor/selection/scroll, unsaved buffer text, undo/redo history, grammar/lang, mtime guard). On startup, it restores the project session, including recently opened files and their editor positions; stale entries (older than on-disk mtime) are discarded and reloaded fresh.
 - Working folder: defaults to the shell directory you launch from; pass `kode <path>` (e.g., `kode .` or `kode x/y/z`) to open a different root and read/write `.kode.json` there, or click `[change]` in the Files tab header to pick a new workspace folder.
 - Find/Replace: `Ctrl+F` opens the IntelliJ-style bar above the code viewport (shrinks content); `Enter` finds next, `Ctrl+Enter` finds all, `Ctrl+R` replaces current, `Ctrl+Shift+R` replaces all, `Tab` switches between find/replace fields, and the `[x]` button closes the bar. The find box accepts regex patterns (invalid patterns turn the box red); replacements honor capture groups via `$1`, `$2`, etc. All matches stay highlighted (with an active-match accent) while the search state lives in the text buffer. `Ctrl+S` saves the current buffer, and the header shows `*` when there are unsaved changes. Selection text pre-fills the find box (escaped for regex) when invoking `Ctrl+F`.
@@ -69,4 +70,7 @@ usage of the file management features : renaming file
 ![img_2.png](assets/img_2.png)
 ![img_1.png](assets/img_1.png)
 ![img.png](assets/img.png)
+
+
+
 

@@ -106,6 +106,7 @@ class TextBuffer : ITextBuffer {
     private var capturingUndo: Boolean = false
     private val maxHistory: Int = 200
     private val persistHistoryLimit: Int = 30
+    private var docVersion: Long = 0
 
 
     /*  
@@ -128,6 +129,7 @@ class TextBuffer : ITextBuffer {
     override fun bom(): String = bufferBom
 
     override fun encoding(): String = bufferEncoding
+    override fun version(): Long = docVersion
     override fun isDirty(): Boolean = dirty
 
     override fun clone(): ITextBuffer {
@@ -152,6 +154,7 @@ class TextBuffer : ITextBuffer {
         if (n.endsWith("\n")) lines.add("")
         cursor = Position(0, 0)
         anchor = null
+        bumpVersion()
         dirty = false
         clearHistory()
         refreshSearchAfterChange()
@@ -163,6 +166,7 @@ class TextBuffer : ITextBuffer {
         if (n.endsWith("\n")) lines.add("")
         cursor = clampPosition(Position(cursor.line.coerceAtMost(lines.lastIndex), cursor.column))
         anchor = null
+        bumpVersion()
     }
 
     override fun saveToFile(path: String): Boolean {
@@ -803,6 +807,7 @@ class TextBuffer : ITextBuffer {
         cursor = Position(snapshot.cursor.line, snapshot.cursor.column)
         anchor = snapshot.anchor?.let { Position(it.line, it.column) }
         dirty = snapshot.dirty
+        bumpVersion()
         normalizePositions()
         refreshSearchAfterChange()
     }
@@ -838,12 +843,18 @@ class TextBuffer : ITextBuffer {
         undoStack.addAll(state.undo.map { it.toSnapshot() })
         redoStack.addAll(state.redo.map { it.toSnapshot() })
         dirty = state.dirty
+        bumpVersion()
         normalizePositions()
         refreshSearchAfterChange()
     }
 
     private fun markDirty() {
+        bumpVersion()
         dirty = true
+    }
+
+    private fun bumpVersion() {
+        docVersion++
     }
 
     private fun compileRegex(): Regex? {

@@ -42,6 +42,20 @@ interface CanvasRenderer {
     fun shutdown()
 
     fun withStyle(style: StyleSet, block: CanvasRenderer.() -> Unit) {
+        val decorations = style.textDecoration
+            ?.lowercase()
+            ?.split(Regex("\\s+"))
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        val wantBold = "bold" in decorations || "heavy" in decorations
+        val wantItalic = "italic" in decorations
+        val wantUnderline = "underline" in decorations
+
+        // Reset first to avoid decoration bleed across nested calls, then apply in a fixed order.
+        resetAttributes()
+        bold(wantBold)
+        italic(wantItalic)
+        underline(wantUnderline)
         style.bg?.let { setBackgroundColor(it.r, it.g, it.b) }
         style.fg?.let { setColor(it.r, it.g, it.b) }
         block()

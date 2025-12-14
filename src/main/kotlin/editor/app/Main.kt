@@ -36,6 +36,7 @@ import java.lang.management.ManagementFactory
 import com.sun.management.OperatingSystemMXBean
 import java.util.Locale
 import kotlin.system.exitProcess
+import editor.codeintel.CodeIntelService
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     val perf = PerformanceTracker()
@@ -197,7 +198,8 @@ private class SplitPanelsApp(
     private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
     private val regexProvider = KeywordSyntaxProvider
-    private var codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
+    private val codeIntel = CodeIntelService()
+    private var codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider, codeIntel = codeIntel)
     private val diffViewer = SideBySideDiffView(styleSheet)
     private val hexViewer = BinaryHexView(styleSheet)
     private val imageViewer = ImageViewerView(styleSheet)
@@ -573,6 +575,7 @@ private class SplitPanelsApp(
         savedEditors.clear()
         currentOpenPath = ""
         projectSearchVisible = false
+        codeIntel.clear()
 
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -585,7 +588,7 @@ private class SplitPanelsApp(
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
 
-        codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider)
+        codeEditor = CodeEditorView(styleSheet, syntaxProvider = regexProvider, codeIntel = codeIntel)
         focus = FocusTarget.FILES
         rightFocus = FocusTarget.CODE
         filesTabView.setRoot(projectRoot.toString())
