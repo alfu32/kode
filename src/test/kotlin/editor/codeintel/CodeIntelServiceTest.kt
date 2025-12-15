@@ -158,4 +158,33 @@ class CodeIntelServiceTest {
             Files.deleteIfExists(tempDir)
         }
     }
+
+    @Test
+    fun usagesIncludeOtherFiles() {
+        val service = CodeIntelService(debounceMs = 0L)
+        try {
+            val defPath = "a/Foo.kt"
+            val defText = """
+                package a
+                class Foo
+                fun maker(): Foo = Foo()
+            """.trimIndent()
+            val usePath = "b/Use.kt"
+            val useText = """
+                package b
+                fun make(): a.Foo {
+                    return Foo()
+                }
+            """.trimIndent()
+            service.indexDocument(defPath, "kotlin", defText, version = 1)
+            service.indexDocument(usePath, "kotlin", useText, version = 1)
+            service.waitForIdle()
+
+            val usages = service.usages("Foo")
+            assertTrue(usages.any { it.filePath == usePath })
+            assertTrue(usages.any { it.filePath == defPath })
+        } finally {
+            service.shutdown()
+        }
+    }
 }

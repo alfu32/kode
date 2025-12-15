@@ -189,6 +189,7 @@ class CodeIntelService(
     private fun performIndex(path: String, language: String?, text: String, version: Long) {
         val latestVersion = synchronized(lock) { latestVersionByPath[path] }
         if (latestVersion != version) return
+        val knownNames = synchronized(lock) { workspaceIndex.keys.toSet() }
         val extracted = extractor.extract(path, text, language)
         val defs = extracted.symbols.map {
             SymbolDef(
@@ -200,16 +201,20 @@ class CodeIntelService(
                 startColumn = it.startColumn
             )
         }
+        val allowedNames = (knownNames + defs.map { it.name.lowercase(Locale.ROOT) }).toSet()
+        val filteredIdents = extracted.identifiersByLine.mapValues { (_, list) ->
+            list.filter { it.name.lowercase(Locale.ROOT) in allowedNames }
+        }
         val docIndex = DocumentIndex(
             version = version,
             definitions = defs.sortedBy { it.range.first },
-            identifiersByLine = extracted.identifiersByLine
+            identifiersByLine = filteredIdents
         )
         synchronized(lock) {
             pendingJobs.remove(path)
             documents[path] = docIndex
             rebuildWorkspaceIndex(path, defs)
-            rebuildUsagesIndex(path, extracted.identifiersByLine)
+            rebuildUsagesIndex(path, docIndex.identifiersByLine)
         }
     }
 
@@ -316,29 +321,26 @@ private class RegexDefinitionExtractor(
             }
         }
 
-        val names = symbols.map { it.name }.toSet()
-        if (names.isNotEmpty()) {
-            val pattern = Regex("\\b(${names.joinToString("|") { Regex.escape(it) }})\\b")
-            tracker.reset()
-            sanitized.forEachIndexed { idx, sanitizedLine ->
-                if (sanitizedLine.text.isBlank()) return@forEachIndexed
-                tracker.update(sanitizedLine.text)
-                pattern.findAll(sanitizedLine.text).forEach { match ->
-                    val name = match.groupValues[1]
-                    val start = match.range.first
-                    val end = match.range.last + 1
-                    if (isInsideDeclaration(idx, start, end, declRanges)) return@forEach
-                    identifiers.getOrPut(idx) { mutableListOf() }.add(
-                        IdentifierToken(
-                            line = idx,
-                            start = start,
-                            end = end,
-                            declaration = false,
-                            name = name,
-                            filePath = path
-                        )
+        val identPattern = Regex("\\b([A-Za-z_][A-Za-z0-9_]*)\\b")
+        tracker.reset()
+        sanitized.forEachIndexed { idx, sanitizedLine ->
+            if (sanitizedLine.text.isBlank()) return@forEachIndexed
+            tracker.update(sanitizedLine.text)
+            identPattern.findAll(sanitizedLine.text).forEach { match ->
+                val name = match.groupValues[1]
+                val start = match.range.first
+                val end = match.range.last + 1
+                if (isInsideDeclaration(idx, start, end, declRanges)) return@forEach
+                identifiers.getOrPut(idx) { mutableListOf() }.add(
+                    IdentifierToken(
+                        line = idx,
+                        start = start,
+                        end = end,
+                        declaration = false,
+                        name = name,
+                        filePath = path
                     )
-                }
+                )
             }
         }
 
