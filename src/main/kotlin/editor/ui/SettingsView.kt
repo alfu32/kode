@@ -22,8 +22,9 @@ class SettingsView(
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        val style = styleSheet.getStyle("lsp-list")
-        val active = styleSheet.getStyle("lsp-card-selected")
+        val contentStyle = styleSheet.getStyle("content")
+        val style = attachBackground(mergeStyles(styleSheet.getStyle("lsp-list"), contentStyle), contentStyle)
+        val active = attachBackground(mergeStyles(styleSheet.getStyle("lsp-card-selected"), style), style)
         val headerLines = headerLines()
         canvas.withStyle(style) {
             drawRect(0, 0, cols, rows)
@@ -145,9 +146,25 @@ class SettingsView(
         val name = status.entry.name
         val installStatus = installationStatus(status)
 
-        val langStyle = mergeStyles(styleSheet.getStyle("lsp-lang"), bgStyle)
-        val nameStyle = mergeStyles(styleSheet.getStyle("lsp-name"), bgStyle)
-        val statusStyle = mergeStyles(statusStyleFor(status), bgStyle)
+        val cardBg = bgStyle.bg
+        val langStyle = bgStyle.copy().apply {
+            val s = styleSheet.getStyle("lsp-lang")
+            fg = s.fg ?: fg
+            textDecoration = mergeDecorations(textDecoration, s.textDecoration)
+            if (bg == null) bg = cardBg
+        }
+        val nameStyle = bgStyle.copy().apply {
+            val s = styleSheet.getStyle("lsp-name")
+            fg = s.fg ?: fg
+            textDecoration = mergeDecorations(textDecoration, s.textDecoration)
+            if (bg == null) bg = cardBg
+        }
+        val statusStyle = bgStyle.copy().apply {
+            val s = statusStyleFor(status)
+            fg = s.fg ?: fg
+            textDecoration = mergeDecorations(textDecoration, s.textDecoration)
+            if (bg == null) bg = cardBg
+        }
 
         canvas.withStyle(bgStyle) {
             drawRect(0, row, cols, cardHeight)
@@ -157,6 +174,7 @@ class SettingsView(
         val left1 = "$indicator $languages"
         val right1 = installType
         if (line1Y < canvas.rows()) {
+            canvas.withStyle(bgStyle) { drawText(0, line1Y, " ".repeat(cols)) }
             canvas.withStyle(langStyle) {
                 drawText(0, line1Y, left1.take(cols).padEnd(cols, ' '))
             }
@@ -168,6 +186,7 @@ class SettingsView(
         // Line 2: name (italic) on the left, status on the right with color.
         val line2Y = row + 1
         if (line2Y < canvas.rows()) {
+            canvas.withStyle(bgStyle) { drawText(0, line2Y, " ".repeat(cols)) }
             canvas.withStyle(nameStyle) {
                 drawText(0, line2Y, "  ${name.take(cols)}".padEnd(cols, ' '))
             }
@@ -179,6 +198,7 @@ class SettingsView(
         // Line 3: action buttons.
         val line3Y = row + 2
         if (line3Y < canvas.rows()) {
+            canvas.withStyle(bgStyle) { drawText(0, line3Y, " ".repeat(cols)) }
             renderButtons(canvas, line3Y, cols, status, bgStyle)
         }
     }
@@ -223,7 +243,12 @@ class SettingsView(
         status: LspServerStatus,
         baseStyle: StyleSet
     ) {
-        val buttonStyle = mergeStyles(styleSheet.getStyle("lsp-button"), styleSheet.getStyle("button"))
+        val buttonBase = styleSheet.getStyle("lsp-button")
+        val buttonStyle = StyleSet(
+            bg = buttonBase.bg ?: baseStyle.bg,
+            fg = buttonBase.fg ?: baseStyle.fg,
+            textDecoration = mergeDecorations(buttonBase.textDecoration, null)
+        )
         val buttons = mutableListOf<String>()
         buttons += if (status.running) "[stop(s)]" else "[start(s)]"
         buttons += "[restart(r)]"
@@ -251,5 +276,21 @@ class SettingsView(
     private fun uninstallLabel(status: LspServerStatus): String = when (status.installState) {
         InstallState.INSTALLED, InstallState.UPDATE_AVAILABLE -> "uninstall(y)"
         InstallState.MANUAL, InstallState.MISSING, InstallState.ERROR -> "remove(y)"
+    }
+
+    private fun attachBackground(style: StyleSet, fallback: StyleSet): StyleSet {
+        val merged = style.copy()
+        if (merged.bg == null) merged.bg = fallback.bg
+        if (merged.fg == null) merged.fg = fallback.fg
+        if (merged.textDecoration == null) merged.textDecoration = fallback.textDecoration
+        return merged
+    }
+
+    private fun mergeDecorations(base: String?, extra: String?): String? {
+        if (extra.isNullOrBlank()) return base
+        val set = mutableSetOf<String>()
+        base?.split(Regex("\\s+"))?.filter { it.isNotBlank() }?.let { set.addAll(it) }
+        extra.split(Regex("\\s+")).filter { it.isNotBlank() }.forEach { set.add(it) }
+        return if (set.isEmpty()) null else set.joinToString(" ")
     }
 }

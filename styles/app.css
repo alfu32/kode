@@ -219,11 +219,11 @@ codeintel.declaration {
 }
 lsp-list {
     bg: #0f1424;
-    fg: #5475c6;
+    fg: #95aee6;
 }
 lsp-card-selected {
     bg: #222d53;
-    fg: #6389ed;
+    fg: #c0ccec;
 }
 lsp-lang {
     text-decoration: bold;
