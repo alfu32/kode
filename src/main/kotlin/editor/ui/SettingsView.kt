@@ -19,7 +19,7 @@ class SettingsView(
     private var statuses: List<LspServerStatus> = lspService.statuses()
     private var selectedIdx: Int = 0
     private var lastMessage: String = ""
-    private val cardHeight = 3
+    private val cardHeight = 4
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
@@ -203,6 +203,15 @@ class SettingsView(
         if (line3Y < canvas.rows()) {
             canvas.withStyle(bgStyle) { drawText(0, line3Y, " ".repeat(cols)) }
             renderButtons(canvas, line3Y, cols, status, bgStyle)
+        }
+        // Line 4: error/message
+        val line4Y = row + 3
+        if (line4Y < canvas.rows()) {
+            val msg = status.message.orEmpty()
+            val msgStyle = mergeStyles(styleSheet.getStyle("lsp-error"), bgStyle)
+            canvas.withStyle(if (msg.isNotBlank()) msgStyle else bgStyle) {
+                drawText(0, line4Y, msg.take(cols).padEnd(cols, ' '))
+            }
         }
     }
 

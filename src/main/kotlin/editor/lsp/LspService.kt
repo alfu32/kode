@@ -12,11 +12,13 @@ class LspService(
 
     private val clientsByServer = mutableMapOf<String, LspClient>()
     private val languagesByServer = mutableMapOf<String, Set<String>>()
+    private val lastMessages = mutableMapOf<String, String?>()
 
     fun statuses(): List<LspServerStatus> {
         val runningIds = clientsByServer.keys
         return manager.statuses().map { status ->
-            if (status.entry.id in runningIds) status.copy(running = true) else status
+            val msg = lastMessages[status.entry.id] ?: status.message
+            if (status.entry.id in runningIds) status.copy(running = true, message = msg) else status.copy(message = msg)
         }
     }
 
@@ -29,8 +31,10 @@ class LspService(
         return if (started) {
             clientsByServer[serverId] = client
             languagesByServer[serverId] = entry.languages.toSet()
+            lastMessages[serverId] = null
             InstallResult(true, "Started ${entry.name}")
         } else {
+            lastMessages[serverId] = "Failed to start ${entry.name}"
             InstallResult(false, "Failed to start ${entry.name}")
         }
     }
@@ -39,6 +43,7 @@ class LspService(
         val client = clientsByServer.remove(serverId) ?: return InstallResult(false, "Not running")
         client.stop()
         languagesByServer.remove(serverId)
+        lastMessages[serverId] = null
         return InstallResult(true, "Stopped $serverId")
     }
 
