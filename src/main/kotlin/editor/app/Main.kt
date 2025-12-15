@@ -25,6 +25,7 @@ import editor.ui.SideBySideDiffView
 import editor.ui.ProjectSearchDialog
 import editor.ui.AboutView
 import editor.ui.WorkspacePickerDialog
+import editor.ui.SettingsView
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -242,6 +243,7 @@ private class SplitPanelsApp(
         onSelectRecent = { entry -> openRecent(entry) },
         onRemoveRecent = { entry -> removeRecent(entry) }
     )
+    private val settingsView = SettingsView(styleSheet)
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
     private var workspacePickerVisible = false
@@ -270,7 +272,7 @@ private class SplitPanelsApp(
             filesTabView,
             gitPanel,
             aboutView,
-            PlaceholderPane(styleSheet, "Settings")
+            settingsView
         ),
         initialIndex = 0,
         onSelect = { idx -> handleLeftTabChanged(idx) }
@@ -864,19 +866,6 @@ private class SplitPanelsApp(
 
 private enum class FocusTarget { FILES, CODE, HEX, IMAGE, DIFF }
 
-private class PlaceholderPane(
-    styleSheet: StyleSheet,
-    private val label: String
-) : BaseComponent(styleSheet) {
-    override fun render(canvas: CanvasRenderer) {
-        val cols = canvas.cols().coerceAtLeast(1)
-        if (cols > 2) {
-            canvas.drawText(1, 0, label.take(cols - 2))
-        }
-    }
-
-    override fun dispatch(event: UIEvent): Boolean = false
-}
 private interface Tickable {
     /**
      * Called periodically from the main loop. Return true to request a repaint.

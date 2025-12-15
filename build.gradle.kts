@@ -110,6 +110,10 @@ tasks.register<Copy>("distBundle") {
     if (codeIntelFile.exists()) {
         from(codeIntelFile) { into("codeintel") }
     }
+    val lspCatalog = layout.projectDirectory.file("lsp/servers.json").asFile
+    if (lspCatalog.exists()) {
+        from(lspCatalog) { into("lsp") }
+    }
     layout.projectDirectory.file("keyword-patterns.txt").asFile.takeIf { it.exists() }?.let { from(it) }
     layout.projectDirectory.file("styles/app.css").asFile.takeIf { it.exists() }?.let { css ->
         from(css) { into("styles") }
@@ -138,6 +142,10 @@ tasks.register<Copy>("releaseBundle") {
     val codeIntelFile = layout.projectDirectory.file("codeintel/definitions.json").asFile
     if (codeIntelFile.exists()) {
         from(codeIntelFile) { into("codeintel") }
+    }
+    val lspCatalog = layout.projectDirectory.file("lsp/servers.json").asFile
+    if (lspCatalog.exists()) {
+        from(lspCatalog) { into("lsp") }
     }
     listOf("keyword-patterns.txt", "token-colors.txt", "README.md").forEach { path ->
         val file = layout.projectDirectory.file(path).asFile

@@ -217,6 +217,33 @@ codeintel.declaration {
     fg: #5da9ff;
     text-decoration: bold;
 }
+lsp-list {
+    bg: #0f1424;
+    fg: #5475c6;
+}
+lsp-card-selected {
+    bg: #222d53;
+    fg: #6389ed;
+}
+lsp-lang {
+    text-decoration: bold;
+}
+lsp-name {
+    text-decoration: italic;
+}
+lsp-status-installed {
+    fg: #6bea8a;
+}
+lsp-status-update {
+    fg: #ffbf55;
+}
+lsp-status-missing {
+    fg: #ff6b6b;
+}
+lsp-button {
+    bg: #ffbf55;
+    fg: #0f1424;
+}
 slider-track {
     bg: #3f4e7e;
     fg: #b6b9c5;

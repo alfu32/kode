@@ -1,0 +1,163 @@
+{
+  "servers": [
+    {
+      "id": "rust-analyzer",
+      "name": "rust-analyzer",
+      "languages": ["rust"],
+      "homepage": "https://rust-analyzer.github.io/",
+      "license": "Apache-2.0 / MIT",
+      "preferredCommand": ["rust-analyzer"],
+      "versions": [
+        {
+          "version": "2024-09-23",
+          "downloads": [
+            {
+              "os": "linux",
+              "arch": "x86_64",
+              "url": "https://github.com/rust-lang/rust-analyzer/releases/download/2024-09-23/rust-analyzer-x86_64-unknown-linux-gnu.gz"
+            },
+            {
+              "os": "macos",
+              "arch": "arm64",
+              "url": "https://github.com/rust-lang/rust-analyzer/releases/download/2024-09-23/rust-analyzer-aarch64-apple-darwin.gz"
+            },
+            {
+              "os": "macos",
+              "arch": "x86_64",
+              "url": "https://github.com/rust-lang/rust-analyzer/releases/download/2024-09-23/rust-analyzer-x86_64-apple-darwin.gz"
+            },
+            {
+              "os": "windows",
+              "arch": "x86_64",
+              "url": "https://github.com/rust-lang/rust-analyzer/releases/download/2024-09-23/rust-analyzer-x86_64-pc-windows-msvc.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gopls",
+      "name": "gopls",
+      "languages": ["go"],
+      "homepage": "https://pkg.go.dev/golang.org/x/tools/gopls",
+      "license": "BSD-3-Clause",
+      "preferredCommand": ["gopls"],
+      "versions": [
+        {
+          "version": "0.16.2",
+          "downloads": [
+            {
+              "os": "linux",
+              "arch": "x86_64",
+              "url": "https://github.com/golang/tools/releases/download/gopls%2Fv0.16.2/gopls_linux_amd64.tar.gz"
+            },
+            {
+              "os": "macos",
+              "arch": "arm64",
+              "url": "https://github.com/golang/tools/releases/download/gopls%2Fv0.16.2/gopls_darwin_arm64.tar.gz"
+            },
+            {
+              "os": "windows",
+              "arch": "x86_64",
+              "url": "https://github.com/golang/tools/releases/download/gopls%2Fv0.16.2/gopls_windows_amd64.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pylsp",
+      "name": "Python LSP Server",
+      "languages": ["python"],
+      "homepage": "https://github.com/python-lsp/python-lsp-server",
+      "license": "MIT",
+      "preferredCommand": ["pylsp"],
+      "versions": []
+    },
+    {
+      "id": "lua-language-server",
+      "name": "Lua Language Server",
+      "languages": ["lua"],
+      "homepage": "https://github.com/LuaLS/lua-language-server",
+      "license": "MIT",
+      "preferredCommand": ["lua-language-server"],
+      "versions": [
+        {
+          "version": "3.7.0",
+          "downloads": [
+            {
+              "os": "linux",
+              "arch": "x86_64",
+              "url": "https://github.com/LuaLS/lua-language-server/releases/download/3.7.0/lua-language-server-3.7.0-linux-x64.tar.gz"
+            },
+            {
+              "os": "macos",
+              "arch": "arm64",
+              "url": "https://github.com/LuaLS/lua-language-server/releases/download/3.7.0/lua-language-server-3.7.0-darwin-arm64.tar.gz"
+            },
+            {
+              "os": "windows",
+              "arch": "x86_64",
+              "url": "https://github.com/LuaLS/lua-language-server/releases/download/3.7.0/lua-language-server-3.7.0-win32-x64.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "jdtls",
+      "name": "Eclipse JDT Language Server",
+      "languages": ["java"],
+      "homepage": "https://projects.eclipse.org/projects/eclipse.jdt.ls",
+      "license": "EPL-2.0",
+      "preferredCommand": ["jdtls"],
+      "versions": [
+        {
+          "version": "1.33.0",
+          "downloads": [
+            {
+              "os": "linux",
+              "arch": "x86_64",
+              "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.tar.gz"
+            },
+            {
+              "os": "macos",
+              "arch": "x86_64",
+              "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.tar.gz"
+            },
+            {
+              "os": "macos",
+              "arch": "arm64",
+              "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.tar.gz"
+            },
+            {
+              "os": "windows",
+              "arch": "x86_64",
+              "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.zip"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kotlin-language-server",
+      "name": "Kotlin Language Server",
+      "languages": ["kotlin"],
+      "homepage": "https://github.com/fwcd/kotlin-language-server",
+      "license": "MIT",
+      "preferredCommand": ["kotlin-language-server"],
+      "versions": [
+        {
+          "version": "1.3.3",
+          "downloads": [
+            {
+              "os": "any",
+              "arch": "any",
+              "url": "https://github.com/fwcd/kotlin-language-server/releases/download/1.3.3/server.zip"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
