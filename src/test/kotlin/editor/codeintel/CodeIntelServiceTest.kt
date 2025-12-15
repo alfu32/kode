@@ -180,9 +180,9 @@ class CodeIntelServiceTest {
             service.indexDocument(usePath, "kotlin", useText, version = 1)
             service.waitForIdle()
 
-            val usages = service.usages("Foo")
-            assertTrue(usages.any { it.filePath == usePath })
-            assertTrue(usages.any { it.filePath == defPath })
+            val refs = service.references(defPath, "kotlin", CodePosition(0, 0), "Foo")
+            assertTrue(refs.any { it.filePath == usePath })
+            assertTrue(refs.any { it.filePath == defPath })
         } finally {
             service.shutdown()
         }

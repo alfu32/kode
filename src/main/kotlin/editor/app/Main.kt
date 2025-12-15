@@ -970,3 +970,4 @@ private fun drawStatusLine(
         drawText(1, row, label.take(textWidth))
     }
 }
+

@@ -1,6 +1,9 @@
 package editor.ui
 
+import editor.codeintel.CodeIntelProvider
 import editor.codeintel.CodeIntelService
+import editor.codeintel.CodePosition
+import editor.codeintel.CodeLocation
 import editor.lsp.LspService
 import editor.lib.FoundToken
 import editor.lib.Position
@@ -25,7 +28,8 @@ class CodeEditorView(
     styleSheet: StyleSheet,
     private val buffer: TextBuffer = TextBuffer(),
     private val syntaxProvider: SyntaxProvider? = null,
-    private val codeIntel: CodeIntelService? = null,
+    private val codeIntelIndexer: CodeIntelService? = null,
+    private val codeIntel: CodeIntelProvider? = null,
     private val lsp: LspService? = null,
     private val navigationHandler: ((String, Position) -> Unit)? = null
 ) : BaseComponent(styleSheet) {
@@ -64,7 +68,7 @@ class CodeEditorView(
     }
 
     private fun triggerCodeIntel(force: Boolean = false) {
-        val service = codeIntel ?: return
+        val service = codeIntelIndexer ?: return
         if (filePath.isEmpty()) return
         val version = buffer.version()
         if (!force && version == lastIndexedVersion) return
@@ -505,22 +509,15 @@ class CodeEditorView(
 
         val isDeclaration = token.scopes.any { it.contains("codeintel.declaration") }
         if (isDeclaration) {
-            val lspRefs = lsp?.references(
+            val refs = codeIntel?.references(
                 filePath,
                 grammarLanguage ?: language,
-                editor.lsp.LspPosition(line, col)
+                CodePosition(line, col),
+                name
             ).orEmpty()
-            val usageEntries = if (lspRefs.isNotEmpty()) {
-                lspRefs.mapNotNull { loc ->
-                    val path = runCatching { java.nio.file.Paths.get(java.net.URI(loc.uri)) }.getOrNull()?.toString()
-                        ?: loc.uri
-                    UsageEntry(path, loc.range.start.line, loc.range.start.character, "${java.io.File(path).name}:${loc.range.start.line + 1}:${loc.range.start.character + 1}")
-                }
-            } else {
-                codeIntel?.usages(name).orEmpty().map {
-                    val label = "${java.io.File(it.filePath).name}:${it.line + 1}:${it.startColumn + 1}"
-                    UsageEntry(it.filePath, it.line, it.startColumn, label)
-                }
+            val usageEntries = refs.map {
+                val label = "${java.io.File(it.filePath).name}:${it.line + 1}:${it.column + 1}"
+                UsageEntry(it.filePath, it.line, it.column, label)
             }
             if (usageEntries.isNotEmpty()) {
                 usagePopup = UsagePopup(Position(line, col), usageEntries)
@@ -539,17 +536,29 @@ class CodeEditorView(
 
     private fun openDefinition(name: String, position: Position) {
         val lang = grammarLanguage ?: language
-        val lspLoc = lsp?.definitions(filePath, lang, editor.lsp.LspPosition(position.line, position.column))?.firstOrNull()
-        if (lspLoc != null) {
-            val p = Position(lspLoc.range.start.line, lspLoc.range.start.character)
-            val path = java.net.URI(lspLoc.uri).path
-            navigationHandler?.invoke(path, p)
-            return
+        val hits = codeIntel?.definitions(
+            filePath,
+            lang,
+            CodePosition(position.line, position.column),
+            name
+        ).orEmpty()
+        val target = pickBestDefinition(hits, name) ?: return
+        navigationHandler?.invoke(target.filePath, Position(target.line, target.column))
+    }
+
+    private fun pickBestDefinition(defs: List<CodeLocation>, identifier: String): CodeLocation? {
+        if (defs.isEmpty()) return null
+        val lower = identifier.lowercase()
+        val currentFile = File(filePath).absoluteFile.normalize()
+        fun score(def: CodeLocation): Int {
+            val file = File(def.filePath).absoluteFile.normalize()
+            val fileName = file.nameWithoutExtension.lowercase()
+            var s = 0
+            if (!fileName.contains(lower)) s += 1
+            if (file == currentFile) s += 1
+            return s
         }
-        val defs = codeIntel?.definitionCandidates(name).orEmpty()
-        val target = defs.firstOrNull() ?: return
-        val pos = Position(target.line ?: 0, target.startColumn ?: 0)
-        navigationHandler?.invoke(target.filePath, pos)
+        return defs.minByOrNull { score(it) }
     }
 
     private fun handleSuggestionClick(event: UIEvent): Boolean {
@@ -625,19 +634,13 @@ class CodeEditorView(
         }
 
         val lang = grammarLanguage ?: language
-        val lspCompletions = lsp?.completions(
+        val completions = codeIntel?.completions(
             filePath,
             lang,
-            editor.lsp.LspPosition(buffer.cursorPosition().line, buffer.cursorPosition().column)
+            CodePosition(buffer.cursorPosition().line, buffer.cursorPosition().column),
+            prefix
         ).orEmpty()
-        if (lspCompletions.isNotEmpty()) {
-            lspCompletions.forEach { add(it, "lsp") }
-        } else {
-            val defs = codeIntel?.suggestions(prefix).orEmpty()
-            defs.forEach { def ->
-                add(def.name, java.io.File(def.filePath).name)
-            }
-        }
+        completions.forEach { add(it.label, it.detail) }
 
         val locals = buffer.text()
         val regex = Regex("\\b([A-Za-z_][A-Za-z0-9_]*)\\b")
