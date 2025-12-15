@@ -215,6 +215,10 @@ class LspManager(
             untar(java.util.zip.GZIPInputStream(Files.newInputStream(archive)), destDir)
             return
         }
+        if (lower.endsWith(".gz")) {
+            gunzip(archive, destDir, Paths.get(download.url).fileName?.toString() ?: "package.bin")
+            return
+        }
         if (lower.endsWith(".tar")) {
             untar(Files.newInputStream(archive), destDir)
             return
@@ -224,6 +228,16 @@ class LspManager(
         val target = destDir.resolve(targetName)
         Files.createDirectories(destDir)
         Files.copy(archive, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
+
+    private fun gunzip(archive: Path, destDir: Path, downloadName: String) {
+        Files.createDirectories(destDir)
+        val targetName = downloadName.removeSuffix(".gz")
+        val target = destDir.resolve(targetName)
+        java.util.zip.GZIPInputStream(Files.newInputStream(archive)).use { input ->
+            Files.newOutputStream(target).use { output -> input.copyTo(output) }
+        }
+        markExecutable(target)
     }
 
     private fun unzip(zipPath: Path, destDir: Path) {
@@ -241,6 +255,9 @@ class LspManager(
                 } else {
                     Files.createDirectories(resolved.parent)
                     Files.newOutputStream(resolved).use { out -> zis.copyTo(out) }
+                    if (!entry.name.contains("/") && !entry.name.contains("\\")) {
+                        markExecutable(resolved)
+                    }
                 }
                 zis.closeEntry()
                 entry = zis.nextEntry
@@ -332,6 +349,23 @@ class LspManager(
         }
     }
 
+    private fun markExecutable(target: Path) {
+        runCatching {
+            if (!Files.exists(target)) return
+            if (!Files.getFileStore(target).supportsFileAttributeView("posix")) return
+            val perms = mutableSetOf(
+                PosixFilePermission.OWNER_READ,
+                PosixFilePermission.OWNER_WRITE,
+                PosixFilePermission.OWNER_EXECUTE,
+                PosixFilePermission.GROUP_READ,
+                PosixFilePermission.GROUP_EXECUTE,
+                PosixFilePermission.OTHERS_READ,
+                PosixFilePermission.OTHERS_EXECUTE
+            )
+            Files.setPosixFilePermissions(target, perms)
+        }
+    }
+
     private fun loadCatalog(): LspServerCatalog {
         val path = catalogPath ?: return LspServerCatalog()
         val content = runCatching { Files.readString(path) }.getOrNull() ?: return LspServerCatalog()
@@ -403,4 +437,3 @@ data class Platform(val os: String, val arch: String) {
         }
     }
 }
-

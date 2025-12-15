@@ -22,6 +22,7 @@ import kotlinx.serialization.json.put
 data class LspPosition(val line: Int, val character: Int)
 data class LspLocation(val uri: String, val range: LspRange)
 data class LspRange(val start: LspPosition, val end: LspPosition)
+data class LspStartResult(val success: Boolean, val message: String? = null)
 
 class LspClient(
     private val command: List<String>,
@@ -37,9 +38,10 @@ class LspClient(
     private var input: BufferedInputStream? = null
     private var output: BufferedOutputStream? = null
     @Volatile private var initialized = false
+    @Volatile private var lastError: String? = null
 
-    fun start(): Boolean {
-        if (proc != null) return true
+    fun start(): LspStartResult {
+        if (proc != null) return LspStartResult(true)
         val pb = ProcessBuilder(command)
         if (workdir != null) pb.directory(workdir.toFile())
         pb.redirectError(ProcessBuilder.Redirect.INHERIT)
@@ -50,8 +52,13 @@ class LspClient(
             output = BufferedOutputStream(p.outputStream)
             reader.submit { readLoop() }
             initialize()
-            true
-        }.getOrElse { false }
+            lastError = null
+            LspStartResult(true)
+        }.getOrElse { ex ->
+            stop()
+            lastError = ex.message ?: ex.javaClass.simpleName
+            LspStartResult(false, lastError)
+        }
     }
 
     fun stop() {

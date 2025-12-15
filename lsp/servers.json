@@ -72,7 +72,12 @@
       "homepage": "https://github.com/python-lsp/python-lsp-server",
       "license": "MIT",
       "preferredCommand": ["pylsp"],
-      "versions": []
+      "versions": [
+        {
+          "version": "manual",
+          "downloads": []
+        }
+      ]
     },
     {
       "id": "lua-language-server",
@@ -116,23 +121,26 @@
           "version": "1.33.0",
           "downloads": [
             {
-              "os": "linux",
-              "arch": "x86_64",
-              "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.tar.gz"
-            },
-            {
-              "os": "macos",
-              "arch": "x86_64",
-              "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.tar.gz"
-            },
-            {
-              "os": "macos",
-              "arch": "arm64",
-              "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.tar.gz"
-            },
-            {
-              "os": "windows",
-              "arch": "x86_64",
+          "os": "linux",
+          "arch": "x86_64",
+          "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.tar.gz",
+          "command": ["bin/jdtls"]
+        },
+        {
+          "os": "macos",
+          "arch": "x86_64",
+          "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.tar.gz",
+          "command": ["bin/jdtls"]
+        },
+        {
+          "os": "macos",
+          "arch": "arm64",
+          "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.tar.gz",
+          "command": ["bin/jdtls"]
+        },
+        {
+          "os": "windows",
+          "arch": "x86_64",
               "url": "https://download.eclipse.org/jdtls/milestones/1.33.0/jdt-language-server-1.33.0-202409121444.zip"
             }
           ]
@@ -145,7 +153,7 @@
       "languages": ["kotlin"],
       "homepage": "https://github.com/fwcd/kotlin-language-server",
       "license": "MIT",
-      "preferredCommand": ["kotlin-language-server"],
+      "preferredCommand": ["server/bin/kotlin-language-server"],
       "versions": [
         {
           "version": "1.3.3",
@@ -153,11 +161,88 @@
             {
               "os": "any",
               "arch": "any",
-              "url": "https://github.com/fwcd/kotlin-language-server/releases/download/1.3.3/server.zip"
+              "url": "https://github.com/fwcd/kotlin-language-server/releases/download/1.3.3/server.zip",
+              "command": ["server/bin/kotlin-language-server"]
             }
           ]
         }
       ]
+    },
+    {
+      "id": "typescript-language-server",
+      "name": "TypeScript Language Server",
+      "languages": [
+        "javascript",
+        "typescript",
+        "javascriptreact",
+        "typescriptreact",
+        "jsx",
+        "tsx"
+      ],
+      "homepage": "https://github.com/typescript-language-server/typescript-language-server",
+      "license": "MIT",
+      "preferredCommand": ["typescript-language-server", "--stdio"],
+      "versions": [
+        {
+          "version": "5.1.3",
+          "installInstructions": {
+            "npm": "npm install -g typescript-language-server@5.1.3 typescript@5.9.3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vscode-langservers-extracted",
+      "name": "VSCode LangServers Extracted",
+      "languages": ["html", "css", "json"],
+      "homepage": "https://github.com/hrsh7th/vscode-langservers-extracted",
+      "license": "MIT",
+      "preferredCommand": ["vscode-html-language-server", "--stdio"],
+      "versions": [
+        {
+          "version": "4.10.0",
+          "installInstructions": {
+            "npm": "npm install -g vscode-langservers-extracted@4.10.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "vscode-css-language-server",
+      "name": "VSCode CSS Language Server",
+      "languages": ["css", "scss", "less"],
+      "homepage": "https://github.com/hrsh7th/vscode-langservers-extracted",
+      "license": "MIT",
+      "preferredCommand": ["vscode-css-language-server", "--stdio"],
+      "versions": [
+        {
+          "version": "4.10.0",
+          "installInstructions": {
+            "npm": "npm install -g vscode-langservers-extracted@4.10.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "clangd",
+      "name": "clangd",
+      "languages": ["c", "cpp", "objective-c", "objective-cpp"],
+      "homepage": "https://clangd.llvm.org/",
+      "license": "Apache-2.0",
+      "preferredCommand": ["clangd"],
+      "versions": [
+        {
+          "version": "21.1.0",
+          "installInstructions": {
+            "download": "Download prebuilt binaries from https://releases.llvm.org/21.1.0/",
+            "packageManagers": {
+              "apt": "apt install clangd-21",
+              "brew": "brew install llvm@21"
+            }
+          }
+        }
+      ]
     }
+
   ]
 }

@@ -545,3 +545,4 @@ data class UsageLocation(
 
 private fun String.toSymbolKind(): SymbolKind =
     runCatching { SymbolKind.valueOf(this.uppercase(Locale.ROOT)) }.getOrDefault(SymbolKind.VARIABLE)
+
