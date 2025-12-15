@@ -308,7 +308,12 @@ class TextBuffer : ITextBuffer {
         }
     }
 
-    override fun insertNewline() = insertText("\n")
+    override fun insertNewline() {
+        val currentLine = lines.getOrElse(cursor.line) { "" }
+        val indent = currentLine.takeWhile { it == ' ' || it == '\t' }
+        val newlineText = "\n$indent"
+        insertText(newlineText)
+    }
 
 
     /*  
@@ -986,6 +991,5 @@ private fun BufferSnapshotState.toSnapshot(): BufferSnapshot =
 
 data class Notification(val kind: NotificationKind, val text: String)
 enum class NotificationKind { COPY, CUT }
-
 
 
