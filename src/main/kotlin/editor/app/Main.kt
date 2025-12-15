@@ -660,7 +660,15 @@ private class SplitPanelsApp(
             }
             ViewerType.CODE -> {
                 val detected = mimeDetector.detectFile(java.nio.file.Path.of(absPath))
-                openInViewer(absPath, detected)
+                if (state != null) {
+                    val cursor = state.buffer.cursor
+                    val scroll = state.scrollTop
+                    openInViewer(absPath, detected)
+                    codeEditor.restoreViewport(editor.lib.PositionState(cursor.line, cursor.column), scroll)
+                    recordRecent(absPath, codeEditor.captureState(currentMtime))
+                } else {
+                    openInViewer(absPath, detected)
+                }
             }
         }
     }

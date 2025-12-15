@@ -9,6 +9,7 @@ import editor.lib.TextBuffer
 import editor.lib.handleKeyForBuffer
 import editor.lib.handleMouseToBuffer
 import editor.mime.MimeTypeResult
+import editor.lib.PositionState
 import editor.grammars.SyntaxProvider
 import editor.app.EditorSessionState
 import react.BaseComponent
@@ -840,6 +841,23 @@ class CodeEditorView(
             scrollTop = (targetRow - bodyRows / 2).coerceIn(0, maxOffset)
         }
         ensureCursorVisible(currentRows, searchHeight, layout, gutterWidth)
+    }
+
+    fun restoreViewport(cursor: PositionState, scroll: Int) {
+        val lines = buffer.text().split("\n")
+        val line = cursor.line.coerceIn(0, (lines.size - 1).coerceAtLeast(0))
+        val col = cursor.column.coerceIn(0, lines.getOrElse(line) { "" }.length)
+        val pos = Position(line, col)
+        buffer.moveCursorTo(pos, expand = false)
+        val cols = lastCols.coerceAtLeast(1)
+        val rows = lastRows.coerceAtLeast(1)
+        val gutterWidth = computeGutterWidth()
+        val layout = buildLayout(lines, (cols - gutterWidth).coerceAtLeast(0)).also { lastLayout = it }
+        val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
+        val bodyRows = (rows - 1 - searchHeight).coerceAtLeast(1)
+        val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
+        scrollTop = scroll.coerceIn(0, maxOffset)
+        ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
     }
 
     fun isDirty(): Boolean = buffer.isDirty()
