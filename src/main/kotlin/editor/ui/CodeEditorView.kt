@@ -1,6 +1,7 @@
 package editor.ui
 
 import editor.codeintel.CodeIntelService
+import editor.lsp.LspService
 import editor.lib.FoundToken
 import editor.lib.Position
 import editor.lib.SelectionRange
@@ -24,6 +25,7 @@ class CodeEditorView(
     private val buffer: TextBuffer = TextBuffer(),
     private val syntaxProvider: SyntaxProvider? = null,
     private val codeIntel: CodeIntelService? = null,
+    private val lsp: LspService? = null,
     private val navigationHandler: ((String, Position) -> Unit)? = null
 ) : BaseComponent(styleSheet) {
 
@@ -57,6 +59,7 @@ class CodeEditorView(
         scrollTop = 0
         lastIndexedVersion = -1
         triggerCodeIntel(force = true)
+        syncLsp(open = true)
     }
 
     private fun triggerCodeIntel(force: Boolean = false) {
@@ -66,6 +69,18 @@ class CodeEditorView(
         if (!force && version == lastIndexedVersion) return
         lastIndexedVersion = version
         service.indexDocument(filePath, grammarLanguage ?: language, buffer.text(), version)
+        lsp?.changeDocument(filePath, buffer.text(), version.toInt())
+    }
+
+    private fun syncLsp(open: Boolean) {
+        val lang = grammarLanguage ?: language
+        if (filePath.isEmpty() || lang.isNullOrBlank()) return
+        lsp?.startForLanguage(lang)
+        if (open) {
+            lsp?.openDocument(filePath, lang, buffer.text(), buffer.version().toInt())
+        } else {
+            lsp?.changeDocument(filePath, buffer.text(), buffer.version().toInt())
+        }
     }
 
     fun captureState(lastModifiedMillis: Long? = null): EditorSessionState? {
@@ -92,6 +107,7 @@ class CodeEditorView(
         scrollTop = state.scrollTop.coerceAtLeast(0)
         lastIndexedVersion = -1
         triggerCodeIntel(force = true)
+        syncLsp(open = true)
     }
 
     fun loadVirtualContent(label: String, content: String, language: String? = null) {
@@ -104,6 +120,7 @@ class CodeEditorView(
         scrollTop = 0
         lastIndexedVersion = -1
         triggerCodeIntel(force = true)
+        syncLsp(open = true)
     }
 
     fun setReadOnly(value: Boolean) {
@@ -132,6 +149,7 @@ class CodeEditorView(
         scrollTop = 0
         lastIndexedVersion = -1
         triggerCodeIntel(force = true)
+        syncLsp(open = true)
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -482,17 +500,29 @@ class CodeEditorView(
         renderedSuggestion = null
 
         val name = token.text
-        openDefinition(name)
+        openDefinition(name, Position(line, col))
 
         val isDeclaration = token.scopes.any { it.contains("codeintel.declaration") }
         if (isDeclaration) {
-            val usages = codeIntel?.usages(name).orEmpty()
-            if (usages.isNotEmpty()) {
-                val entries = usages.map {
+            val lspRefs = lsp?.references(
+                filePath,
+                grammarLanguage ?: language,
+                editor.lsp.LspPosition(line, col)
+            ).orEmpty()
+            val usageEntries = if (lspRefs.isNotEmpty()) {
+                lspRefs.mapNotNull { loc ->
+                    val path = runCatching { java.nio.file.Paths.get(java.net.URI(loc.uri)) }.getOrNull()?.toString()
+                        ?: loc.uri
+                    UsageEntry(path, loc.range.start.line, loc.range.start.character, "${java.io.File(path).name}:${loc.range.start.line + 1}:${loc.range.start.character + 1}")
+                }
+            } else {
+                codeIntel?.usages(name).orEmpty().map {
                     val label = "${java.io.File(it.filePath).name}:${it.line + 1}:${it.startColumn + 1}"
                     UsageEntry(it.filePath, it.line, it.startColumn, label)
                 }
-                usagePopup = UsagePopup(Position(line, col), entries)
+            }
+            if (usageEntries.isNotEmpty()) {
+                usagePopup = UsagePopup(Position(line, col), usageEntries)
                 hoveredUsageIndex = 0
             }
         }
@@ -506,7 +536,15 @@ class CodeEditorView(
         return tokens.firstOrNull { column in it.start until it.end }
     }
 
-    private fun openDefinition(name: String) {
+    private fun openDefinition(name: String, position: Position) {
+        val lang = grammarLanguage ?: language
+        val lspLoc = lsp?.definitions(filePath, lang, editor.lsp.LspPosition(position.line, position.column))?.firstOrNull()
+        if (lspLoc != null) {
+            val p = Position(lspLoc.range.start.line, lspLoc.range.start.character)
+            val path = java.net.URI(lspLoc.uri).path
+            navigationHandler?.invoke(path, p)
+            return
+        }
         val defs = codeIntel?.definitionCandidates(name).orEmpty()
         val target = defs.firstOrNull() ?: return
         val pos = Position(target.line ?: 0, target.startColumn ?: 0)
@@ -585,9 +623,19 @@ class CodeEditorView(
             if (names.add(name)) results.add(SuggestionEntry(name, detail))
         }
 
-        val defs = codeIntel?.suggestions(prefix).orEmpty()
-        defs.forEach { def ->
-            add(def.name, java.io.File(def.filePath).name)
+        val lang = grammarLanguage ?: language
+        val lspCompletions = lsp?.completions(
+            filePath,
+            lang,
+            editor.lsp.LspPosition(buffer.cursorPosition().line, buffer.cursorPosition().column)
+        ).orEmpty()
+        if (lspCompletions.isNotEmpty()) {
+            lspCompletions.forEach { add(it, "lsp") }
+        } else {
+            val defs = codeIntel?.suggestions(prefix).orEmpty()
+            defs.forEach { def ->
+                add(def.name, java.io.File(def.filePath).name)
+            }
         }
 
         val locals = buffer.text()

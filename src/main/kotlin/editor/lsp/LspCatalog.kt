@@ -85,6 +85,8 @@ class LspManager(
         return latest.servers.map { entry -> statusFor(entry) }
     }
 
+    fun entryForId(id: String): LspServerEntry? = latestCatalog().servers.firstOrNull { it.id == id }
+
     fun install(serverId: String): InstallResult {
         val entry = catalog.servers.firstOrNull { it.id == serverId }
             ?: return InstallResult(false, "Unknown server: $serverId")
@@ -154,7 +156,7 @@ class LspManager(
 
     fun isRunning(serverId: String): Boolean = runningServers.contains(serverId)
 
-    private fun statusFor(entry: LspServerEntry): LspServerStatus {
+    fun statusFor(entry: LspServerEntry): LspServerStatus {
         val destDir = installRoot.resolve(entry.id)
         val manifestPath = destDir.resolve("installed.json")
         if (!Files.exists(destDir)) {
@@ -163,9 +165,7 @@ class LspManager(
             val message = if (state == InstallState.MANUAL) "Manual install required" else null
             return LspServerStatus(entry, state, installPath = destDir, message = message, running = isRunning(entry.id))
         }
-        val manifest = runCatching {
-            json.decodeFromString(LspInstallManifest.serializer(), Files.readString(manifestPath))
-        }.getOrNull()
+        val manifest = readManifest(entry.id)
         val installedVersion = manifest?.version
         val latestVersion = entry.versions.firstOrNull()?.version
         val state = when {
@@ -178,6 +178,15 @@ class LspManager(
 
     private fun statusForId(id: String): LspServerStatus? =
         latestCatalog().servers.firstOrNull { it.id == id }?.let { statusFor(it) }
+
+    fun readManifest(id: String): LspInstallManifest? {
+        val destDir = installRoot.resolve(id)
+        val manifestPath = destDir.resolve("installed.json")
+        if (!Files.exists(manifestPath)) return null
+        return runCatching {
+            json.decodeFromString(LspInstallManifest.serializer(), Files.readString(manifestPath))
+        }.getOrNull()
+    }
 
     private fun pickDownload(entry: LspServerEntry): VersionedDownload? {
         entry.versions.forEach { version ->
@@ -394,3 +403,4 @@ data class Platform(val os: String, val arch: String) {
         }
     }
 }
+

@@ -2,6 +2,7 @@ package editor.ui
 
 import editor.lsp.InstallState
 import editor.lsp.LspManager
+import editor.lsp.LspService
 import editor.lsp.LspServerStatus
 import react.BaseComponent
 import react.StyleSet
@@ -10,11 +11,12 @@ import react.UIEvent
 import react.renderer.CanvasRenderer
 
 class SettingsView(
-    styleSheet: StyleSheet
+    styleSheet: StyleSheet,
+    private val lspService: LspService,
+    private val lspManager: LspManager
 ) : BaseComponent(styleSheet) {
 
-    private val lspManager = LspManager()
-    private var statuses: List<LspServerStatus> = lspManager.statuses()
+    private var statuses: List<LspServerStatus> = lspService.statuses()
     private var selectedIdx: Int = 0
     private var lastMessage: String = ""
     private val cardHeight = 3
@@ -74,14 +76,14 @@ class SettingsView(
             }
             "s" -> {
                 val status = statuses.getOrNull(selectedIdx) ?: return false
-                val result = if (status.running) lspManager.stop(status.entry.id) else lspManager.start(status.entry.id)
+                val result = if (status.running) lspService.stopServer(status.entry.id) else lspService.startServer(status.entry.id)
                 lastMessage = result.message
                 refresh()
                 return true
             }
             "r" -> {
                 val status = statuses.getOrNull(selectedIdx) ?: return false
-                val result = lspManager.restart(status.entry.id)
+                val result = lspService.restartServer(status.entry.id)
                 lastMessage = result.message
                 refresh()
                 return true
@@ -121,7 +123,8 @@ class SettingsView(
     }
 
     private fun refresh() {
-        statuses = lspManager.reloadCatalog()
+        lspManager.reloadCatalog()
+        statuses = lspService.statuses()
         selectedIdx = when {
             statuses.isEmpty() -> 0
             selectedIdx >= statuses.size -> statuses.lastIndex

@@ -38,6 +38,8 @@ import com.sun.management.OperatingSystemMXBean
 import java.util.Locale
 import kotlin.system.exitProcess
 import editor.codeintel.CodeIntelService
+import editor.lsp.LspManager
+import editor.lsp.LspService
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     val perf = PerformanceTracker()
@@ -200,10 +202,13 @@ private class SplitPanelsApp(
     private val mimeDetector = DefaultMimeTypeDetector()
     private val regexProvider = KeywordSyntaxProvider
     private val codeIntel = CodeIntelService()
+    private val lspManager = LspManager()
+    private val lspService = LspService(lspManager, projectRoot)
     private var codeEditor = CodeEditorView(
         styleSheet,
         syntaxProvider = regexProvider,
         codeIntel = codeIntel,
+        lsp = lspService,
         navigationHandler = this::navigateTo
     )
     private val diffViewer = SideBySideDiffView(styleSheet)
@@ -243,7 +248,7 @@ private class SplitPanelsApp(
         onSelectRecent = { entry -> openRecent(entry) },
         onRemoveRecent = { entry -> removeRecent(entry) }
     )
-    private val settingsView = SettingsView(styleSheet)
+    private val settingsView = SettingsView(styleSheet, lspService, lspManager)
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
     private var workspacePickerVisible = false
