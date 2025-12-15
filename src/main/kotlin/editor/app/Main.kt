@@ -26,6 +26,8 @@ import editor.ui.ProjectSearchDialog
 import editor.ui.AboutView
 import editor.ui.WorkspacePickerDialog
 import editor.ui.SettingsView
+import editor.db.DbServerManager
+import editor.db.DbStatus
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -38,8 +40,14 @@ import com.sun.management.OperatingSystemMXBean
 import java.util.Locale
 import kotlin.system.exitProcess
 import editor.codeintel.CodeIntelService
+import editor.codeintel.CompositeEditorIntelligenceService
+import editor.codeintel.LspEditorIntelligence
 import editor.lsp.LspManager
 import editor.lsp.LspService
+
+interface StatusLineProvider {
+    fun statusRight(): String
+}
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     val perf = PerformanceTracker()
@@ -64,7 +72,8 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
         }
         perf.afterFrame()
         if (totalRows > 0) {
-            drawStatusLine(renderer, app.styleSheet, perf.snapshot(), totalCols, totalRows - 1)
+            val right = (app as? StatusLineProvider)?.statusRight()
+            drawStatusLine(renderer, app.styleSheet, perf.snapshot(), totalCols, totalRows - 1, right)
         }
         renderer.flush()
     }
@@ -103,6 +112,7 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
                 Thread.sleep(idleSleepMillis)
             }
         }
+        if (app is SplitPanelsApp) app.shutdownServices()
     } finally {
 
         // CLEANUP GUARANTEED
@@ -181,7 +191,7 @@ private class SplitPanelsApp(
     private val buildVersion: String,
     private var projectRoot: Path,
     private val onQuit: () -> Unit
-) : BaseComponent(styleSheet), Tickable {
+) : BaseComponent(styleSheet), Tickable, StatusLineProvider {
     // gotcha
     private var sessionManager = ProjectSessionManager(projectRoot)
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
@@ -201,13 +211,19 @@ private class SplitPanelsApp(
     private var rightFocus: FocusTarget = FocusTarget.CODE
     private val mimeDetector = DefaultMimeTypeDetector()
     private val regexProvider = KeywordSyntaxProvider
-    private val codeIntel = CodeIntelService()
     private val lspManager = LspManager()
     private val lspService = LspService(lspManager, projectRoot)
+    private val dbManager = DbServerManager()
+    private val codeIntelIndexer = CodeIntelService()
+    private val codeIntelFacade = CompositeEditorIntelligenceService(
+        primary = LspEditorIntelligence(lspService),
+        fallback = codeIntelIndexer
+    )
     private var codeEditor = CodeEditorView(
         styleSheet,
         syntaxProvider = regexProvider,
-        codeIntel = codeIntel,
+        codeIntelIndexer = codeIntelIndexer,
+        codeIntel = codeIntelFacade,
         lsp = lspService,
         navigationHandler = this::navigateTo
     )
@@ -248,7 +264,13 @@ private class SplitPanelsApp(
         onSelectRecent = { entry -> openRecent(entry) },
         onRemoveRecent = { entry -> removeRecent(entry) }
     )
-    private val settingsView = SettingsView(styleSheet, lspService, lspManager)
+    private val settingsView = SettingsView(
+        styleSheet,
+        lspService,
+        lspManager,
+        dbManager,
+        codeIntelIndexer
+    ) { projectRoot }
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
     private var workspacePickerVisible = false
@@ -258,6 +280,7 @@ private class SplitPanelsApp(
     private val refreshIntervalMs: Long = 5_000L
     private var activeDiff: GitDiff? = null
     init {
+        dbManager.start(projectRoot)
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
             entry.copy(
@@ -587,7 +610,8 @@ private class SplitPanelsApp(
         savedEditors.clear()
         currentOpenPath = ""
         projectSearchVisible = false
-        codeIntel.clear()
+        codeIntelIndexer.clear()
+        dbManager.restart(projectRoot)
 
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -603,7 +627,8 @@ private class SplitPanelsApp(
         codeEditor = CodeEditorView(
             styleSheet,
             syntaxProvider = regexProvider,
-            codeIntel = codeIntel,
+            codeIntelIndexer = codeIntelIndexer,
+            codeIntel = codeIntelFacade,
             navigationHandler = this::navigateTo
         )
         focus = FocusTarget.FILES
@@ -623,6 +648,23 @@ private class SplitPanelsApp(
         val gitDir = File(root.toFile(), ".git")
         if (!gitDir.isDirectory) return null
         return runCatching { JGitService(root.toFile()) }.getOrNull()
+    }
+
+    override fun statusRight(): String {
+        val dbStatus = dbManager.status()
+        val dbLabel = when (dbStatus.state) {
+            DbStatus.State.RUNNING -> "DB:up"
+            DbStatus.State.STARTING -> "DB:starting"
+            DbStatus.State.ERROR -> "DB:err"
+            DbStatus.State.STOPPED -> "DB:down"
+        }
+        val stats = codeIntelIndexer.stats()
+        val idxLabel = "Idx:${stats.files}f/${stats.symbols}s"
+        return "$dbLabel  $idxLabel"
+    }
+
+    fun shutdownServices() {
+        dbManager.stop()
     }
 
     private fun navigateTo(path: String, position: editor.lib.Position) {
@@ -959,15 +1001,22 @@ private fun drawStatusLine(
     styleSheet: StyleSheet,
     stats: PerfSnapshot,
     cols: Int,
-    row: Int
+    row: Int,
+    rightText: String?
 ) {
     val statusStyle = styleSheet.getStyle("status")
     val textWidth = (cols - 2).coerceAtLeast(0)
     val cpuText = String.format(Locale.US, "%.1f", stats.cpuPercent)
     val label = "Loop: ${stats.loopFps}/s  Draw: ${stats.renderFps}/s  Mem: ${stats.usedMb} MB  CPU: $cpuText%"
+    val right = rightText.orEmpty()
+    val padded = if (right.isNotBlank() && label.length + right.length + 4 < textWidth) {
+        val spaces = " ".repeat(textWidth - label.length - right.length - 1)
+        "$label$spaces$right"
+    } else {
+        label
+    }
     renderer.withStyle(statusStyle) {
         drawRect(0, row, cols, 1)
-        drawText(1, row, label.take(textWidth))
+        drawText(1, row, padded.take(textWidth))
     }
 }
-

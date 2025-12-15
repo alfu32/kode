@@ -1,9 +1,13 @@
 package editor.ui
 
-import editor.codeintel.CodeIntelProvider
 import editor.codeintel.CodeIntelService
-import editor.codeintel.CodePosition
-import editor.codeintel.CodeLocation
+import editor.codeintel.CompletionRequest
+import editor.codeintel.DefinitionRequest
+import editor.codeintel.EditorIntelligenceService
+import editor.codeintel.NavigationTarget
+import editor.codeintel.ReferenceRequest
+import editor.codeintel.TextPosition
+import editor.codeintel.TokensRequest
 import editor.lsp.LspService
 import editor.lib.FoundToken
 import editor.lib.Position
@@ -29,7 +33,7 @@ class CodeEditorView(
     private val buffer: TextBuffer = TextBuffer(),
     private val syntaxProvider: SyntaxProvider? = null,
     private val codeIntelIndexer: CodeIntelService? = null,
-    private val codeIntel: CodeIntelProvider? = null,
+    private val codeIntel: EditorIntelligenceService? = null,
     private val lsp: LspService? = null,
     private val navigationHandler: ((String, Position) -> Unit)? = null
 ) : BaseComponent(styleSheet) {
@@ -229,7 +233,15 @@ class CodeEditorView(
         val codeIntelTokensByLine = if (codeIntel != null && filePath.isNotEmpty()) {
             val sliceEnd = (lastVisibleLine + 1).coerceAtMost(lines.size)
             val lineSlice = lines.subList(firstVisibleLine, sliceEnd)
-            codeIntel.tokensForLines(filePath, firstVisibleLine, lineSlice, buffer.version()).groupBy { it.line }
+            codeIntel.tokens(
+                TokensRequest(
+                    filePath = filePath,
+                    language = grammarLanguage ?: language,
+                    startLine = firstVisibleLine,
+                    lines = lineSlice,
+                    version = buffer.version()
+                )
+            ).groupBy { it.line }
         } else {
             emptyMap()
         }
@@ -386,24 +398,24 @@ class CodeEditorView(
                 )
             }
             "mouse_up" -> {
-        dragging = false
-        // hide popup on click release outside
-        val rp = renderedPopup
-        if (rp != null && event.x != null && event.y != null) {
-            if (event.x !in rp.x until (rp.x + rp.width) || event.y !in rp.y until (rp.y + rp.height)) {
-                usagePopup = null
-                renderedPopup = null
+                dragging = false
+                // hide popup on click release outside
+                val rp = renderedPopup
+                if (rp != null && event.x != null && event.y != null) {
+                    if (event.x !in rp.x until (rp.x + rp.width) || event.y !in rp.y until (rp.y + rp.height)) {
+                        usagePopup = null
+                        renderedPopup = null
+                    }
+                }
+                val rs = renderedSuggestion
+                if (rs != null && event.x != null && event.y != null) {
+                    if (event.x !in rs.x until (rs.x + rs.width) || event.y !in rs.y until (rs.y + rs.height)) {
+                        suggestionPopup = null
+                        renderedSuggestion = null
+                    }
+                }
+                return true
             }
-        }
-        val rs = renderedSuggestion
-        if (rs != null && event.x != null && event.y != null) {
-            if (event.x !in rs.x until (rs.x + rs.width) || event.y !in rs.y until (rs.y + rs.height)) {
-                suggestionPopup = null
-                renderedSuggestion = null
-            }
-        }
-        return true
-    }
             "mouse_move" -> {
                 if (!dragging) {
                     if (updatePopupHover(event)) return true
@@ -510,14 +522,16 @@ class CodeEditorView(
         val isDeclaration = token.scopes.any { it.contains("codeintel.declaration") }
         if (isDeclaration) {
             val refs = codeIntel?.references(
-                filePath,
-                grammarLanguage ?: language,
-                CodePosition(line, col),
-                name
+                ReferenceRequest(
+                    filePath = filePath,
+                    language = grammarLanguage ?: language,
+                    position = TextPosition(line, col),
+                    symbol = name
+                )
             ).orEmpty()
             val usageEntries = refs.map {
-                val label = "${java.io.File(it.filePath).name}:${it.line + 1}:${it.column + 1}"
-                UsageEntry(it.filePath, it.line, it.column, label)
+                val label = "${java.io.File(it.filePath).name}:${it.range.start.line + 1}:${it.range.start.column + 1}"
+                UsageEntry(it.filePath, it.range.start.line, it.range.start.column, label)
             }
             if (usageEntries.isNotEmpty()) {
                 usagePopup = UsagePopup(Position(line, col), usageEntries)
@@ -530,27 +544,37 @@ class CodeEditorView(
     private fun identifyCodeIntelToken(line: Int, column: Int, lineText: String): editor.grammars.Token? {
         val service = codeIntel ?: return null
         if (filePath.isEmpty()) return null
-        val tokens = service.tokensForLines(filePath, line, listOf(lineText), buffer.version())
+        val tokens = service.tokens(
+            TokensRequest(
+                filePath = filePath,
+                language = grammarLanguage ?: language,
+                startLine = line,
+                lines = listOf(lineText),
+                version = buffer.version()
+            )
+        )
         return tokens.firstOrNull { column in it.start until it.end }
     }
 
     private fun openDefinition(name: String, position: Position) {
         val lang = grammarLanguage ?: language
         val hits = codeIntel?.definitions(
-            filePath,
-            lang,
-            CodePosition(position.line, position.column),
-            name
+            DefinitionRequest(
+                filePath = filePath,
+                language = lang,
+                position = TextPosition(position.line, position.column),
+                symbol = name
+            )
         ).orEmpty()
         val target = pickBestDefinition(hits, name) ?: return
-        navigationHandler?.invoke(target.filePath, Position(target.line, target.column))
+        navigationHandler?.invoke(target.filePath, Position(target.range.start.line, target.range.start.column))
     }
 
-    private fun pickBestDefinition(defs: List<CodeLocation>, identifier: String): CodeLocation? {
+    private fun pickBestDefinition(defs: List<NavigationTarget>, identifier: String): NavigationTarget? {
         if (defs.isEmpty()) return null
         val lower = identifier.lowercase()
         val currentFile = File(filePath).absoluteFile.normalize()
-        fun score(def: CodeLocation): Int {
+        fun score(def: NavigationTarget): Int {
             val file = File(def.filePath).absoluteFile.normalize()
             val fileName = file.nameWithoutExtension.lowercase()
             var s = 0
@@ -635,10 +659,12 @@ class CodeEditorView(
 
         val lang = grammarLanguage ?: language
         val completions = codeIntel?.completions(
-            filePath,
-            lang,
-            CodePosition(buffer.cursorPosition().line, buffer.cursorPosition().column),
-            prefix
+            CompletionRequest(
+                filePath = filePath,
+                language = lang,
+                position = TextPosition(buffer.cursorPosition().line, buffer.cursorPosition().column),
+                prefix = prefix
+            )
         ).orEmpty()
         completions.forEach { add(it.label, it.detail) }
 

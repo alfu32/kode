@@ -9,6 +9,9 @@ plugins {
 group = "org.github.alfu32.kte"
 version = "1.0-SNAPSHOT"
 
+val h2Version = "2.2.224"
+configurations.register("h2Dist")
+
 repositories {
     mavenCentral()
     maven("https://repo.eclipse.org/content/repositories/tm4e-snapshots/") {
@@ -27,6 +30,7 @@ dependencies {
     implementation("com.soywiz.korlibs.korio:korio:4.0.10")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    add("h2Dist", "com.h2database:h2:$h2Version")
 }
 
 tasks.test {
@@ -103,8 +107,15 @@ tasks.register<Copy>("distBundle") {
     val fat = tasks.named<Jar>("fatJar")
     val launchers = tasks.named("generateLaunchers")
     dependsOn(fat, launchers)
+    dependsOn(configurations.named("h2Dist"))
     val distDir = layout.projectDirectory.dir("dist")
     from(fat.map { it.archiveFile }) { rename { "kode.jar" } }
+    val h2Jar = configurations.named("h2Dist").map { it.singleFile }
+    from(h2Jar) { rename { "h2.jar" } }
+    from(h2Jar.map { zipTree(it) }) {
+        include("META-INF/LICENSE*", "LICENSE*")
+        rename { "h2-LICENSE.txt" }
+    }
     externalColorMap.asFile.takeIf { it.exists() }?.let { from(it) }
     val codeIntelFile = layout.projectDirectory.file("codeintel/definitions.json").asFile
     if (codeIntelFile.exists()) {
@@ -135,10 +146,16 @@ tasks.register<Copy>("releaseBundle") {
     doNotTrackState("Release bundle is regenerated fully to include launchers and assets.")
     val fat = tasks.named<Jar>("fatJar")
     val launchers = tasks.named("generateLaunchers")
-    dependsOn(fat, launchers)
+    dependsOn(fat, launchers, configurations.named("h2Dist"))
     val tag = latestTagOrVersion()
     val relDir = layout.projectDirectory.dir("kode-rel-$tag")
     from(fat.map { it.archiveFile }) { rename { "kode.jar" } }
+    val h2Jar = configurations.named("h2Dist").map { it.singleFile }
+    from(h2Jar) { rename { "h2.jar" } }
+    from(h2Jar.map { zipTree(it) }) {
+        include("META-INF/LICENSE*", "LICENSE*")
+        rename { "h2-LICENSE.txt" }
+    }
     val codeIntelFile = layout.projectDirectory.file("codeintel/definitions.json").asFile
     if (codeIntelFile.exists()) {
         from(codeIntelFile) { into("codeintel") }

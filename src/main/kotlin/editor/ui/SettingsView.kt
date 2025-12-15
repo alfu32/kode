@@ -4,6 +4,10 @@ import editor.lsp.InstallState
 import editor.lsp.LspManager
 import editor.lsp.LspService
 import editor.lsp.LspServerStatus
+import editor.db.DbServerManager
+import editor.db.DbStatus
+import editor.codeintel.CodeIntelService
+import java.nio.file.Path
 import react.BaseComponent
 import react.StyleSet
 import react.StyleSheet
@@ -13,12 +17,18 @@ import react.renderer.CanvasRenderer
 class SettingsView(
     styleSheet: StyleSheet,
     private val lspService: LspService,
-    private val lspManager: LspManager
+    private val lspManager: LspManager,
+    private val dbManager: DbServerManager,
+    private val codeIntel: CodeIntelService,
+    private val projectRootProvider: () -> Path
 ) : BaseComponent(styleSheet) {
 
     private var statuses: List<LspServerStatus> = lspService.statuses()
     private var selectedIdx: Int = 0
     private var lastMessage: String = ""
+    private var dbMessage: String = ""
+    private var lspScrollTop: Int = 0
+    private var dbFocused: Boolean = false
     private val cardHeight = 4
     private val buttonHits = mutableMapOf<Int, List<ButtonHit>>()
 
@@ -37,40 +47,96 @@ class SettingsView(
             }
         }
         val listStart = headerLines.size
-        val visibleCards = ((rows - listStart) / cardHeight).coerceAtLeast(0)
-        statuses.take(visibleCards).forEachIndexed { idx, status ->
-            val row = listStart + (idx * cardHeight)
-            val selected = idx == selectedIdx
-            renderCard(canvas, cols, row, status, selected, style, active)
-        }
+        val lspAreaRows = ((rows - listStart) / 2).coerceAtLeast(0)
+        renderLspList(canvas, cols, listStart, lspAreaRows, style, active)
+
+        val dbStart = (listStart + lspAreaRows).coerceAtMost(rows)
+        val dbRows = (rows - dbStart).coerceAtLeast(0)
+        renderDbPanel(canvas, cols, dbStart, dbRows, style)
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        val cols = event.cols ?: 0
+        val rows = event.rows ?: 0
+        val headerSize = headerLines().size
+        val lspAreaRows = ((rows - headerSize) / 2).coerceAtLeast(0)
+        val lspStart = headerSize
+        val dbStart = (lspStart + lspAreaRows).coerceAtMost(rows)
+
+        if (event.kind == "mouse_scroll") {
+            val delta = event.scrollDelta ?: return false
+            val visibleCards = (lspAreaRows / cardHeight).coerceAtLeast(1)
+            val maxScroll = (statuses.size - visibleCards).coerceAtLeast(0)
+            val prev = lspScrollTop
+            lspScrollTop = (lspScrollTop - delta).coerceIn(0, maxScroll)
+            return lspScrollTop != prev
+        }
         if (event.kind == "mouse_down") {
             val y = event.y ?: return false
-            val idx = (y - headerLines().size) / cardHeight
-            if (idx in statuses.indices) {
-                selectedIdx = idx
-                val hit = event.x?.let { x -> buttonHits[y]?.firstOrNull { x in it.range } }
-                if (hit != null) {
-                    handleButtonAction(idx, hit.action)
+            if (y in lspStart until dbStart) {
+                dbFocused = false
+                val idx = lspScrollTop + ((y - lspStart) / cardHeight)
+                if (idx in statuses.indices) {
+                    selectedIdx = idx
+                    val hit = event.x?.let { x -> buttonHits[y]?.firstOrNull { x in it.range } }
+                    if (hit != null) {
+                        handleButtonAction(idx, hit.action)
+                        return true
+                    }
                     return true
                 }
-                return true
+                return false
+            }
+            if (y >= dbStart) {
+                dbFocused = true
+                val hit = event.x?.let { x -> buttonHits[y]?.firstOrNull { x in it.range } }
+                if (hit != null) {
+                    handleDbAction(hit.action)
+                    return true
+                }
+                return false
             }
             return false
         }
         if (event.kind != "key_down") return false
-        when (event.key?.lowercase()) {
+        val key = event.key?.lowercase()
+        if (dbFocused) {
+            when (key) {
+                "s" -> {
+                    val status = dbManager.status()
+                    val root = projectRootProvider()
+                    val result = if (status.state == DbStatus.State.RUNNING || status.state == DbStatus.State.STARTING) {
+                        dbManager.stop()
+                    } else dbManager.start(root)
+                    dbMessage = result.message
+                    return true
+                }
+                "r" -> {
+                    val root = projectRootProvider()
+                    val result = dbManager.restart(root)
+                    dbMessage = result.message
+                    return true
+                }
+                "c" -> {
+                    val cleared = dbManager.clearIndex()
+                    codeIntel.clear()
+                    dbMessage = if (cleared) "Cleared index" else "Failed to clear index"
+                    return true
+                }
+            }
+        }
+        when (key) {
             "up" -> {
                 if (statuses.isNotEmpty()) {
                     selectedIdx = ((selectedIdx - 1) + statuses.size) % statuses.size
+                    ensureSelectionVisible(lspAreaRows)
                 }
                 return true
             }
             "down" -> {
                 if (statuses.isNotEmpty()) {
                     selectedIdx = (selectedIdx + 1) % statuses.size
+                    ensureSelectionVisible(lspAreaRows)
                 }
                 return true
             }
@@ -129,6 +195,99 @@ class SettingsView(
         return lines
     }
 
+    private fun renderLspList(
+        canvas: CanvasRenderer,
+        cols: Int,
+        startRow: Int,
+        rows: Int,
+        style: StyleSet,
+        active: StyleSet
+    ) {
+        if (rows <= 0) return
+        val visibleCards = (rows / cardHeight).coerceAtLeast(0)
+        val maxScroll = (statuses.size - visibleCards).coerceAtLeast(0)
+        lspScrollTop = lspScrollTop.coerceIn(0, maxScroll)
+        val slice = statuses.drop(lspScrollTop).take(visibleCards)
+        slice.forEachIndexed { idx, status ->
+            val absoluteIdx = lspScrollTop + idx
+            val row = startRow + (idx * cardHeight)
+            val selected = absoluteIdx == selectedIdx
+            renderCard(canvas, cols, row, status, selected, style, active)
+        }
+    }
+
+    private fun renderDbPanel(canvas: CanvasRenderer, cols: Int, startRow: Int, rows: Int, baseStyle: StyleSet) {
+        if (rows <= 0) return
+        val status = dbManager.status()
+        val stats = codeIntel.stats()
+        val header = "Database / Processes"
+        val jar = status.jarPath?.toString() ?: "jar: missing"
+        val baseDir = status.baseDir?.toString() ?: "data: unset"
+        val stateLabel = when (status.state) {
+            DbStatus.State.RUNNING -> "running"
+            DbStatus.State.STARTING -> "starting"
+            DbStatus.State.ERROR -> "error"
+            DbStatus.State.STOPPED -> "stopped"
+        }
+        val stateStyle = when (status.state) {
+            DbStatus.State.RUNNING -> styleSheet.getStyle("db-status-ok")
+            DbStatus.State.STARTING -> styleSheet.getStyle("db-status-warn")
+            DbStatus.State.ERROR -> styleSheet.getStyle("db-status-err")
+            DbStatus.State.STOPPED -> styleSheet.getStyle("db-status-warn")
+        }
+        val panelStyle = attachBackground(styleSheet.getStyle("db-panel"), baseStyle)
+        val msg = status.message.ifBlank { dbMessage }
+        canvas.withStyle(panelStyle) {
+            drawRect(0, startRow, cols, rows)
+            drawText(0, startRow, header.take(cols).padEnd(cols, ' '))
+            if (rows > 1) drawText(0, startRow + 1, " state: ".take(cols))
+            canvas.withStyle(attachBackground(stateStyle, panelStyle)) {
+                if (rows > 1) drawText(8, startRow + 1, stateLabel.take((cols - 8).coerceAtLeast(0)))
+            }
+            if (rows > 2) drawText(0, startRow + 2, " jar: ${jar.take(cols - 5)}".padEnd(cols, ' '))
+            if (rows > 3) drawText(0, startRow + 3, " dir: ${baseDir.take(cols - 6)}".padEnd(cols, ' '))
+            if (rows > 4) drawText(0, startRow + 4, " index: ${stats.files} files, ${stats.symbols} symbols".take(cols).padEnd(cols, ' '))
+            if (rows > 5 && msg.isNotBlank()) {
+                val msgStyle = attachBackground(styleSheet.getStyle("db-status-err"), panelStyle)
+                canvas.withStyle(msgStyle) {
+                    drawText(0, startRow + 5, msg.take(cols).padEnd(cols, ' '))
+                }
+            }
+            if (rows > 6) {
+                renderDbButtons(canvas, startRow + 6, cols, panelStyle)
+            }
+        }
+    }
+
+    private fun renderDbButtons(canvas: CanvasRenderer, y: Int, cols: Int, baseStyle: StyleSet) {
+        val buttonBase = styleSheet.getStyle("lsp-button")
+        val buttonStyle = StyleSet(
+            bg = buttonBase.bg ?: baseStyle.bg,
+            fg = buttonBase.fg ?: baseStyle.fg,
+            textDecoration = mergeDecorations(buttonBase.textDecoration, null)
+        )
+        val buttons = listOf(
+            "[start/stop(s)]" to ButtonAction.DB_START_STOP,
+            "[restart(r)]" to ButtonAction.DB_RESTART,
+            "[clear index(c)]" to ButtonAction.DB_CLEAR
+        )
+        var cursor = 0
+        val hits = mutableListOf<ButtonHit>()
+        buttons.forEach { (label, action) ->
+            val padded = " $label "
+            if (cursor + padded.length > cols) return
+            canvas.withStyle(buttonStyle) { drawText(cursor, y, padded) }
+            hits += ButtonHit(cursor until (cursor + padded.length), action)
+            cursor += padded.length + 1
+        }
+        if (hits.isNotEmpty()) {
+            buttonHits[y] = hits
+        }
+        if (cursor < cols) {
+            canvas.withStyle(baseStyle) { drawText(cursor, y, " ".repeat(cols - cursor)) }
+        }
+    }
+
     private fun refresh() {
         lspManager.reloadCatalog()
         statuses = lspService.statuses()
@@ -137,6 +296,18 @@ class SettingsView(
             selectedIdx >= statuses.size -> statuses.lastIndex
             selectedIdx < 0 -> 0
             else -> selectedIdx
+        }
+        val maxScroll = (statuses.size - 1).coerceAtLeast(0)
+        lspScrollTop = lspScrollTop.coerceIn(0, maxScroll)
+    }
+
+    private fun ensureSelectionVisible(lspAreaRows: Int) {
+        val visibleCards = (lspAreaRows / cardHeight).coerceAtLeast(1)
+        val maxScroll = (statuses.size - visibleCards).coerceAtLeast(0)
+        if (selectedIdx < lspScrollTop) {
+            lspScrollTop = selectedIdx.coerceIn(0, maxScroll)
+        } else if (selectedIdx >= lspScrollTop + visibleCards) {
+            lspScrollTop = (selectedIdx - visibleCards + 1).coerceIn(0, maxScroll)
         }
     }
 
@@ -326,12 +497,36 @@ class SettingsView(
                 val removed = lspManager.uninstall(status.entry.id)
                 lastMessage = if (removed) "Uninstalled ${status.entry.name}" else "Nothing to uninstall"
             }
+            else -> {}
         }
         refresh()
     }
 
+    private fun handleDbAction(action: ButtonAction) {
+        val root = projectRootProvider()
+        when (action) {
+            ButtonAction.DB_START_STOP -> {
+                val status = dbManager.status()
+                val result = if (status.state == DbStatus.State.RUNNING || status.state == DbStatus.State.STARTING) {
+                    dbManager.stop()
+                } else dbManager.start(root)
+                dbMessage = result.message
+            }
+            ButtonAction.DB_RESTART -> {
+                val result = dbManager.restart(root)
+                dbMessage = result.message
+            }
+            ButtonAction.DB_CLEAR -> {
+                val cleared = dbManager.clearIndex()
+                codeIntel.clear()
+                dbMessage = if (cleared) "Cleared index" else "Failed to clear index"
+            }
+            else -> {}
+        }
+    }
+
     private data class ButtonHit(val range: IntRange, val action: ButtonAction)
-    private enum class ButtonAction { START_STOP, RESTART, INSTALL, UNINSTALL }
+    private enum class ButtonAction { START_STOP, RESTART, INSTALL, UNINSTALL, DB_START_STOP, DB_RESTART, DB_CLEAR }
 
     private fun attachBackground(style: StyleSet, fallback: StyleSet): StyleSet {
         val merged = style.copy()

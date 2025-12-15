@@ -247,6 +247,22 @@ lsp-button {
     bg: #ffbf55;
     fg: #0f1424;
 }
+db-panel {
+    bg: #101628;
+    fg: #b6b9c5;
+}
+db-status-ok {
+    fg: #6bea8a;
+    bg: #101628;
+}
+db-status-warn {
+    fg: #ffbf55;
+    bg: #101628;
+}
+db-status-err {
+    fg: #ff6b6b;
+    bg: #101628;
+}
 slider-track {
     bg: #3f4e7e;
     fg: #b6b9c5;

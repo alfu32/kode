@@ -5,6 +5,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import editor.codeintel.SymbolKind
+import editor.codeintel.ReferenceRequest
+import editor.codeintel.TextPosition
+import editor.codeintel.TokensRequest
 import java.nio.file.Files
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.writeText
@@ -28,7 +31,15 @@ class CodeIntelServiceTest {
         service.indexDocument(path, "kotlin", text, version = 1)
         service.waitForIdle()
 
-        val tokens = service.tokensForLines(path, 0, text.split("\n"), currentVersion = 1)
+        val tokens = service.tokens(
+            TokensRequest(
+                filePath = path,
+                language = "kotlin",
+                startLine = 0,
+                lines = text.split("\n"),
+                version = 1
+            )
+        )
         val decls = tokens.filter { it.scopes.contains("codeintel.declaration") }
         val usages = tokens.filter { it.scopes.contains("codeintel.usage") }
 
@@ -52,7 +63,15 @@ class CodeIntelServiceTest {
         service.waitForIdle()
 
         // Tokens should be empty if caller asks for a stale version.
-        val staleTokens = service.tokensForLines(path, 0, textV1.split("\n"), currentVersion = 2)
+        val staleTokens = service.tokens(
+            TokensRequest(
+                filePath = path,
+                language = "kotlin",
+                startLine = 0,
+                lines = textV1.split("\n"),
+                version = 2
+            )
+        )
         assertTrue(staleTokens.isEmpty())
 
         val outline = service.documentOutline(path)
@@ -69,7 +88,15 @@ class CodeIntelServiceTest {
         service.indexDocument(path, "kotlin", textV2, version = 2)
         service.waitForIdle()
 
-        val tokensV2 = service.tokensForLines(path, 0, textV2.split("\n"), currentVersion = 2)
+        val tokensV2 = service.tokens(
+            TokensRequest(
+                filePath = path,
+                language = "kotlin",
+                startLine = 0,
+                lines = textV2.split("\n"),
+                version = 2
+            )
+        )
         assertFalse(tokensV2.isEmpty())
         assertTrue(tokensV2.any { it.scopes.contains("codeintel.usage") && it.text == "Widget" })
         } finally {
@@ -180,7 +207,14 @@ class CodeIntelServiceTest {
             service.indexDocument(usePath, "kotlin", useText, version = 1)
             service.waitForIdle()
 
-            val refs = service.references(defPath, "kotlin", CodePosition(0, 0), "Foo")
+            val refs = service.references(
+                ReferenceRequest(
+                    filePath = defPath,
+                    language = "kotlin",
+                    position = TextPosition(0, 0),
+                    symbol = "Foo"
+                )
+            )
             assertTrue(refs.any { it.filePath == usePath })
             assertTrue(refs.any { it.filePath == defPath })
         } finally {

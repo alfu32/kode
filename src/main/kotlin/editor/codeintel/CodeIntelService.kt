@@ -12,8 +12,6 @@ import java.util.concurrent.TimeUnit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-enum class SymbolKind { CLASS, FUNCTION, VARIABLE, INTERFACE, ENUM, OBJECT, MODULE }
-
 data class SymbolDef(
     val name: String,
     val kind: SymbolKind,
@@ -62,7 +60,7 @@ interface DefinitionExtractor {
 class CodeIntelService(
     private val extractor: DefinitionExtractor = RegexDefinitionExtractor(),
     private val debounceMs: Long = 200L
-) : CodeIntelProvider {
+) : EditorIntelligenceService {
 
     private val executor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "code-intel").apply { isDaemon = true }
@@ -88,31 +86,142 @@ class CodeIntelService(
         }
     }
 
+    override fun definitions(request: DefinitionRequest): List<NavigationTarget> {
+        if (request.symbol.isBlank()) return emptyList()
+        val lower = request.symbol.lowercase(Locale.ROOT)
+        val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
+        return defs.mapNotNull { def ->
+            val line = def.line ?: return@mapNotNull null
+            val col = def.startColumn ?: 0
+            NavigationTarget(
+                filePath = def.filePath,
+                range = TextRange(
+                    start = TextPosition(line, col),
+                    end = TextPosition(line, col + def.name.length)
+                ),
+                kind = def.kind,
+                name = def.name
+            )
+        }
+    }
+
+    override fun references(request: ReferenceRequest): List<NavigationTarget> {
+        if (request.symbol.isBlank()) return emptyList()
+        val lower = request.symbol.lowercase(Locale.ROOT)
+        val results = mutableListOf<NavigationTarget>()
+        val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
+        defs.forEach { def ->
+            val line = def.line
+            val col = def.startColumn
+            if (line != null && col != null) {
+                results.add(
+                    NavigationTarget(
+                        filePath = def.filePath,
+                        range = TextRange(
+                            start = TextPosition(line, col),
+                            end = TextPosition(line, col + def.name.length)
+                        ),
+                        kind = def.kind,
+                        name = def.name
+                    )
+                )
+            }
+        }
+        val tokens = synchronized(lock) { usagesIndex[lower]?.toList().orEmpty() }
+        tokens.forEach { tok ->
+            val file = tok.filePath
+            if (file != null) {
+                results.add(
+                    NavigationTarget(
+                        filePath = file,
+                        range = TextRange(
+                            start = TextPosition(tok.line, tok.start),
+                            end = TextPosition(tok.line, tok.end)
+                        ),
+                        name = tok.name
+                    )
+                )
+            }
+        }
+        return results
+    }
+
+    override fun completions(request: CompletionRequest): List<CompletionItem> {
+        val trimmed = request.prefix.trim()
+        val items = mutableListOf<CompletionItem>()
+        synchronized(lock) {
+            val source = if (trimmed.isEmpty()) {
+                workspaceIndex.values.flatten()
+            } else {
+                val lower = trimmed.lowercase(Locale.ROOT)
+                workspaceIndex.entries
+                    .filter { (name, _) -> name.startsWith(lower) }
+                    .flatMap { it.value }
+            }
+            source.forEach { def ->
+                items.add(
+                    CompletionItem(
+                        label = def.name,
+                        detail = java.io.File(def.filePath).name,
+                        kind = def.kind
+                    )
+                )
+            }
+        }
+        return items.take(50)
+    }
+
+    override fun documentSymbols(path: String): List<Symbol> {
+        val doc = synchronized(lock) { documents[path] } ?: return emptyList()
+        return doc.definitions.mapNotNull { def ->
+            val line = def.line ?: return@mapNotNull null
+            val col = def.startColumn ?: 0
+            Symbol(
+                name = def.name,
+                kind = def.kind,
+                filePath = def.filePath,
+                range = TextRange(
+                    start = TextPosition(line, col),
+                    end = TextPosition(line, col + def.name.length)
+                )
+            )
+        }
+    }
+
     fun documentOutline(path: String): List<SymbolDef> =
         synchronized(lock) { documents[path]?.definitions.orEmpty() }
 
-    fun workspaceSymbols(query: String, limit: Int = 64): List<SymbolDef> {
+    data class IndexStats(val files: Int, val symbols: Int, val usages: Int)
+
+    fun stats(): IndexStats = synchronized(lock) {
+        val fileCount = documents.size
+        val symbolCount = documents.values.sumOf { it.definitions.size }
+        val usageCount = usagesIndex.values.sumOf { it.size }
+        IndexStats(fileCount, symbolCount, usageCount)
+    }
+
+    fun workspaceSymbols(query: String, limit: Int = 64): List<Symbol> {
         if (query.isBlank()) return emptyList()
         val lower = query.lowercase(Locale.ROOT)
-        val matches = mutableListOf<SymbolDef>()
+        val matches = mutableListOf<Symbol>()
         synchronized(lock) {
             workspaceIndex.forEach { (name, defs) ->
                 if (matches.size >= limit) return@forEach
                 if (name.contains(lower)) {
-                    matches.addAll(defs)
+                    matches.addAll(defs.mapNotNull { it.toSymbol() })
                 }
             }
         }
         return matches.take(limit)
     }
 
-    override fun tokensForLines(path: String, startLine: Int, lines: List<String>, currentVersion: Long): List<Token> {
-        val doc = synchronized(lock) { documents[path] }
-        if (doc == null || doc.version != currentVersion) return emptyList()
+    override fun tokens(request: TokensRequest): List<Token> {
+        val doc = synchronized(lock) { documents[request.filePath] }
+        if (doc == null || doc.version != request.version) return emptyList()
         val accent = Color.from("#5da9ff")
         val tokens = mutableListOf<Token>()
-        lines.forEachIndexed { idx, line ->
-            val absoluteLine = startLine + idx
+        request.lines.forEachIndexed { idx, line ->
+            val absoluteLine = request.startLine + idx
             val idents = doc.identifiersByLine[absoluteLine].orEmpty()
             idents.forEach { id ->
                 val clampedStart = id.start.coerceIn(0, line.length)
@@ -130,58 +239,6 @@ class CodeIntelService(
             }
         }
         return tokens
-    }
-
-    override fun definitions(path: String, language: String?, position: CodePosition, name: String): List<CodeLocation> {
-        if (name.isBlank()) return emptyList()
-        val lower = name.lowercase(Locale.ROOT)
-        val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
-        return defs.mapNotNull { def ->
-            val line = def.line ?: return@mapNotNull null
-            val col = def.startColumn ?: 0
-            CodeLocation(def.filePath, line, col)
-        }
-    }
-
-    override fun references(path: String, language: String?, position: CodePosition, name: String): List<CodeLocation> {
-        if (name.isBlank()) return emptyList()
-        val lower = name.lowercase(Locale.ROOT)
-        val results = mutableListOf<CodeLocation>()
-        val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
-        defs.forEach { def ->
-            val line = def.line
-            val col = def.startColumn
-            if (line != null && col != null) {
-                results.add(CodeLocation(def.filePath, line, col))
-            }
-        }
-        val tokens = synchronized(lock) { usagesIndex[lower]?.toList().orEmpty() }
-        tokens.forEach { tok ->
-            val file = tok.filePath
-            if (file != null) {
-                results.add(CodeLocation(file, tok.line, tok.start))
-            }
-        }
-        return results
-    }
-
-    override fun completions(path: String, language: String?, position: CodePosition, prefix: String): List<CompletionItem> {
-        val trimmed = prefix.trim()
-        val items = mutableListOf<CompletionItem>()
-        synchronized(lock) {
-            val source = if (trimmed.isEmpty()) {
-                workspaceIndex.values.flatten()
-            } else {
-                val lower = trimmed.lowercase(Locale.ROOT)
-                workspaceIndex.entries
-                    .filter { (name, _) -> name.startsWith(lower) }
-                    .flatMap { it.value }
-            }
-            source.forEach { def ->
-                items.add(CompletionItem(def.name, java.io.File(def.filePath).name))
-            }
-        }
-        return items.take(50)
     }
 
     fun clear() {
@@ -265,6 +322,20 @@ class CodeIntelService(
             val bucket = usagesIndex.getOrPut(key) { mutableListOf() }
             bucket.add(tok)
         }
+    }
+
+    private fun SymbolDef.toSymbol(): Symbol? {
+        val lineNum = line ?: return null
+        val col = startColumn ?: 0
+        return Symbol(
+            name = name,
+            kind = kind,
+            filePath = filePath,
+            range = TextRange(
+                start = TextPosition(lineNum, col),
+                end = TextPosition(lineNum, col + name.length)
+            )
+        )
     }
 
     companion object {
@@ -555,13 +626,6 @@ data class PatternConfig(
 
 @Serializable
 enum class BlockMode { BRACE, INDENT, PAREN, REGEX, SQL, NONE }
-
-data class UsageLocation(
-    val filePath: String,
-    val line: Int,
-    val startColumn: Int,
-    val endColumn: Int
-)
 
 private fun String.toSymbolKind(): SymbolKind =
     runCatching { SymbolKind.valueOf(this.uppercase(Locale.ROOT)) }.getOrDefault(SymbolKind.VARIABLE)

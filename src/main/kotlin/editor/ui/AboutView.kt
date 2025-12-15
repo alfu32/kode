@@ -48,6 +48,8 @@ class AboutView(
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
         val style = styleSheet.getStyle("content")
+
+
         canvas.withStyle(style) {
             drawRect(0, 0, cols, rows)
             val textWidth = (cols - 2).coerceAtLeast(0)
@@ -70,3 +72,5 @@ class AboutView(
 
     override fun dispatch(event: UIEvent): Boolean = false
 }
+
+
