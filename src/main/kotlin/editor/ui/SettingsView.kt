@@ -20,8 +20,10 @@ class SettingsView(
     private var selectedIdx: Int = 0
     private var lastMessage: String = ""
     private val cardHeight = 4
+    private val buttonHits = mutableMapOf<Int, List<ButtonHit>>()
 
     override fun render(canvas: CanvasRenderer) {
+        buttonHits.clear()
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
         val contentStyle = styleSheet.getStyle("content")
@@ -49,6 +51,11 @@ class SettingsView(
             val idx = (y - headerLines().size) / cardHeight
             if (idx in statuses.indices) {
                 selectedIdx = idx
+                val hit = event.x?.let { x -> buttonHits[y]?.firstOrNull { x in it.range } }
+                if (hit != null) {
+                    handleButtonAction(idx, hit.action)
+                    return true
+                }
                 return true
             }
             return false
@@ -208,7 +215,7 @@ class SettingsView(
         val line4Y = row + 3
         if (line4Y < canvas.rows()) {
             val msg = status.message.orEmpty()
-            val msgStyle = mergeStyles(styleSheet.getStyle("lsp-error"), bgStyle)
+            val msgStyle = attachBackground(mergeStyles(styleSheet.getStyle("lsp-error"), bgStyle), bgStyle)
             canvas.withStyle(if (msg.isNotBlank()) msgStyle else bgStyle) {
                 drawText(0, line4Y, msg.take(cols).padEnd(cols, ' '))
             }
@@ -267,12 +274,15 @@ class SettingsView(
         buttons += "[${installLabel(status)}]"
         buttons += "[${uninstallLabel(status)}]"
         var cursor = 0
-        buttons.forEach { label ->
+        val hits = mutableListOf<ButtonHit>()
+        buttons.forEachIndexed { idx, label ->
             val padded = " $label "
             if (cursor + padded.length > cols) return
             canvas.withStyle(buttonStyle) { drawText(cursor, y, padded) }
+            hits += ButtonHit(cursor until (cursor + padded.length), buttonAction(idx))
             cursor += padded.length + 1
         }
+        buttonHits[y] = hits
         // fill rest of line with base style
         if (cursor < cols) {
             canvas.withStyle(baseStyle) { drawText(cursor, y, " ".repeat(cols - cursor)) }
@@ -289,6 +299,39 @@ class SettingsView(
         InstallState.INSTALLED, InstallState.UPDATE_AVAILABLE -> "uninstall(y)"
         InstallState.MANUAL, InstallState.MISSING, InstallState.ERROR -> "remove(y)"
     }
+
+    private fun buttonAction(idx: Int): ButtonAction = when (idx) {
+        0 -> ButtonAction.START_STOP
+        1 -> ButtonAction.RESTART
+        2 -> ButtonAction.INSTALL
+        else -> ButtonAction.UNINSTALL
+    }
+
+    private fun handleButtonAction(selected: Int, action: ButtonAction) {
+        val status = statuses.getOrNull(selected) ?: return
+        when (action) {
+            ButtonAction.START_STOP -> {
+                val result = if (status.running) lspService.stopServer(status.entry.id) else lspService.startServer(status.entry.id)
+                lastMessage = result.message
+            }
+            ButtonAction.RESTART -> {
+                val result = lspService.restartServer(status.entry.id)
+                lastMessage = result.message
+            }
+            ButtonAction.INSTALL -> {
+                val result = lspManager.install(status.entry.id)
+                lastMessage = result.message
+            }
+            ButtonAction.UNINSTALL -> {
+                val removed = lspManager.uninstall(status.entry.id)
+                lastMessage = if (removed) "Uninstalled ${status.entry.name}" else "Nothing to uninstall"
+            }
+        }
+        refresh()
+    }
+
+    private data class ButtonHit(val range: IntRange, val action: ButtonAction)
+    private enum class ButtonAction { START_STOP, RESTART, INSTALL, UNINSTALL }
 
     private fun attachBackground(style: StyleSet, fallback: StyleSet): StyleSet {
         val merged = style.copy()
