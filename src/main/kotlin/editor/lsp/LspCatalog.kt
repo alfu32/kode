@@ -437,3 +437,4 @@ data class Platform(val os: String, val arch: String) {
         }
     }
 }
+

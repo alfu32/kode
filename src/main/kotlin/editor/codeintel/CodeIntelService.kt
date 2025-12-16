@@ -226,8 +226,6 @@ class CodeIntelService(
     override fun tokens(request: TokensRequest): List<Token> {
         val doc = synchronized(lock) { documents[request.filePath] }
         if (doc == null || doc.version != request.version) return emptyList()
-        val accent = Color.from("#5da9ff")
-        val methodColor = Color.from("#FF8BD9")
         val tokens = mutableListOf<Token>()
         request.lines.forEachIndexed { idx, line ->
             val absoluteLine = request.startLine + idx
@@ -238,10 +236,6 @@ class CodeIntelService(
                 if (clampedEnd <= clampedStart) return@forEach
                 val scope = if (id.declaration) DECL_SCOPE else USAGE_SCOPE
                 val kind = resolveKind(id.name, request.filePath, doc)
-                val fg = when (kind) {
-                    SymbolKind.METHOD, SymbolKind.FIELD -> methodColor
-                    else -> accent
-                }
                 val scopes = mutableListOf(scope)
                 when (kind) {
                     SymbolKind.METHOD -> scopes += "codeintel.method"
@@ -254,7 +248,7 @@ class CodeIntelService(
                     scopes = scopes,
                     line = absoluteLine,
                     text = line.substring(clampedStart, clampedEnd),
-                    fg = fg
+                    fg = null
                 )
             }
         }

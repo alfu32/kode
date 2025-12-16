@@ -290,6 +290,7 @@ private class SplitPanelsApp(
     private var activeDiff: GitDiff? = null
     init {
         dbManager.start(projectRoot)
+        resetCodeIntelStore()
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
             entry.copy(
@@ -300,9 +301,8 @@ private class SplitPanelsApp(
         savedEditors = loaded.openEditors.associateBy { sessionManager.toAbsolute(it.path) }
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
-        codeIntelIndexer.loadFromStore()
         restoreLastSession()
-        maybeFullScanProject()
+        triggerFreshScan()
     }
     private val leftTabs = TabView(
         styleSheet = styleSheet,
@@ -623,6 +623,7 @@ private class SplitPanelsApp(
         projectSearchVisible = false
         codeIntelIndexer.clear()
         dbManager.restart(projectRoot)
+        resetCodeIntelStore()
 
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -654,7 +655,7 @@ private class SplitPanelsApp(
         workspacePickerVisible = false
         workspacePicker = null
         restoreLastSession()
-        maybeFullScanProject()
+        triggerFreshScan()
         persistSession(force = true)
     }
 
@@ -710,29 +711,20 @@ private class SplitPanelsApp(
         println("Reindex complete: $indexed/${files.size} files with language in ${elapsed}ms")
     }
 
-    private fun maybeFullScanProject() {
-        val dbFile = projectRoot.resolve(".kode/db/kode.mv.db").toFile()
-        if (dbFile.exists() && codeIntelIndexer.hasPersistentData()) return
+    private fun triggerFreshScan() {
         Thread({
-            listFilesForIndex().forEach { path ->
-                val detected = mimeDetector.detectFile(path)
-                val lang = detected?.language
-                if (lang.isNullOrBlank()) return@forEach
-                val sizeOk = runCatching { Files.size(path) <= 512_000 }.getOrDefault(false)
-                if (!sizeOk) return@forEach
-                val content = runCatching { Files.readString(path) }.getOrNull() ?: return@forEach
-                codeIntelIndexer.indexDocument(path.toString(), lang, content, version = 0L)
-                val rel = projectRoot.relativize(path).toString()
-                println("loaded $rel")
-            }
-            codeIntelIndexer.waitForIdle(5_000)
-            indexSdkSources()
-        }, "codeintel-fullscan").apply { isDaemon = true }.start()
+            fullReindex()
+        }, "codeintel-freshscan").apply { isDaemon = true }.start()
     }
 
     private fun listFilesForIndex(): List<Path> {
         val ignorePatterns = gitService?.ignoredPatterns().orEmpty()
         return ProjectFileScanner.listFilesForIndex(projectRoot, ignorePatterns)
+    }
+
+    private fun resetCodeIntelStore() {
+        codeIntelIndexer.clear()
+        dbManager.clearIndex()
     }
 
     private fun indexSdkSources() {

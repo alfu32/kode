@@ -55,6 +55,8 @@ class DbCodeIntelStore(
                 )
                 stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_idx ON usages(name_lc)")
                 stmt.execute("CREATE INDEX IF NOT EXISTS usages_file_idx ON usages(file)")
+                stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_file_idx ON usages(name_lc, file)")
+                stmt.execute("CREATE INDEX IF NOT EXISTS symbols_name_file_idx ON symbols(name_lc, file)")
             }
             initialized = true
         }

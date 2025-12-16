@@ -213,7 +213,7 @@ code-search-active {
     fg: #13203c;
 }
 codeintel.usage {
-    fg: #b6b9c5;
+    fg: #5da9ff;
     bg: #1a2237;
     text-decoration: italic;
 }
@@ -223,9 +223,11 @@ codeintel.declaration {
     text-decoration: bold;
 }
 codeintel.method {
+    fg: #ff8bd9;
     bg: #1a2237;
 }
 codeintel.field {
+    fg: #ff8bd9;
     bg: #1a2237;
 }
 lsp-list {
