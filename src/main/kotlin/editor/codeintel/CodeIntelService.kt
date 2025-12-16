@@ -1,5 +1,6 @@
 package editor.codeintel
 
+import editor.grammars.KeywordSyntaxProvider
 import editor.grammars.Token
 import react.Color
 import java.nio.file.Files
@@ -226,6 +227,7 @@ class CodeIntelService(
         val doc = synchronized(lock) { documents[request.filePath] }
         if (doc == null || doc.version != request.version) return emptyList()
         val accent = Color.from("#5da9ff")
+        val methodColor = Color.from("#FF7FD1")
         val tokens = mutableListOf<Token>()
         request.lines.forEachIndexed { idx, line ->
             val absoluteLine = request.startLine + idx
@@ -235,13 +237,24 @@ class CodeIntelService(
                 val clampedEnd = id.end.coerceIn(clampedStart, line.length)
                 if (clampedEnd <= clampedStart) return@forEach
                 val scope = if (id.declaration) DECL_SCOPE else USAGE_SCOPE
+                val kind = resolveKind(id.name, request.filePath, doc)
+                val fg = when (kind) {
+                    SymbolKind.METHOD, SymbolKind.FIELD -> methodColor
+                    else -> accent
+                }
+                val scopes = mutableListOf(scope)
+                when (kind) {
+                    SymbolKind.METHOD -> scopes += "codeintel.method"
+                    SymbolKind.FIELD -> scopes += "codeintel.field"
+                    else -> {}
+                }
                 tokens += Token(
                     start = clampedStart,
                     end = clampedEnd,
-                    scopes = listOf(scope),
+                    scopes = scopes,
                     line = absoluteLine,
                     text = line.substring(clampedStart, clampedEnd),
-                    fg = accent
+                    fg = fg
                 )
             }
         }
@@ -372,6 +385,17 @@ class CodeIntelService(
         )
     }
 
+    private fun resolveKind(name: String, filePath: String?, doc: DocumentIndex): SymbolKind? {
+        val lower = name.lowercase(Locale.ROOT)
+        doc.definitions.firstOrNull { it.name.equals(name, ignoreCase = true) }?.let { return it.kind }
+        synchronized(lock) {
+            workspaceIndex[lower]?.firstOrNull { def ->
+                filePath == null || def.filePath == filePath || def.name.equals(name, ignoreCase = true)
+            }?.let { return it.kind }
+        }
+        return null
+    }
+
     companion object {
         private const val DECL_SCOPE = "codeintel.declaration"
         private const val USAGE_SCOPE = "codeintel.usage"
@@ -398,7 +422,7 @@ private class RegexDefinitionExtractor(
         val lines = text.split("\n")
         val sanitized = sanitizeLines(lines, cfg)
         val offsets = lineStartOffsets(lines)
-        val symbols = mutableListOf<LocalSymbol>()
+        val bestSymbols = mutableMapOf<Pair<Int, Int>, LocalSymbol>()
         val identifiers = mutableMapOf<Int, MutableList<IdentifierToken>>()
         val patterns = patternsForLanguage(cfg)
         val declRanges = mutableMapOf<Int, MutableList<IntRange>>()
@@ -420,30 +444,39 @@ private class RegexDefinitionExtractor(
                     val endCol = group.range.last + 1
                     val startOffset = offsets[idx] + startCol
                     val endOffset = offsets[idx] + endCol
-                    val symbol = LocalSymbol(
-                        name = name,
-                        kind = pattern.kind,
-                        startOffset = startOffset,
-                        endOffset = endOffset,
-                        line = idx,
-                        startColumn = startCol,
-                        endColumn = endCol,
-                        filePath = path
-                    )
-                    symbols += symbol
-                    declRanges.getOrPut(idx) { mutableListOf() }.add(startCol until endCol)
-                    identifiers.getOrPut(idx) { mutableListOf() }.add(
-                        IdentifierToken(
-                            line = idx,
-                            start = startCol,
-                            end = endCol,
-                            declaration = true,
-                            name = name,
-                            filePath = path
-                        )
-                    )
+                val symbol = LocalSymbol(
+                    name = name,
+                    kind = pattern.kind,
+                    startOffset = startOffset,
+                    endOffset = endOffset,
+                    line = idx,
+                    startColumn = startCol,
+                    endColumn = endCol,
+                    filePath = path
+                )
+                val key = startOffset to endOffset
+                val existing = bestSymbols[key]
+                if (existing == null || priorityOf(symbol.kind) > priorityOf(existing.kind)) {
+                    bestSymbols[key] = symbol
                 }
             }
+        }
+    }
+
+        val symbols = bestSymbols.values.sortedBy { it.startOffset }
+        symbols.forEach { symbol ->
+            declRanges.getOrPut(symbol.line) { mutableListOf() }
+                .add(symbol.startColumn until symbol.endColumn)
+            identifiers.getOrPut(symbol.line) { mutableListOf() }.add(
+                IdentifierToken(
+                    line = symbol.line,
+                    start = symbol.startColumn,
+                    end = symbol.endColumn,
+                    declaration = true,
+                    name = symbol.name,
+                    filePath = path
+                )
+            )
         }
 
         val identPattern = Regex("\\b([A-Za-z_][A-Za-z0-9_]*)\\b")
@@ -456,6 +489,7 @@ private class RegexDefinitionExtractor(
                 val start = match.range.first
                 val end = match.range.last + 1
                 if (isInsideDeclaration(idx, start, end, declRanges)) return@forEach
+                if (isKeyword(langKey, name)) return@forEach
                 identifiers.getOrPut(idx) { mutableListOf() }.add(
                     IdentifierToken(
                         line = idx,
@@ -585,6 +619,16 @@ private class RegexDefinitionExtractor(
         val resolved = aliasMap[langKey]
         return resolved?.let { configByLanguage[it] }
     }
+
+    private fun priorityOf(kind: SymbolKind): Int = when (kind) {
+        SymbolKind.METHOD, SymbolKind.FIELD -> 3
+        SymbolKind.FUNCTION -> 2
+        SymbolKind.VARIABLE -> 1
+        else -> 0
+    }
+
+    private fun isKeyword(language: String?, word: String): Boolean =
+        KeywordSyntaxProvider.isKeyword(language, word)
 
     companion object {
         private val DEFAULT_LINE_COMMENTS = listOf("//", "#", "--")

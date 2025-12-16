@@ -221,4 +221,48 @@ class CodeIntelServiceTest {
             service.shutdown()
         }
     }
+
+    @Test
+    fun regexExtractorDetectsDeclarationsAndSkipsKeywords() {
+        val service = CodeIntelService(debounceMs = 0L)
+        try {
+            val path = "Sample.kt"
+            val text = """
+                package demo
+                class Foo {
+                    fun bar(foo: Foo) {
+                        val baz = Foo()
+                        if (baz != null) {
+                            val qux = foo
+                        }
+                    }
+                }
+            """.trimIndent()
+
+            service.indexDocument(path, "kotlin", text, version = 1)
+            service.waitForIdle()
+
+            val outline = service.documentOutline(path)
+            val outlineNames = outline.map { it.name }.toSet()
+            assertTrue(outlineNames.containsAll(listOf("Foo", "bar", "baz", "qux")))
+
+            val tokens = service.tokens(
+                TokensRequest(
+                    filePath = path,
+                    language = "kotlin",
+                    startLine = 0,
+                    lines = text.split("\n"),
+                    version = 1
+                )
+            )
+            val declarations = tokens.filter { it.scopes.contains("codeintel.declaration") }.map { it.text }.toSet()
+            val usages = tokens.filter { it.scopes.contains("codeintel.usage") }.map { it.text }.toSet()
+
+            assertTrue(declarations.containsAll(listOf("Foo", "bar", "baz", "qux")))
+            assertTrue(usages.containsAll(listOf("Foo", "foo", "baz")))
+            assertFalse(tokens.any { it.text == "if" || it.text == "package" }) // keywords should be ignored
+        } finally {
+            service.shutdown()
+        }
+    }
 }

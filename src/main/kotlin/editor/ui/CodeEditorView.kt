@@ -954,9 +954,18 @@ class CodeEditorView(
         activeHighlightStyle: StyleSet
     ) {
         if (maxCols <= 0) return
-        val baseSegments = buildSegments(text, tokens, baseStyle)
-        val withCodeIntel = applyTokenOverlays(baseSegments, overlayTokens, baseStyle)
-        val withHighlights = applyHighlights(withCodeIntel, highlights, highlightStyle, activeHighlightStyle)
+        val keywordTokens = tokens.filter { tok -> tok.scopes.any { it.contains("keyword") } }
+        val nonKeywordTokens = if (keywordTokens.isEmpty()) tokens else tokens - keywordTokens.toSet()
+        val methodFieldOverlays = overlayTokens.filter { tok ->
+            tok.scopes.any { scope -> scope.contains("codeintel.method") || scope.contains("codeintel.field") }
+        }
+        val otherOverlays = if (methodFieldOverlays.isEmpty()) overlayTokens else overlayTokens - methodFieldOverlays.toSet()
+
+        val baseSegments = buildSegments(text, nonKeywordTokens, baseStyle)
+        val withCodeIntel = applyTokenOverlays(baseSegments, otherOverlays, baseStyle)
+        val withMethodFields = applyTokenOverlays(withCodeIntel, methodFieldOverlays, baseStyle)
+        val withKeywords = applyTokenOverlays(withMethodFields, keywordTokens, baseStyle)
+        val withHighlights = applyHighlights(withKeywords, highlights, highlightStyle, activeHighlightStyle)
         val withSelection = applySelection(withHighlights, selection, selectionStyle)
         withSelection.forEach { seg ->
             if (seg.start >= maxCols) return

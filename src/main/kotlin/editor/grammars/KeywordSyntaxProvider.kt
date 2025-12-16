@@ -48,6 +48,13 @@ object KeywordSyntaxProvider : SyntaxProvider {
     override fun languageForExtension(ext: String): String? =
         extensionIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]
 
+    fun isKeyword(language: String?, word: String): Boolean {
+        if (language.isNullOrBlank() || word.isBlank()) return false
+        val pattern = keywordPatterns[language.lowercase(Locale.ROOT)] ?: return false
+        val m = pattern.matcher(word)
+        return m.find()
+    }
+
     private fun colorFor(qualifier: String): Color =
         colorOverrides[qualifier.lowercase(Locale.ROOT)] ?: defaultColor
 
@@ -70,7 +77,7 @@ object KeywordSyntaxProvider : SyntaxProvider {
                 val lang = parts[0].trim()
                 val regex = parts[1].trim()
                 try {
-                    map[lang] = Pattern.compile(regex)
+                    map[lang.lowercase(Locale.ROOT)] = Pattern.compile(regex)
                 } catch (e: Exception) {
                     val msg = "Invalid regex for language '$lang': '$regex' (${e.message})"
                     editor.app.Logger.logRegexError("keyword-patterns", msg, regex)

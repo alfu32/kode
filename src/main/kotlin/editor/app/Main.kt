@@ -221,17 +221,19 @@ private class SplitPanelsApp(
     private val dbManager = DbServerManager()
     private val codeIntelStore = DbCodeIntelStore { dbManager.jdbcUrl() }
     private val codeIntelIndexer = CodeIntelService(store = codeIntelStore)
-    private val codeIntelFacade = CompositeEditorIntelligenceService(
-        primary = LspEditorIntelligence(lspService),
-        fallback = codeIntelIndexer
-    )
+    // private val codeIntelFacade = CompositeEditorIntelligenceService(
+    //     primary = LspEditorIntelligence(lspService),
+    //     fallback = codeIntelIndexer
+    // ) // keep it
+    private val codeIntelFacade = codeIntelIndexer
     private var gitService: editor.lib.IGitService? = createGitService(projectRoot)
     private var codeEditor = CodeEditorView(
         styleSheet,
         syntaxProvider = regexProvider,
         codeIntelIndexer = codeIntelIndexer,
         codeIntel = codeIntelFacade,
-        lsp = lspService,
+        // lsp = lspService, // keep it
+        lsp = null,
         navigationHandler = this::navigateTo
     )
     private val diffViewer = SideBySideDiffView(styleSheet)

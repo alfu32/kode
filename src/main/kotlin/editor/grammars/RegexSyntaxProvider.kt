@@ -134,7 +134,8 @@ open class RegexSyntaxProvider(
             "class" to Color.from("#A9B7C6"),
             "interface" to Color.from("#A9B7C6"),
             "function" to Color.from("#FFC66D"),
-            "method" to Color.from("#FFC66D"),
+            "method" to Color.from("#FF7FD1"),
+            "field" to Color.from("#FF7FD1"),
             "variable" to Color.from("#A9B7C6"),
             "parameter" to Color.from("#A9B7C6"),
             "namespace" to Color.from("#A9B7C6"),
@@ -168,5 +169,3 @@ open class RegexSyntaxProvider(
         return key?.let { palette[it] }
     }
 }
-
-
