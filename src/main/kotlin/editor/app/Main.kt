@@ -28,6 +28,7 @@ import editor.ui.WorkspacePickerDialog
 import editor.ui.SettingsView
 import editor.db.DbServerManager
 import editor.db.DbStatus
+import editor.codeintel.DbCodeIntelStore
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -39,6 +40,7 @@ import java.lang.management.ManagementFactory
 import com.sun.management.OperatingSystemMXBean
 import java.util.Locale
 import kotlin.system.exitProcess
+import editor.app.ProjectFileScanner
 import editor.codeintel.CodeIntelService
 import editor.codeintel.CompositeEditorIntelligenceService
 import editor.codeintel.LspEditorIntelligence
@@ -145,6 +147,9 @@ fun main(args: Array<String>) {
         renderer.requestExit()
     }
 
+    // Perform a full project reindex before entering the TUI so DB contains complete data.
+    app.fullReindex()
+
     runApp(app, renderer)
     app.persistSession(force = true)
 }
@@ -214,11 +219,13 @@ private class SplitPanelsApp(
     private val lspManager = LspManager()
     private val lspService = LspService(lspManager, projectRoot)
     private val dbManager = DbServerManager()
-    private val codeIntelIndexer = CodeIntelService()
+    private val codeIntelStore = DbCodeIntelStore { dbManager.jdbcUrl() }
+    private val codeIntelIndexer = CodeIntelService(store = codeIntelStore)
     private val codeIntelFacade = CompositeEditorIntelligenceService(
         primary = LspEditorIntelligence(lspService),
         fallback = codeIntelIndexer
     )
+    private var gitService: editor.lib.IGitService? = createGitService(projectRoot)
     private var codeEditor = CodeEditorView(
         styleSheet,
         syntaxProvider = regexProvider,
@@ -291,7 +298,9 @@ private class SplitPanelsApp(
         savedEditors = loaded.openEditors.associateBy { sessionManager.toAbsolute(it.path) }
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
+        codeIntelIndexer.loadFromStore()
         restoreLastSession()
+        maybeFullScanProject()
     }
     private val leftTabs = TabView(
         styleSheet = styleSheet,
@@ -623,6 +632,7 @@ private class SplitPanelsApp(
         savedEditors = loaded.openEditors.associateBy { sessionManager.toAbsolute(it.path) }
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
+        codeIntelIndexer.loadFromStore()
 
         codeEditor = CodeEditorView(
             styleSheet,
@@ -634,13 +644,15 @@ private class SplitPanelsApp(
         focus = FocusTarget.FILES
         rightFocus = FocusTarget.CODE
         filesTabView.setRoot(projectRoot.toString())
-        gitPanel.setGitService(createGitService(projectRoot), projectRoot)
+        gitService = createGitService(projectRoot)
+        gitPanel.setGitService(gitService, projectRoot)
         projectSearchDialog.setProjectRoot(projectRoot)
         lastFileRefreshMs = 0L
         lastGitRefreshMs = 0L
         workspacePickerVisible = false
         workspacePicker = null
         restoreLastSession()
+        maybeFullScanProject()
         persistSession(force = true)
     }
 
@@ -665,6 +677,102 @@ private class SplitPanelsApp(
 
     fun shutdownServices() {
         dbManager.stop()
+    }
+
+    fun fullReindex() {
+        println("Reindexing project at $projectRoot ...")
+        val startMs = System.currentTimeMillis()
+        val files = listFilesForIndex()
+        println("Found ${files.size} files to scan")
+        var indexed = 0
+        files.forEachIndexed { idx, path ->
+            val detected = mimeDetector.detectFile(path)
+            val lang = detected?.language
+            val rel = projectRoot.relativize(path).toString()
+            if (!lang.isNullOrBlank()) {
+                val text = runCatching { Files.readString(path) }.getOrNull()
+                if (text != null) {
+                    codeIntelIndexer.indexDocument(path.toString(), lang, text, version = 0L)
+                    indexed++
+                    println("loaded $rel")
+                } else {
+                    println("skip   $rel (read error)")
+                }
+            } else {
+                println("skip   $rel (no language)")
+            }
+        }
+        codeIntelIndexer.waitForIdle(30_000)
+        indexSdkSources()
+        val elapsed = System.currentTimeMillis() - startMs
+        println("Reindex complete: $indexed/${files.size} files with language in ${elapsed}ms")
+    }
+
+    private fun maybeFullScanProject() {
+        val dbFile = projectRoot.resolve(".kode/db/kode.mv.db").toFile()
+        if (dbFile.exists() && codeIntelIndexer.hasPersistentData()) return
+        Thread({
+            listFilesForIndex().forEach { path ->
+                val detected = mimeDetector.detectFile(path)
+                val lang = detected?.language
+                if (lang.isNullOrBlank()) return@forEach
+                val sizeOk = runCatching { Files.size(path) <= 512_000 }.getOrDefault(false)
+                if (!sizeOk) return@forEach
+                val content = runCatching { Files.readString(path) }.getOrNull() ?: return@forEach
+                codeIntelIndexer.indexDocument(path.toString(), lang, content, version = 0L)
+                val rel = projectRoot.relativize(path).toString()
+                println("loaded $rel")
+            }
+            codeIntelIndexer.waitForIdle(5_000)
+            indexSdkSources()
+        }, "codeintel-fullscan").apply { isDaemon = true }.start()
+    }
+
+    private fun listFilesForIndex(): List<Path> {
+        val ignorePatterns = gitService?.ignoredPatterns().orEmpty()
+        return ProjectFileScanner.listFilesForIndex(projectRoot, ignorePatterns)
+    }
+
+    private fun indexSdkSources() {
+        // SDK indexing disabled for now (JDK/stdlib)
+    }
+
+    private fun indexZip(path: Path, language: String) {
+        runCatching {
+            java.util.zip.ZipFile(path.toFile()).use { zip ->
+                zip.entries().asSequence()
+                    .filter { !it.isDirectory && (it.name.endsWith(".kt") || it.name.endsWith(".java")) }
+                    .forEach { entry ->
+                        val sizeOk = entry.size <= 512_000
+                        if (!sizeOk) {
+                            println("skip   ${entry.name} (too large)")
+                            return@forEach
+                        }
+                        val text = zip.getInputStream(entry).bufferedReader().readText()
+                        codeIntelIndexer.indexDocument("${path.fileName}:${entry.name}", language, text, version = 0L)
+                        println("loaded ${entry.name} (sdk)")
+                    }
+            }
+        }.onFailure { ex ->
+            println("Failed to index $path: ${ex.message}")
+        }
+    }
+
+    private fun findJdkSources(): Path? {
+        val javaHome = System.getenv("JAVA_HOME")?.let { Paths.get(it) }
+            ?: runCatching { Paths.get(System.getProperty("java.home")).parent }.getOrNull()
+        val srcZip = javaHome?.resolve("lib/src.zip")
+        return srcZip?.takeIf { Files.exists(it) }
+    }
+
+    private fun findKotlinStdlibSources(): Path? {
+        val kotlinHome = System.getenv("KOTLIN_HOME")?.let { Paths.get(it) }
+            ?: System.getProperty("kotlin.home")?.let { Paths.get(it) }
+        val candidates = listOfNotNull(
+            kotlinHome?.resolve("lib/kotlin-stdlib-sources.jar"),
+            projectRoot.resolve("kotlinc/lib/kotlin-stdlib-sources.jar")
+        )
+        return candidates.firstOrNull { Files.exists(it) }
     }
 
     private fun navigateTo(path: String, position: editor.lib.Position) {

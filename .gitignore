@@ -49,5 +49,6 @@ bin/
 
 .kode.json
 .kode.log.json
+.kode/db
 
 

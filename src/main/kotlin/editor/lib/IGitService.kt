@@ -49,6 +49,11 @@ interface IGitService {
         commitHash: String,
         moveIfExists: Boolean = false
     )
+
+    /**
+     * Returns glob-like ignore patterns from .gitignore if available.
+     */
+    fun ignoredPatterns(): List<String> = emptyList()
 }
 
 data class GitStatusEntry(
@@ -115,6 +120,13 @@ class JGitService(root: File) : IGitService {
         st.untracked.forEach { r += GitStatusEntry("??", it, staged = false) }
 
         return r
+    }
+
+    override fun ignoredPatterns(): List<String> {
+        val ignoreFile = File(repo.workTree, ".gitignore")
+        if (!ignoreFile.exists()) return emptyList()
+        return runCatching { ignoreFile.readLines().filter { it.isNotBlank() && !it.trim().startsWith("#") } }
+            .getOrDefault(emptyList())
     }
 
     override fun listCommits(limit: Int?): List<GitCommitEntry> {

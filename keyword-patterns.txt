@@ -116,7 +116,7 @@ jssm=(^|\b)(machine|state|initial|->|=>)($|\b)
 jsx=<\s*[A-Z][A-Za-z0-9]*[^>]*>|\b(import|from|export|default|class|extends|if|else|return)($|\b)
 julia=(^|\b)(module|using|import|export|struct|mutable struct|function|end|if|elseif|else|for|while|return|begin|try|catch|finally|macro)($|\b)
 kdl=^[A-Za-z_][A-Za-z0-9_-]*(\s+[^;]*)?;?$
-kotlin=(^|\b)((@[a-zA-Z0-9_]+)|package|import|class|interface|object|data|sealed|enum|fun|val|var|if|else|for|while|when|return|this|super|is|in|as)($|\b)
+kotlin=(^|\b)((@[a-zA-Z0-9_]+)|override|operator|public|private|protected|companion|package|import|class|interface|object|data|sealed|enum|fun|val|var|if|else|for|while|when|return|this|super|is|in|as)($|\b)
 kotlin-script=(^|\b)(kotlin|java|implementation|testImplementation|tasks|register|import|plugins|repositories|dependencies|task|apply|if|else|for)($|\b)
 kusto=(^|\b)(let|datatable|where|project|extend|summarize|by|join|take|top|order|asc|desc)($|\b)
 latex=\\(documentclass|usepackage|begin|end|section|subsection|label|ref|cite|item)($|\b)

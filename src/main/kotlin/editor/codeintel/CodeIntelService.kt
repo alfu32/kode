@@ -19,7 +19,8 @@ data class SymbolDef(
     val range: IntRange,
     val container: String? = null,
     val line: Int? = null,
-    val startColumn: Int? = null
+    val startColumn: Int? = null,
+    val language: String? = null
 )
 
 data class IdentifierToken(
@@ -59,7 +60,8 @@ interface DefinitionExtractor {
 
 class CodeIntelService(
     private val extractor: DefinitionExtractor = RegexDefinitionExtractor(),
-    private val debounceMs: Long = 200L
+    private val debounceMs: Long = 200L,
+    private val store: DbCodeIntelStore? = null
 ) : EditorIntelligenceService {
 
     private val executor = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -74,6 +76,7 @@ class CodeIntelService(
     private val lock = Any()
 
     fun indexDocument(path: String, language: String?, text: String, version: Long) {
+        if (language.isNullOrBlank()) return
         synchronized(lock) {
             latestVersionByPath[path] = version
             pendingJobs.remove(path)?.cancel(false)
@@ -90,6 +93,7 @@ class CodeIntelService(
         if (request.symbol.isBlank()) return emptyList()
         val lower = request.symbol.lowercase(Locale.ROOT)
         val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
+            .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
         return defs.mapNotNull { def ->
             val line = def.line ?: return@mapNotNull null
             val col = def.startColumn ?: 0
@@ -110,6 +114,7 @@ class CodeIntelService(
         val lower = request.symbol.lowercase(Locale.ROOT)
         val results = mutableListOf<NavigationTarget>()
         val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
+            .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
         defs.forEach { def ->
             val line = def.line
             val col = def.startColumn
@@ -158,7 +163,9 @@ class CodeIntelService(
                     .filter { (name, _) -> name.startsWith(lower) }
                     .flatMap { it.value }
             }
-            source.forEach { def ->
+            source
+                .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
+                .forEach { def ->
                 items.add(
                     CompletionItem(
                         label = def.name,
@@ -252,6 +259,30 @@ class CodeIntelService(
         }
     }
 
+    fun loadFromStore() {
+        val loaded = store?.loadAll() ?: return
+        synchronized(lock) {
+            defsByPath.clear()
+            workspaceIndex.clear()
+            usagesIndex.clear()
+            loaded.defs.groupBy { it.filePath }.forEach { (path, defs) ->
+                defsByPath[path] = defs
+                defs.forEach { def ->
+                    val key = def.name.lowercase(Locale.ROOT)
+                    val bucket = workspaceIndex.getOrPut(key) { mutableListOf() }
+                    bucket.add(def)
+                }
+            }
+            loaded.usages.forEach { tok ->
+                val key = tok.name.lowercase(Locale.ROOT)
+                val bucket = usagesIndex.getOrPut(key) { mutableListOf() }
+                bucket.add(tok)
+            }
+        }
+    }
+
+    fun hasPersistentData(): Boolean = store?.hasData() ?: false
+
     fun waitForIdle(timeoutMs: Long = 1000L) {
         val jobs = synchronized(lock) { pendingJobs.values.toList() }
         jobs.forEach { future ->
@@ -264,6 +295,7 @@ class CodeIntelService(
     }
 
     private fun performIndex(path: String, language: String?, text: String, version: Long) {
+        if (language.isNullOrBlank()) return
         val latestVersion = synchronized(lock) { latestVersionByPath[path] }
         if (latestVersion != version) return
         val knownNames = synchronized(lock) { workspaceIndex.keys.toSet() }
@@ -275,7 +307,8 @@ class CodeIntelService(
                 filePath = path,
                 range = it.startOffset until it.endOffset,
                 line = it.line,
-                startColumn = it.startColumn
+                startColumn = it.startColumn,
+                language = language
             )
         }
         val allowedNames = (knownNames + defs.map { it.name.lowercase(Locale.ROOT) }).toSet()
@@ -293,6 +326,7 @@ class CodeIntelService(
             rebuildWorkspaceIndex(path, defs)
             rebuildUsagesIndex(path, docIndex.identifiersByLine)
         }
+        store?.storeFile(path, language, defs, docIndex.identifiersByLine)
     }
 
     private fun rebuildWorkspaceIndex(path: String, newDefs: List<SymbolDef>) {

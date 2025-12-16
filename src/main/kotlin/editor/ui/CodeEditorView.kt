@@ -77,7 +77,10 @@ class CodeEditorView(
         val version = buffer.version()
         if (!force && version == lastIndexedVersion) return
         lastIndexedVersion = version
-        service.indexDocument(filePath, grammarLanguage ?: language, buffer.text(), version)
+        val lang = grammarLanguage ?: language
+        if (!lang.isNullOrBlank()) {
+            service.indexDocument(filePath, lang, buffer.text(), version)
+        }
         lsp?.changeDocument(filePath, buffer.text(), version.toInt())
     }
 
@@ -833,9 +836,12 @@ class CodeEditorView(
         token.fg?.let { color ->
             val copy = scoped.copy()
             copy.fg = color
+            if (copy.bg == null) copy.bg = base.bg
             return copy
         }
-        return scoped
+        val copy = scoped.copy()
+        if (copy.bg == null) copy.bg = base.bg
+        return copy
     }
 
     private val styleCache = mutableMapOf<String, StyleSet>()
