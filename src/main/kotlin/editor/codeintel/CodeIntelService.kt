@@ -227,7 +227,7 @@ class CodeIntelService(
         val doc = synchronized(lock) { documents[request.filePath] }
         if (doc == null || doc.version != request.version) return emptyList()
         val accent = Color.from("#5da9ff")
-        val methodColor = Color.from("#FF7FD1")
+        val methodColor = Color.from("#FF8BD9")
         val tokens = mutableListOf<Token>()
         request.lines.forEachIndexed { idx, line ->
             val absoluteLine = request.startLine + idx

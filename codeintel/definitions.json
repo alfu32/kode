@@ -12,8 +12,9 @@
         {"kind": "OBJECT", "regex": "\\bobject\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "ENUM", "regex": "\\benum\\s+class\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "FUNCTION", "regex": "\\bfun\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*(?:public|private|protected|internal)?\\s*(?:abstract|final|suspend|inline|override|operator)?\\s*fun\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "^\\s*(?:public|private|protected|internal)?\\s*(?:lateinit|const)?\\s*(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"},
+        {"kind": "METHOD", "regex": "^\\s{0,4}(?:public|private|protected|internal)?\\s*(?:abstract|final|suspend|inline|override|operator)?\\s*fun\\s+([A-Za-z_][A-Za-z0-9_]*)"},
+        {"kind": "FIELD", "regex": "^\\s{0,4}(?:public|private|protected|internal)?\\s*(?:lateinit|const)?\\s*(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*:", "groupIndex": 1},
+        {"kind": "FIELD", "regex": "^\\s{0,4}(?:public|private|protected|internal)\\s*(?:lateinit|const)?\\s*(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "VARIABLE", "regex": "\\b(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"}
       ]
     },
@@ -57,7 +58,7 @@
         {"kind": "FUNCTION", "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "METHOD", "regex": "^\\s*(?:async\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\("},
         {"kind": "VARIABLE", "regex": "\\b(?:const|let|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "\\b(?:public|private|protected|readonly|static|get|set)?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?::|=)"}
+        {"kind": "FIELD", "regex": "^\\s*(?:public|private|protected|readonly|static|get|set)\\s+([A-Za-z_][A-Za-z0-9_]*)"}
       ]
     },
     {

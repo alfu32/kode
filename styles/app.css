@@ -222,6 +222,12 @@ codeintel.declaration {
     bg: #1a2237;
     text-decoration: bold;
 }
+codeintel.method {
+    bg: #1a2237;
+}
+codeintel.field {
+    bg: #1a2237;
+}
 lsp-list {
     bg: #0f1424;
     fg: #95aee6;
