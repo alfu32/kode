@@ -6,6 +6,7 @@ import react.Color
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -41,7 +42,8 @@ data class LocalSymbol(
     val line: Int,
     val startColumn: Int,
     val endColumn: Int,
-    val filePath: String
+    val filePath: String,
+    val container: String? = null
 )
 
 data class ExtractedSymbols(
@@ -313,6 +315,7 @@ class CodeIntelService(
                 kind = it.kind,
                 filePath = path,
                 range = it.startOffset until it.endOffset,
+                container = it.container,
                 line = it.line,
                 startColumn = it.startColumn,
                 language = language
@@ -371,6 +374,7 @@ class CodeIntelService(
         return Symbol(
             name = name,
             kind = kind,
+            container = container,
             filePath = filePath,
             range = TextRange(
                 start = TextPosition(lineNum, col),
@@ -410,6 +414,8 @@ private class RegexDefinitionExtractor(
         .toMap()
     private val blockTrackers: MutableMap<String, BlockTracker> = mutableMapOf()
 
+    private data class ScopeEntry(val name: String, val kind: SymbolKind, val depth: Int)
+
     override fun extract(path: String, text: String, language: String?): ExtractedSymbols {
         val langKey = language?.lowercase(Locale.ROOT)
         val cfg = configFor(langKey)
@@ -420,6 +426,7 @@ private class RegexDefinitionExtractor(
         val identifiers = mutableMapOf<Int, MutableList<IdentifierToken>>()
         val patterns = patternsForLanguage(cfg)
         val declRanges = mutableMapOf<Int, MutableList<IntRange>>()
+        val scopeStack = ArrayDeque<ScopeEntry>()
 
         val tracker = blockTrackers.getOrPut(cfg?.language ?: "__default") {
             val mode = cfg?.blockMode ?: BlockMode.BRACE
@@ -428,7 +435,12 @@ private class RegexDefinitionExtractor(
 
         sanitized.forEachIndexed { idx, sanitizedLine ->
             if (sanitizedLine.text.isBlank()) return@forEachIndexed
+            val depthBefore = tracker.currentDepth()
             tracker.update(sanitizedLine.text)
+            val depthAfter = tracker.currentDepth()
+            while (scopeStack.isNotEmpty() && scopeStack.last().depth > depthAfter) {
+                scopeStack.removeLast()
+            }
             patterns.forEach { pattern ->
                 pattern.regex.findAll(sanitizedLine.text).forEach { match ->
                     val group = match.groups[pattern.groupIndex] ?: return@forEach
@@ -438,24 +450,29 @@ private class RegexDefinitionExtractor(
                     val endCol = group.range.last + 1
                     val startOffset = offsets[idx] + startCol
                     val endOffset = offsets[idx] + endCol
-                val symbol = LocalSymbol(
-                    name = name,
-                    kind = pattern.kind,
-                    startOffset = startOffset,
-                    endOffset = endOffset,
-                    line = idx,
-                    startColumn = startCol,
-                    endColumn = endCol,
-                    filePath = path
-                )
-                val key = startOffset to endOffset
-                val existing = bestSymbols[key]
-                if (existing == null || priorityOf(symbol.kind) > priorityOf(existing.kind)) {
-                    bestSymbols[key] = symbol
+                    val container = scopeStack.lastOrNull()?.name
+                    val symbol = LocalSymbol(
+                        name = name,
+                        kind = pattern.kind,
+                        startOffset = startOffset,
+                        endOffset = endOffset,
+                        line = idx,
+                        startColumn = startCol,
+                        endColumn = endCol,
+                        filePath = path,
+                        container = container
+                    )
+                    val key = startOffset to endOffset
+                    val existing = bestSymbols[key]
+                    if (existing == null || priorityOf(symbol.kind) > priorityOf(existing.kind)) {
+                        bestSymbols[key] = symbol
+                        if (opensScope(symbol.kind)) {
+                            scopeStack.addLast(ScopeEntry(name, symbol.kind, depthAfter))
+                        }
+                    }
                 }
             }
         }
-    }
 
         val symbols = bestSymbols.values.sortedBy { it.startOffset }
         symbols.forEach { symbol ->
@@ -623,6 +640,19 @@ private class RegexDefinitionExtractor(
 
     private fun isKeyword(language: String?, word: String): Boolean =
         KeywordSyntaxProvider.isKeyword(language, word)
+
+    private fun opensScope(kind: SymbolKind): Boolean =
+        when (kind) {
+            SymbolKind.CLASS,
+            SymbolKind.INTERFACE,
+            SymbolKind.OBJECT,
+            SymbolKind.ENUM,
+            SymbolKind.MODULE,
+            SymbolKind.PACKAGE,
+            SymbolKind.FUNCTION,
+            SymbolKind.METHOD -> true
+            else -> false
+        }
 
     companion object {
         private val DEFAULT_LINE_COMMENTS = listOf("//", "#", "--")

@@ -34,7 +34,8 @@ class DbCodeIntelStore(
                         start_col INT,
                         end_col INT,
                         range_start INT,
-                        range_end INT
+                        range_end INT,
+                        container VARCHAR(256)
                     )
                     """.trimIndent()
                 )
@@ -77,7 +78,7 @@ class DbCodeIntelStore(
                 it.executeUpdate()
             }
             c.prepareStatement(
-                "INSERT INTO symbols(name_lc,name,kind,language,file,line,start_col,end_col,range_start,range_end) VALUES (?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO symbols(name_lc,name,kind,language,file,line,start_col,end_col,range_start,range_end,container) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
             ).use { ps ->
                 defs.forEach { def ->
                     ps.setString(1, def.name.lowercase(Locale.ROOT))
@@ -90,6 +91,7 @@ class DbCodeIntelStore(
                     ps.setInt(8, (def.startColumn ?: 0) + def.name.length)
                     ps.setInt(9, def.range.first)
                     ps.setInt(10, def.range.last)
+                    ps.setString(11, def.container)
                     ps.addBatch()
                 }
                 ps.executeBatch()
@@ -122,7 +124,7 @@ class DbCodeIntelStore(
             val defs = mutableListOf<SymbolDef>()
             val usages = mutableListOf<IdentifierToken>()
             c.createStatement().use { stmt ->
-                stmt.executeQuery("SELECT name, kind, language, file, line, start_col, range_start, range_end FROM symbols").use { rs ->
+                stmt.executeQuery("SELECT name, kind, language, file, line, start_col, range_start, range_end, container FROM symbols").use { rs ->
                     while (rs.next()) {
                         val name = rs.getString(1) ?: continue
                         val kind = runCatching { SymbolKind.valueOf(rs.getString(2)) }.getOrNull() ?: SymbolKind.VARIABLE
@@ -132,11 +134,13 @@ class DbCodeIntelStore(
                         val startCol = rs.getInt(6)
                         val rangeStart = rs.getInt(7)
                         val rangeEnd = rs.getInt(8)
+                        val container = rs.getString(9)
                         defs += SymbolDef(
                             name = name,
                             kind = kind,
                             filePath = file,
                             range = rangeStart..rangeEnd,
+                            container = container,
                             line = line,
                             startColumn = startCol,
                             language = lang

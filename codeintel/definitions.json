@@ -7,6 +7,7 @@
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
+        {"kind": "PACKAGE", "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_\\.]+)"},
         {"kind": "CLASS", "regex": "\\b(?:data\\s+)?class\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "INTERFACE", "regex": "\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "OBJECT", "regex": "\\bobject\\s+([A-Za-z_][A-Za-z0-9_]*)"},
@@ -26,6 +27,7 @@
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
+        {"kind": "PACKAGE", "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_\\.]+)"},
         {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "INTERFACE", "regex": "\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "ENUM", "regex": "\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"},
@@ -67,6 +69,7 @@
       "lineComments": ["#"],
       "blockMode": "INDENT",
       "patterns": [
+        {"kind": "PACKAGE", "regex": "^\\s*__all__\\s*=\\s*\\[(.+)\\]"},
         {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "FUNCTION", "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"},
         {"kind": "METHOD", "regex": "^\\s+def\\s+([A-Za-z_][A-Za-z0-9_]*)"},
