@@ -2,326 +2,742 @@
   "languages": [
     {
       "language": "kotlin",
-      "lineComments": ["//"],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_\\.]+)"},
-        {"kind": "CLASS", "regex": "\\b(?:data\\s+)?class\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "INTERFACE", "regex": "\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "OBJECT", "regex": "\\bobject\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "ENUM", "regex": "\\benum\\s+class\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bfun\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s{0,4}(?:public|private|protected|internal)?\\s*(?:abstract|final|suspend|inline|override|operator)?\\s*fun\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "^\\s{0,4}(?:public|private|protected|internal)?\\s*(?:lateinit|const)?\\s*(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*:", "groupIndex": 1},
-        {"kind": "FIELD", "regex": "^\\s{0,4}(?:public|private|protected|internal)\\s*(?:lateinit|const)?\\s*(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "VARIABLE", "regex": "\\b(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"}
-      ]
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_\\.]+)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\b(?:data\\s+)?class\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "INTERFACE",
+          "regex": "\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "OBJECT",
+          "regex": "\\bobject\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "ENUM",
+          "regex": "\\benum\\s+class\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bfun\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s{0,4}(?:public|private|protected|internal)?\\s*(?:abstract|final|suspend|inline|override|operator)?\\s*fun\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s{0,4}(?:public|private|protected|internal)?\\s*(?:lateinit|const)?\\s*(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*:",
+          "groupIndex": 1
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s{0,4}(?:public|private|protected|internal)\\s*(?:lateinit|const)?\\s*(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "VARIABLE",
+          "regex": "\\b(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
+      ],
+      "stdlib": "https://github.com/JetBrains/kotlin/releases/latest/download/kotlin-stdlib-sources.jar"
     },
     {
       "language": "java",
-      "aliases": ["c#", "cs"],
-      "lineComments": ["//"],
+      "aliases": [
+        "c#",
+        "cs"
+      ],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_\\.]+)"},
-        {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "INTERFACE", "regex": "\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "ENUM", "regex": "\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*(?:public|protected|private|static|final|synchronized|abstract)?\\s*[A-Za-z_][A-Za-z0-9_<>,.?\\[\\]\\s]*\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(", "groupIndex": 1},
-        {"kind": "FIELD", "regex": "\\b(?:public|protected|private|static|final|volatile|transient|synchronized|native|abstract|strictfp)?\\s*[A-Za-z_][A-Za-z0-9_<>,.?\\[\\]\\s]*\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?:[=;])", "groupIndex": 1}
-      ]
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_\\.]+)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "INTERFACE",
+          "regex": "\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "ENUM",
+          "regex": "\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s*(?:public|protected|private|static|final|synchronized|abstract)?\\s*[A-Za-z_][A-Za-z0-9_<>,.?\\[\\]\\s]*\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(",
+          "groupIndex": 1
+        },
+        {
+          "kind": "FIELD",
+          "regex": "\\b(?:public|protected|private|static|final|volatile|transient|synchronized|native|abstract|strictfp)?\\s*[A-Za-z_][A-Za-z0-9_<>,.?\\[\\]\\s]*\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?:[=;])",
+          "groupIndex": 1
+        }
+      ],
+      "stdlib": "https://download.java.net/openjdk/jdk21/ri/openjdk-21_src.zip"
     },
     {
       "language": "cpp",
-      "aliases": ["c++", "c"],
-      "lineComments": ["//"],
+      "aliases": [
+        "c++",
+        "c"
+      ],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*namespace\\s+([A-Za-z_][A-Za-z0-9_:]*)"},
-        {"kind": "CLASS", "regex": "\\b(?:class|struct)\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*(?:public|protected|private)?\\s*(?:virtual|static|constexpr|const|inline|friend)?\\s*[A-Za-z_][A-Za-z0-9_:<>\\[\\]\\*\\s]*\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\("},
-        {"kind": "FIELD", "regex": "\\b(?:public|protected|private|static|constexpr|const|mutable|volatile)?\\s*[A-Za-z_][A-Za-z0-9_:<>\\[\\]\\*\\s]*\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?:[=;])", "groupIndex": 1}
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*namespace\\s+([A-Za-z_][A-Za-z0-9_:]*)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\b(?:class|struct)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s*(?:public|protected|private)?\\s*(?:virtual|static|constexpr|const|inline|friend)?\\s*[A-Za-z_][A-Za-z0-9_:<>\\[\\]\\*\\s]*\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\("
+        },
+        {
+          "kind": "FIELD",
+          "regex": "\\b(?:public|protected|private|static|constexpr|const|mutable|volatile)?\\s*[A-Za-z_][A-Za-z0-9_:<>\\[\\]\\*\\s]*\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?:[=;])",
+          "groupIndex": 1
+        }
       ]
     },
     {
       "language": "javascript",
-      "aliases": ["js", "typescript", "ts"],
-      "lineComments": ["//"],
+      "aliases": [
+        "js",
+        "typescript",
+        "ts"
+      ],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*import\\s+.+\\s+from\\s+[\"'](.+)[\"']"},
-        {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*(?:async\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\("},
-        {"kind": "VARIABLE", "regex": "\\b(?:const|let|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "^\\s*(?:public|private|protected|readonly|static|get|set)\\s+([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*import\\s+.+\\s+from\\s+[\"'](.+)[\"']"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s*(?:async\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\("
+        },
+        {
+          "kind": "VARIABLE",
+          "regex": "\\b(?:const|let|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s*(?:public|private|protected|readonly|static|get|set)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*import\\s+.+\\s+from\\s+[\"\\'](.+)[\"\\']"
+        }
       ]
     },
     {
       "language": "python",
-      "aliases": ["py"],
-      "lineComments": ["#"],
+      "aliases": [
+        "py"
+      ],
+      "lineComments": [
+        "#"
+      ],
       "blockMode": "INDENT",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*__all__\\s*=\\s*\\[(.+)\\]"},
-        {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s+def\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "^\\s+self\\.([A-Za-z_][A-Za-z0-9_]*)\\s*="}
-      ]
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*__all__\\s*=\\s*\\[(.+)\\]"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s+def\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s+self\\.([A-Za-z_][A-Za-z0-9_]*)\\s*="
+        }
+      ],
+      "stdlib": "https://www.python.org/ftp/python/3.12.3/Python-3.12.3.tgz"
     },
     {
       "language": "php",
-      "lineComments": ["//", "#"],
+      "lineComments": [
+        "//",
+        "#"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*namespace\\s+([A-Za-z_][A-Za-z0-9_\\\\\\\\]*)"},
-        {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*(?:public|private|protected|static)?\\s*function\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "^\\s*(?:public|private|protected|static)?\\s*\\$([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "VARIABLE", "regex": "\\$([A-Za-z_][A-Za-z0-9_]*)"}
-      ]
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*namespace\\s+([A-Za-z_][A-Za-z0-9_\\\\\\\\]*)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s*(?:public|private|protected|static)?\\s*function\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s*(?:public|private|protected|static)?\\s*\\$([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "VARIABLE",
+          "regex": "\\$([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*namespace\\s+([A-Za-z_][A-Za-z0-9_\\\\]*)"
+        }
+      ],
+      "stdlib": "https://www.php.net/distributions/php-8.3.10.tar.gz"
     },
     {
       "language": "go",
-      "aliases": ["golang"],
-      "lineComments": ["//"],
+      "aliases": [
+        "golang"
+      ],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bfunc\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*func\\s+\\([^)]*\\)\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "CLASS", "regex": "\\btype\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+struct"},
-        {"kind": "INTERFACE", "regex": "\\btype\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+interface"},
-        {"kind": "FIELD", "regex": "^\\s{0,4}([A-Za-z_][A-Za-z0-9_]*)\\s+[A-Za-z_][A-Za-z0-9_\\*\\[\\]]+"}
-      ]
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bfunc\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s*func\\s+\\([^)]*\\)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\btype\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+struct"
+        },
+        {
+          "kind": "INTERFACE",
+          "regex": "\\btype\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+interface"
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s{0,4}([A-Za-z_][A-Za-z0-9_]*)\\s+[A-Za-z_][A-Za-z0-9_\\*\\[\\]]+"
+        }
+      ],
+      "stdlib": "https://go.dev/dl/go1.22.5.src.tar.gz"
     },
     {
       "language": "rust",
-      "lineComments": ["//"],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*mod\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bfn\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "CLASS", "regex": "\\bstruct\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "ENUM", "regex": "\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "MODULE", "regex": "\\bmod\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*impl\\s+[A-Za-z_][A-Za-z0-9_<>:]*\\s*\\{?\\s*fn\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "^\\s{0,4}([A-Za-z_][A-Za-z0-9_]*)\\s*:\\s*[^;]+$"}
-      ]
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*mod\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bfn\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bstruct\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "ENUM",
+          "regex": "\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "MODULE",
+          "regex": "\\bmod\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s*impl\\s+[A-Za-z_][A-Za-z0-9_<>:]*\\s*\\{?\\s*fn\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s{0,4}([A-Za-z_][A-Za-z0-9_]*)\\s*:\\s*[^;]+$"
+        }
+      ],
+      "stdlib": "https://static.rust-lang.org/dist/rustc-src.tar.xz"
     },
     {
       "language": "swift",
-      "lineComments": ["//"],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*import\\s+([A-Za-z_][A-Za-z0-9_\\.]+)"},
-        {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "CLASS", "regex": "\\bstruct\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "ENUM", "regex": "\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*(?:public|private|internal|open)?\\s*func\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "^\\s*(?:public|private|internal|open)?\\s*(?:let|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bfunc\\s+([A-Za-z_][A-Za-z0-9_]*)"}
-      ]
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*import\\s+([A-Za-z_][A-Za-z0-9_\\.]+)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bstruct\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "ENUM",
+          "regex": "\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s*(?:public|private|internal|open)?\\s*func\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s*(?:public|private|internal|open)?\\s*(?:let|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bfunc\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
+      ],
+      "stdlib": "https://github.com/apple/swift/archive/refs/heads/main.zip"
     },
     {
       "language": "ruby",
-      "aliases": ["rb"],
-      "lineComments": ["#"],
+      "aliases": [
+        "rb"
+      ],
+      "lineComments": [
+        "#"
+      ],
       "blockMode": "INDENT",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*module\\s+([A-Za-z_][A-Za-z0-9_:]*)"},
-        {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "MODULE", "regex": "\\bmodule\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*def\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "^\\s*@(\\w+)"},
-        {"kind": "FUNCTION", "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"}
-      ]
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*module\\s+([A-Za-z_][A-Za-z0-9_:]*)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "MODULE",
+          "regex": "\\bmodule\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s*def\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s*@(\\w+)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
+      ],
+      "stdlib": "https://cache.ruby-lang.org/pub/ruby/3.3/ruby-3.3.0.tar.gz"
     },
     {
       "language": "dart",
-      "lineComments": ["//"],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*import\\s+[\"'](.+)[\"']"},
-        {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "ENUM", "regex": "\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "^\\s*(?:static\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\("},
-        {"kind": "FIELD", "regex": "^\\s*(?:final|const|var|late)?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*[:=]"},
-        {"kind": "FUNCTION", "regex": "\\b(?:async\\s+)?(?:function\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\("}
-      ]
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*import\\s+[\"'](.+)[\"']"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "ENUM",
+          "regex": "\\benum\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "^\\s*(?:static\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\("
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s*(?:final|const|var|late)?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*[:=]"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\b(?:async\\s+)?(?:function\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*\\("
+        },
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*import\\s+[\"\\'](.+)[\"\\']"
+        }
+      ],
+      "stdlib": "https://storage.googleapis.com/dart-archive/channels/stable/release/latest/sdk/dartsdk-linux-x64-release.zip"
     },
     {
       "language": "sql",
-      "aliases": ["postgres", "mysql", "tsql"],
-      "lineComments": ["--"],
+      "aliases": [
+        "postgres",
+        "mysql",
+        "tsql"
+      ],
+      "lineComments": [
+        "--"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "SQL",
       "patterns": [
-        {"kind": "FUNCTION", "regex": "\\bcreate\\s+function\\s+([A-Za-z_][A-Za-z0-9_]*)", "groupIndex": 1},
-        {"kind": "FUNCTION", "regex": "\\bcreate\\s+procedure\\s+([A-Za-z_][A-Za-z0-9_]*)", "groupIndex": 1},
-        {"kind": "MODULE", "regex": "\\bcreate\\s+view\\s+([A-Za-z_][A-Za-z0-9_]*)", "groupIndex": 1},
-        {"kind": "MODULE", "regex": "\\bcreate\\s+table\\s+([A-Za-z_][A-Za-z0-9_]*)", "groupIndex": 1}
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bcreate\\s+function\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "groupIndex": 1
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bcreate\\s+procedure\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "groupIndex": 1
+        },
+        {
+          "kind": "MODULE",
+          "regex": "\\bcreate\\s+view\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "groupIndex": 1
+        },
+        {
+          "kind": "MODULE",
+          "regex": "\\bcreate\\s+table\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "groupIndex": 1
+        }
       ]
     },
     {
       "language": "bash",
-      "aliases": ["shell", "sh"],
-      "lineComments": ["#"],
+      "aliases": [
+        "shell",
+        "sh"
+      ],
+      "lineComments": [
+        "#"
+      ],
       "blockMode": "REGEX",
       "beginBlockRegex": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*\\(\\)\\s*\\{",
       "endBlockRegex": "^\\s*\\}",
       "patterns": [
-        {"kind": "FUNCTION", "regex": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*\\(\\)\\s*\\{"},
-        {"kind": "VARIABLE", "regex": "\\b([A-Za-z_][A-Za-z0-9_]*)="}
+        {
+          "kind": "FUNCTION",
+          "regex": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*\\(\\)\\s*\\{"
+        },
+        {
+          "kind": "VARIABLE",
+          "regex": "\\b([A-Za-z_][A-Za-z0-9_]*)="
+        }
       ]
     },
     {
       "language": "powershell",
-      "aliases": ["ps1"],
-      "lineComments": ["#"],
+      "aliases": [
+        "ps1"
+      ],
+      "lineComments": [
+        "#"
+      ],
       "blockMode": "REGEX",
       "beginBlockRegex": "\\bfunction\\b",
       "endBlockRegex": "^\\s*\\}",
       "patterns": [
-        {"kind": "FUNCTION", "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_-]*)"},
-        {"kind": "VARIABLE", "regex": "\\$([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_-]*)"
+        },
+        {
+          "kind": "VARIABLE",
+          "regex": "\\$([A-Za-z_][A-Za-z0-9_]*)"
+        }
       ]
     },
     {
       "language": "r",
-      "lineComments": ["#"],
+      "lineComments": [
+        "#"
+      ],
       "blockMode": "REGEX",
       "beginBlockRegex": "\\bfunction\\b",
       "endBlockRegex": "^\\s*\\}",
       "patterns": [
-        {"kind": "FUNCTION", "regex": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*<-\\s*function\\s*\\("}
+        {
+          "kind": "FUNCTION",
+          "regex": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*<-\\s*function\\s*\\("
+        }
       ]
     },
     {
       "language": "matlab",
-      "lineComments": ["%"],
+      "lineComments": [
+        "%"
+      ],
       "blockMode": "REGEX",
       "beginBlockRegex": "^\\s*function\\b",
       "endBlockRegex": "^\\s*end\\b",
       "patterns": [
-        {"kind": "FUNCTION", "regex": "^\\s*function\\s+(?:\\[[^]]*\\]\\s*=\\s*)?([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "FUNCTION",
+          "regex": "^\\s*function\\s+(?:\\[[^]]*\\]\\s*=\\s*)?([A-Za-z_][A-Za-z0-9_]*)"
+        }
       ]
     },
     {
       "language": "lua",
-      "lineComments": ["--"],
+      "lineComments": [
+        "--"
+      ],
       "blockCommentStart": "--[[",
       "blockCommentEnd": "]]",
       "blockMode": "REGEX",
       "beginBlockRegex": "\\bfunction\\b",
       "endBlockRegex": "\\bend\\b",
       "patterns": [
-        {"kind": "FUNCTION", "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
       ]
     },
     {
       "language": "scala",
-      "lineComments": ["//"],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "PACKAGE", "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_.]*)"},
-        {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "OBJECT", "regex": "\\bobject\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "INTERFACE", "regex": "\\btrait\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "METHOD", "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FIELD", "regex": "^\\s*(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "PACKAGE",
+          "regex": "^\\s*package\\s+([A-Za-z_][A-Za-z0-9_.]*)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "OBJECT",
+          "regex": "\\bobject\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "INTERFACE",
+          "regex": "\\btrait\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "METHOD",
+          "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FIELD",
+          "regex": "^\\s*(?:val|var)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
       ]
     },
     {
       "language": "objective-c",
-      "aliases": ["objc"],
-      "lineComments": ["//"],
+      "aliases": [
+        "objc"
+      ],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "CLASS", "regex": "@interface\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "CLASS", "regex": "@implementation\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "[-+]\\s*\\([^)]*\\)\\s*([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "CLASS",
+          "regex": "@interface\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "CLASS",
+          "regex": "@implementation\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "[-+]\\s*\\([^)]*\\)\\s*([A-Za-z_][A-Za-z0-9_]*)"
+        }
       ]
     },
     {
       "language": "vb",
-      "aliases": ["vb.net", "visual basic"],
-      "lineComments": ["'"],
+      "aliases": [
+        "vb.net",
+        "visual basic"
+      ],
+      "lineComments": [
+        "'"
+      ],
       "blockMode": "REGEX",
       "beginBlockRegex": "\\b(Class|Function|Sub|Module|Type)\\b",
       "endBlockRegex": "\\bEnd\\s+(Class|Function|Sub|Module|Type)\\b",
       "patterns": [
-        {"kind": "CLASS", "regex": "\\bClass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bFunction\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bSub\\s+([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "CLASS",
+          "regex": "\\bClass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bFunction\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bSub\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
       ]
     },
     {
       "language": "perl",
-      "lineComments": ["#"],
+      "lineComments": [
+        "#"
+      ],
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "FUNCTION", "regex": "\\bsub\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "VARIABLE", "regex": "[$@%]([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bsub\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "VARIABLE",
+          "regex": "[$@%]([A-Za-z_][A-Za-z0-9_]*)"
+        }
       ]
     },
     {
       "language": "groovy",
-      "lineComments": ["//"],
+      "lineComments": [
+        "//"
+      ],
       "blockCommentStart": "/*",
       "blockCommentEnd": "*/",
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "CLASS", "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "INTERFACE", "regex": "\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "FUNCTION", "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "CLASS",
+          "regex": "\\bclass\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "INTERFACE",
+          "regex": "\\binterface\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bdef\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
       ]
     },
     {
       "language": "julia",
-      "lineComments": ["#"],
+      "lineComments": [
+        "#"
+      ],
       "blockMode": "BRACE",
       "patterns": [
-        {"kind": "FUNCTION", "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"},
-        {"kind": "MODULE", "regex": "\\bmodule\\s+([A-Za-z_][A-Za-z0-9_]*)"}
+        {
+          "kind": "FUNCTION",
+          "regex": "\\bfunction\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "kind": "MODULE",
+          "regex": "\\bmodule\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
       ]
     },
     {
       "language": "haskell",
-      "aliases": ["hs"],
-      "lineComments": ["--"],
+      "aliases": [
+        "hs"
+      ],
+      "lineComments": [
+        "--"
+      ],
       "blockCommentStart": "{-",
       "blockCommentEnd": "-}",
       "blockMode": "PAREN",
       "patterns": [
-        {"kind": "FUNCTION", "regex": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*::"},
-        {"kind": "FUNCTION", "regex": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*="}
+        {
+          "kind": "FUNCTION",
+          "regex": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*::"
+        },
+        {
+          "kind": "FUNCTION",
+          "regex": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*="
+        }
       ]
     }
   ]
