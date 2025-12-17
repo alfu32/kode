@@ -79,22 +79,24 @@ class FilesTabView(
 
     override fun dispatch(event: UIEvent): Boolean {
         val rows = (event.rows ?: 0).let { if (it > 0) it else lastRows }
-        val y = event.y ?: 0
-        if (event.kind == "mouse_down" && y == 0) {
-            val x = event.x ?: -1
-            if (rootButtonRange.contains(x)) {
-                onChangeWorkspace()
-                return true
-            }
-        }
-        if (y == 0) return false
+        val y = event.y
         val recents = recentFilesProvider()
         val headerRows = if (recents.isNotEmpty()) computeRecentHeight((rows - 1).coerceAtLeast(0)) else 0
         val hasRecents = headerRows > 0
+
         if (event.kind.startsWith("mouse")) {
-            if (hasRecents && y in 1 until (headerRows + 1)) {
+            val mouseY = y ?: 0
+            if (event.kind == "mouse_down" && mouseY == 0) {
+                val x = event.x ?: -1
+                if (rootButtonRange.contains(x)) {
+                    onChangeWorkspace()
+                    return true
+                }
+            }
+            if (mouseY == 0) return false
+            if (hasRecents && mouseY in 1 until (headerRows + 1)) {
                 if (event.kind == "mouse_down") {
-                    val idx = (y - 2 + recentScroll)
+                    val idx = (mouseY - 2 + recentScroll)
                     if (idx in recents.indices) {
                         val relX = event.x ?: 0
                         // Column 0 is indicator ('x' or '*'), clicking it clears the entry.
