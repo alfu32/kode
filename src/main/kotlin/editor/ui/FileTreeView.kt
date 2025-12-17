@@ -191,8 +191,9 @@ class FileTreeView(
 
     private fun handleKeys(event: UIEvent, entries: List<FileTreeEntry>, visibleCount: Int): Boolean {
         if (renameTarget != null) {
-            val key = event.key ?: return true
-            if (key == "Enter") {
+            val key = event.key ?: event.raw ?: return true
+            val lower = key.lowercase()
+            if (lower == "enter") {
                 performRename()
                 return true
             }
@@ -289,7 +290,20 @@ class FileTreeView(
         renameTarget = path
         renameInput.text = File(path).name
         renameInput.cursor = renameInput.text.length
-        renameRow = findRowForPath(path)
+        val entries = tree.flattened()
+        val idx = entries.indexOfFirst { it.fullPath == path }
+        if (idx >= 0) {
+            val availableRows = (lastRows - 1).coerceAtLeast(1)
+            val maxOffset = (entries.size - availableRows).coerceAtLeast(0)
+            if (idx < scrollOffset) {
+                scrollOffset = idx
+            } else if (idx >= scrollOffset + availableRows) {
+                scrollOffset = (idx - availableRows + 1).coerceIn(0, maxOffset)
+            }
+            renameRow = 1 + (idx - scrollOffset)
+        } else {
+            renameRow = -1
+        }
     }
 
     private fun cancelRename() {
@@ -328,6 +342,8 @@ class FileTreeView(
             if (isDir) target.mkdirs() else target.createNewFile()
         }
         tree.refreshOpenNodes()
+        selectedPath = target.path
+        startRename(target.path)
     }
 
     private fun deleteEntry(path: String) {
@@ -353,7 +369,11 @@ class FileTreeView(
         val idx = entries.indexOfFirst { it.fullPath == path }
         if (idx < 0) return -1
         val availableRows = (lastRows - 1).coerceAtLeast(0)
-        if (idx < scrollOffset || idx >= scrollOffset + availableRows) return -1
+        if (availableRows <= 0) return -1
+        if (idx < scrollOffset) scrollOffset = idx
+        if (idx >= scrollOffset + availableRows) {
+            scrollOffset = (idx - availableRows + 1).coerceAtLeast(0)
+        }
         return (idx - scrollOffset) + 1
     }
 
@@ -386,8 +406,9 @@ class FileTreeView(
                 "delete" -> if (cursor < text.length) {
                     text = text.removeRange(cursor, cursor + 1)
                 }
-                else -> if (!ev.ctrl && !ev.alt && !ev.meta && key.length == 1) {
-                    text = text.substring(0, cursor) + key + text.substring(cursor)
+                else -> if (!ev.ctrl && !ev.alt && !ev.meta) {
+                    val ch = if (key.length == 1) key else ev.raw?.takeIf { it.length == 1 } ?: return
+                    text = text.substring(0, cursor) + ch + text.substring(cursor)
                     cursor++
                 }
             }
