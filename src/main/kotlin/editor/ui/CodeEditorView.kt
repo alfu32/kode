@@ -60,6 +60,7 @@ class CodeEditorView(
     private var renderedSuggestion: RenderedPopup? = null
     private var hoveredUsageIndex: Int = -1
     private var hoveredSuggestionIndex: Int = -1
+    private var hoveredUsage: HoveredUsage? = null
 
     fun textContent(): String = buffer.text()
 
@@ -276,6 +277,11 @@ class CodeEditorView(
                 val highlights = searchTokensByLine[lineNumber]?.mapNotNull {
                     trimHighlightToChunk(it, wrapped.startColumn, wrapped.endColumn)
                 } ?: emptyList()
+                val hoveredUsageRange = hoveredUsage?.takeIf { it.line == lineNumber }?.let { hu ->
+                    val start = maxOf(hu.startColumn, wrapped.startColumn)
+                    val end = minOf(hu.endColumn, wrapped.endColumn)
+                    if (start < end) start - wrapped.startColumn until end - wrapped.startColumn else null
+                }
                 renderLineWithTokens(
                     canvas = this,
                     text = chunkText,
@@ -289,7 +295,8 @@ class CodeEditorView(
                     selectionStyle = selectionStyle,
                     highlights = highlights,
                     highlightStyle = searchMatchStyle,
-                    activeHighlightStyle = searchActiveMatchStyle
+                    activeHighlightStyle = searchActiveMatchStyle,
+                    hoveredUsageRange = hoveredUsageRange
                 )
             }
         }
@@ -422,8 +429,10 @@ class CodeEditorView(
             "mouse_move" -> {
                 if (!dragging) {
                     if (updatePopupHover(event)) return true
+                    if (updateHoveredUsage(event, bodyStartRow, layout, gutterWidth)) return true
                     return false
                 }
+                hoveredUsage = null
                 return handleMouse(
                     event = event,
                     bodyStartRow = bodyStartRow,
@@ -702,6 +711,31 @@ class CodeEditorView(
         return consumed
     }
 
+    private fun updateHoveredUsage(event: UIEvent, bodyStartRow: Int, layout: VisualLayout, gutterWidth: Int): Boolean {
+        val ex = event.x ?: return false
+        val ey = event.y ?: return clearHoveredUsage()
+        if (ey < bodyStartRow) return clearHoveredUsage()
+        if (ex < gutterWidth) return clearHoveredUsage()
+        val relY = ey - bodyStartRow
+        val visualIndex = (scrollTop + relY).coerceAtLeast(0)
+        val wrapped = layout.wrapped.getOrNull(visualIndex) ?: return clearHoveredUsage()
+        val lineText = layout.lines.getOrElse(wrapped.lineIndex) { "" }
+        val relX = (ex - gutterWidth).coerceAtLeast(0)
+        val col = (wrapped.startColumn + relX).coerceAtMost(lineText.length)
+        val token = identifyCodeIntelToken(wrapped.lineIndex, col, lineText)
+        val usageToken = token?.takeIf { t -> t.scopes.any { scope -> scope.contains("codeintel.usage") } }
+        val newHover = usageToken?.let { HoveredUsage(wrapped.lineIndex, it.start, it.end) }
+        if (newHover == hoveredUsage) return false
+        hoveredUsage = newHover
+        return true
+    }
+
+    private fun clearHoveredUsage(): Boolean {
+        if (hoveredUsage == null) return false
+        hoveredUsage = null
+        return true
+    }
+
     private fun handlePopupKeys(key: String?): Boolean {
         val k = key?.lowercase() ?: return false
         val hasUsage = usagePopup != null && renderedPopup != null
@@ -814,6 +848,7 @@ class CodeEditorView(
             buffer.selectTo(pos)
         }
         buffer.moveCursorTo(pos, expand = extendSelection)
+        hoveredUsage = null
         ensureCursorVisible((event.rows ?: 0), bodyStartRow - 1, layout, gutterWidth)
         return true
     }
@@ -951,21 +986,27 @@ class CodeEditorView(
         selectionStyle: StyleSet,
         highlights: List<FoundToken>,
         highlightStyle: StyleSet,
-        activeHighlightStyle: StyleSet
+        activeHighlightStyle: StyleSet,
+        hoveredUsageRange: IntRange? = null
     ) {
         if (maxCols <= 0) return
         val keywordTokens = tokens.filter { tok -> tok.scopes.any { it.contains("keyword") } }
         val nonKeywordTokens = if (keywordTokens.isEmpty()) tokens else tokens - keywordTokens.toSet()
-        val methodFieldOverlays = overlayTokens.filter { tok ->
+        val usageTokens = overlayTokens.filter { tok ->
+            tok.scopes.any { scope -> scope.contains("codeintel.usage") }
+        }
+        val declarationOverlays = if (usageTokens.isEmpty()) overlayTokens else overlayTokens - usageTokens.toSet()
+        val methodFieldOverlays = declarationOverlays.filter { tok ->
             tok.scopes.any { scope -> scope.contains("codeintel.method") || scope.contains("codeintel.field") }
         }
-        val otherOverlays = if (methodFieldOverlays.isEmpty()) overlayTokens else overlayTokens - methodFieldOverlays.toSet()
+        val otherOverlays = if (methodFieldOverlays.isEmpty()) declarationOverlays else declarationOverlays - methodFieldOverlays.toSet()
 
         val baseSegments = buildSegments(text, nonKeywordTokens, baseStyle)
         val withCodeIntel = applyTokenOverlays(baseSegments, otherOverlays, baseStyle)
         val withMethodFields = applyTokenOverlays(withCodeIntel, methodFieldOverlays, baseStyle)
         val withKeywords = applyTokenOverlays(withMethodFields, keywordTokens, baseStyle)
-        val withHighlights = applyHighlights(withKeywords, highlights, highlightStyle, activeHighlightStyle)
+        val withHover = applyUsageHover(withKeywords, hoveredUsageRange, baseStyle)
+        val withHighlights = applyHighlights(withHover, highlights, highlightStyle, activeHighlightStyle)
         val withSelection = applySelection(withHighlights, selection, selectionStyle)
         withSelection.forEach { seg ->
             if (seg.start >= maxCols) return
@@ -993,6 +1034,7 @@ class CodeEditorView(
     }
 
     private data class StyledSegment(val start: Int, val end: Int, val style: StyleSet)
+    private data class HoveredUsage(val line: Int, val startColumn: Int, val endColumn: Int)
 
     private fun buildSegments(
         text: String,
@@ -1067,6 +1109,21 @@ class CodeEditorView(
             current = overlayRange(current, token.startColumn, token.endColumn, style)
         }
         return current
+    }
+
+    private fun applyUsageHover(
+        segments: List<StyledSegment>,
+        hovered: IntRange?,
+        baseStyle: StyleSet
+    ): List<StyledSegment> {
+        hovered ?: return segments
+        val underlineStyle = baseStyle.copy().also { style ->
+            val existing = style.textDecoration
+            val parts = (existing?.split(Regex("\\s+"))?.filter { it.isNotBlank() } ?: emptyList()).toMutableSet()
+            parts += "underline"
+            style.textDecoration = parts.joinToString(" ")
+        }
+        return overlayRange(segments, hovered.first, hovered.last + 1, underlineStyle)
     }
 
     private fun applyTokenOverlays(

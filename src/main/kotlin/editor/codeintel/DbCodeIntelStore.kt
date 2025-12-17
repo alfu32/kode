@@ -50,10 +50,14 @@ class DbCodeIntelStore(
                         line INT,
                         start_col INT,
                         end_col INT,
-                        is_decl BOOLEAN
+                        is_decl BOOLEAN,
+                        container VARCHAR(256)
                     )
                     """.trimIndent()
                 )
+                // best-effort schema upgrade for existing DBs
+                runCatching { stmt.execute("ALTER TABLE usages ADD COLUMN container VARCHAR(256)") }
+                runCatching { stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_container_idx ON usages(name_lc, container)") }
                 stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_idx ON usages(name_lc)")
                 stmt.execute("CREATE INDEX IF NOT EXISTS usages_file_idx ON usages(file)")
                 stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_file_idx ON usages(name_lc, file)")
@@ -97,7 +101,7 @@ class DbCodeIntelStore(
                 ps.executeBatch()
             }
             c.prepareStatement(
-                "INSERT INTO usages(name_lc,name,file,line,start_col,end_col,is_decl) VALUES (?,?,?,?,?,?,?)"
+                "INSERT INTO usages(name_lc,name,file,line,start_col,end_col,is_decl,container) VALUES (?,?,?,?,?,?,?,?)"
             ).use { ps ->
                 identifiers.values.flatten().forEach { tok ->
                     ps.setString(1, tok.name.lowercase(Locale.ROOT))
@@ -107,6 +111,7 @@ class DbCodeIntelStore(
                     ps.setInt(5, tok.start)
                     ps.setInt(6, tok.end)
                     ps.setBoolean(7, tok.declaration)
+                    ps.setString(8, tok.container)
                     ps.addBatch()
                 }
                 ps.executeBatch()
@@ -147,7 +152,7 @@ class DbCodeIntelStore(
                         )
                     }
                 }
-                stmt.executeQuery("SELECT name, file, line, start_col, end_col, is_decl FROM usages").use { rs ->
+                stmt.executeQuery("SELECT name, file, line, start_col, end_col, is_decl, container FROM usages").use { rs ->
                     while (rs.next()) {
                         val name = rs.getString(1) ?: continue
                         val file = rs.getString(2) ?: continue
@@ -155,13 +160,15 @@ class DbCodeIntelStore(
                         val start = rs.getInt(4)
                         val end = rs.getInt(5)
                         val decl = rs.getBoolean(6)
+                        val container = rs.getString(7)
                         usages += IdentifierToken(
                             line = line,
                             start = start,
                             end = end,
                             declaration = decl,
                             name = name,
-                            filePath = file
+                            filePath = file,
+                            container = container
                         )
                     }
                 }

@@ -31,7 +31,8 @@ data class IdentifierToken(
     val end: Int,
     val declaration: Boolean,
     val name: String,
-    val filePath: String? = null
+    val filePath: String? = null,
+    val container: String? = null
 )
 
 data class LocalSymbol(
@@ -95,9 +96,42 @@ class CodeIntelService(
     override fun definitions(request: DefinitionRequest): List<NavigationTarget> {
         if (request.symbol.isBlank()) return emptyList()
         val lower = request.symbol.lowercase(Locale.ROOT)
+        val doc = synchronized(lock) { documents[request.filePath] }
+        val defAtCursor = definitionAt(doc, request.position)
+        if (defAtCursor != null) {
+            return listOf(
+                NavigationTarget(
+                    filePath = defAtCursor.filePath,
+                    range = TextRange(
+                        start = TextPosition(defAtCursor.line ?: 0, defAtCursor.startColumn ?: 0),
+                        end = TextPosition(
+                            defAtCursor.line ?: 0,
+                            (defAtCursor.startColumn ?: 0) + defAtCursor.name.length
+                        )
+                    ),
+                    kind = defAtCursor.kind,
+                    name = defAtCursor.name
+                )
+            )
+        }
         val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
             .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
-        return defs.mapNotNull { def ->
+
+        val (containerHint, clickedKind) = identifierContext(doc, request.position)
+        val narrowed = when {
+            containerHint != null || clickedKind == SymbolKind.VARIABLE -> {
+                val containerMatches = defs.filter { it.container == containerHint }
+                val fileAndContainer = containerMatches.filter { it.filePath == request.filePath }
+                when {
+                    fileAndContainer.isNotEmpty() -> fileAndContainer
+                    containerMatches.isNotEmpty() -> containerMatches
+                    else -> defs
+                }
+            }
+            else -> defs
+        }
+
+        return narrowed.mapNotNull { def ->
             val line = def.line ?: return@mapNotNull null
             val col = def.startColumn ?: 0
             NavigationTarget(
@@ -116,26 +150,39 @@ class CodeIntelService(
         if (request.symbol.isBlank()) return emptyList()
         val lower = request.symbol.lowercase(Locale.ROOT)
         val results = mutableListOf<NavigationTarget>()
+        val doc = synchronized(lock) { documents[request.filePath] }
+        val clickedDef = definitionAt(doc, request.position)
         val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
             .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
-        defs.forEach { def ->
-            val line = def.line
-            val col = def.startColumn
-            if (line != null && col != null) {
-                results.add(
-                    NavigationTarget(
-                        filePath = def.filePath,
-                        range = TextRange(
-                            start = TextPosition(line, col),
-                            end = TextPosition(line, col + def.name.length)
-                        ),
-                        kind = def.kind,
-                        name = def.name
+        if (clickedDef == null) {
+            defs.forEach { def ->
+                val line = def.line
+                val col = def.startColumn
+                if (line != null && col != null) {
+                    results.add(
+                        NavigationTarget(
+                            filePath = def.filePath,
+                            range = TextRange(
+                                start = TextPosition(line, col),
+                                end = TextPosition(line, col + def.name.length)
+                            ),
+                            kind = def.kind,
+                            name = def.name
+                        )
                     )
-                )
+                }
             }
         }
+        val filterContainer = if (clickedDef?.kind == SymbolKind.VARIABLE) clickedDef.container else null
+        val targetFile = clickedDef?.filePath
         val tokens = synchronized(lock) { usagesIndex[lower]?.toList().orEmpty() }
+            .let { list ->
+                val containerFiltered = if (filterContainer == null) list else list.filter { tok -> tok.container == filterContainer }
+                if (clickedDef != null && targetFile != null) {
+                    val sameFile = containerFiltered.filter { tok -> tok.filePath == targetFile }
+                    if (sameFile.isNotEmpty()) sameFile else containerFiltered
+                } else containerFiltered
+            }
         tokens.forEach { tok ->
             val file = tok.filePath
             if (file != null) {
@@ -368,6 +415,26 @@ class CodeIntelService(
         }
     }
 
+    private fun identifierContext(doc: DocumentIndex?, position: TextPosition): Pair<String?, SymbolKind?> {
+        doc ?: return null to null
+        val tokens = doc.identifiersByLine[position.line].orEmpty()
+        tokens.firstOrNull { position.column in it.start until it.end }?.let { tok ->
+            return tok.container to null
+        }
+        val def = definitionAt(doc, position)
+        return def?.container to def?.kind
+    }
+
+    private fun definitionAt(doc: DocumentIndex?, position: TextPosition): SymbolDef? {
+        doc ?: return null
+        return doc.definitions.firstOrNull { def ->
+            val line = def.line ?: return@firstOrNull false
+            val startCol = def.startColumn ?: return@firstOrNull false
+            val endCol = startCol + def.name.length
+            position.line == line && position.column in startCol until endCol
+        }
+    }
+
     private fun SymbolDef.toSymbol(): Symbol? {
         val lineNum = line ?: return null
         val col = startColumn ?: 0
@@ -485,7 +552,8 @@ private class RegexDefinitionExtractor(
                     end = symbol.endColumn,
                     declaration = true,
                     name = symbol.name,
-                    filePath = path
+                    filePath = path,
+                    container = symbol.container
                 )
             )
         }
@@ -501,6 +569,7 @@ private class RegexDefinitionExtractor(
                 val end = match.range.last + 1
                 if (isInsideDeclaration(idx, start, end, declRanges)) return@forEach
                 if (isKeyword(langKey, name)) return@forEach
+                val container = scopeStack.lastOrNull()?.name
                 identifiers.getOrPut(idx) { mutableListOf() }.add(
                     IdentifierToken(
                         line = idx,
@@ -508,7 +577,8 @@ private class RegexDefinitionExtractor(
                         end = end,
                         declaration = false,
                         name = name,
-                        filePath = path
+                        filePath = path,
+                        container = container
                     )
                 )
             }
