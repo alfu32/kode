@@ -37,6 +37,7 @@ import editor.lib.FileTree
 import editor.lib.JGitService
 import java.io.File
 import java.lang.management.ManagementFactory
+import java.lang.ProcessBuilder
 import com.sun.management.OperatingSystemMXBean
 import java.util.Locale
 import kotlin.system.exitProcess
@@ -46,6 +47,8 @@ import editor.codeintel.CompositeEditorIntelligenceService
 import editor.codeintel.LspEditorIntelligence
 import editor.lsp.LspManager
 import editor.lsp.LspService
+import react.util.restoreStty
+import react.util.enterRawMode
 
 interface StatusLineProvider {
     fun statusRight(): String
@@ -142,7 +145,7 @@ fun main(args: Array<String>) {
     val workingDir = resolveWorkingDirectory(args)
 
     lateinit var app: SplitPanelsApp
-    app = SplitPanelsApp(styleSheet, buildVersion, workingDir) {
+    app = SplitPanelsApp(styleSheet, buildVersion, workingDir, renderer) {
         app.persistSession(force = true)
         renderer.requestExit()
     }
@@ -195,6 +198,7 @@ private class SplitPanelsApp(
     styleSheet: StyleSheet,
     private val buildVersion: String,
     private var projectRoot: Path,
+    private val renderer: AnsiCanvasRenderer,
     private val onQuit: () -> Unit
 ) : BaseComponent(styleSheet), Tickable, StatusLineProvider {
     // gotcha
@@ -387,6 +391,10 @@ private class SplitPanelsApp(
                 projectSearchVisible = true
                 return true
             }
+            if (key != null && event.ctrl && key.equals("t", ignoreCase = true)) {
+                openShell()
+                return true
+            }
         }
 
         if (event.kind.startsWith("mouse") && lastRows > 0) {
@@ -532,6 +540,29 @@ private class SplitPanelsApp(
                 recordRecent(path, null, ViewerType.HEX)
             }
         }
+    }
+
+    private fun openShell() {
+        renderer.disableMouseTracking()
+        renderer.showCursor()
+        renderer.resetAttributes()
+        renderer.leaveAlternateScreen()
+        restoreStty(null)
+
+        val shell = System.getenv("SHELL")?.takeIf { it.isNotBlank() } ?: "/bin/bash"
+        println("\n[ kode ] Dropping into shell: $shell\nType 'exit' to return to Kode.\n")
+        runCatching {
+            ProcessBuilder(shell)
+                .directory(projectRoot.toFile())
+                .inheritIO()
+                .start()
+                .waitFor()
+        }
+
+        enterRawMode()
+        renderer.enterAlternateScreen()
+        renderer.enableMouseTracking()
+        renderer.hideCursor()
     }
 
     private fun showDiffInMain(diff: GitDiff) {
