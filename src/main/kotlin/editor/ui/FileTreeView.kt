@@ -179,7 +179,9 @@ class FileTreeView(
                 } else {
                     onSelect(entry, entry.detectType())
                 }
-                ensureSelectionVisible(entries, visibleCount)
+                if (selectedPath != null) {
+                    ensureSelectionVisible(entries, visibleCount)
+                }
                 true
             }
 
