@@ -1,7 +1,6 @@
 package react.renderer
 
 import react.UIEvent
-import react.util.runCommand
 import java.io.Flushable
 import java.io.InputStream
 
