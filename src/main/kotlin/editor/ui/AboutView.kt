@@ -96,12 +96,14 @@ class AboutView(
             }
 
             val creditHeaderRow = headerLines.size
-            val langMinRows = 5
             val creditStart = creditHeaderRow + 1
-            val creditHeight = (rows - creditStart - langMinRows).coerceAtLeast(3)
+            val available = (rows - creditStart).coerceAtLeast(0)
+            val langMinRows = (available / 3).coerceAtLeast(4)
+            val creditMinRows = 3
+            val langHeight = (available / 2).coerceAtLeast(langMinRows)
+            val creditHeight = (available - langHeight).coerceAtLeast(creditMinRows)
             val langHeaderRow = creditStart + creditHeight
             val langStartRow = langHeaderRow + 1
-            val langHeight = (rows - langStartRow).coerceAtLeast(0)
 
             val creditLines = buildCreditsLines()
             val creditMaxScroll = (creditLines.size - creditHeight).coerceAtLeast(0)
@@ -149,11 +151,13 @@ class AboutView(
         val headerLines = 3
         val creditHeaderRow = headerLines
         val creditStart = creditHeaderRow + 1
-        val langMinRows = 5
-        val creditHeight = (rows - creditStart - langMinRows).coerceAtLeast(3)
+        val available = (rows - creditStart).coerceAtLeast(0)
+        val langMinRows = (available / 3).coerceAtLeast(4)
+        val creditMinRows = 3
+        val langHeight = (available / 2).coerceAtLeast(langMinRows)
+        val creditHeight = (available - langHeight).coerceAtLeast(creditMinRows)
         val langHeaderRow = creditStart + creditHeight
         val langStartRow = langHeaderRow + 1
-        val langHeight = (rows - langStartRow).coerceAtLeast(0)
 
         val creditLines = buildCreditsLines()
         val creditMaxScroll = (creditLines.size - creditHeight).coerceAtLeast(0)

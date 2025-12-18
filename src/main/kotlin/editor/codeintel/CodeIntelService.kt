@@ -27,7 +27,6 @@ import org.treesitter.TreeSitterSvelte
 import org.treesitter.TreeSitterBash
 import org.treesitter.TreeSitterGo
 import org.treesitter.TreeSitterPerl
-import org.treesitter.TreeSitterNim
 import org.treesitter.TreeSitterD
 import org.treesitter.TreeSitterYaml
 import org.treesitter.TreeSitterPascal
@@ -623,7 +622,6 @@ private class TreeSitterDefinitionExtractor(
             "bash", "sh" -> runCatching { TreeSitterBash() }.getOrNull()
             "go", "golang" -> runCatching { TreeSitterGo() }.getOrNull()
             "perl", "pl" -> runCatching { TreeSitterPerl() }.getOrNull()
-            "nim" -> runCatching { TreeSitterNim() }.getOrNull()
             "d" -> runCatching { TreeSitterD() }.getOrNull()
             "yaml", "yml" -> runCatching { TreeSitterYaml() }.getOrNull()
             "pascal", "pas" -> runCatching { TreeSitterPascal() }.getOrNull()

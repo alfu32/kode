@@ -53,7 +53,6 @@ dependencies {
     implementation("io.github.bonede:tree-sitter-bash:0.23.3")
     implementation("io.github.bonede:tree-sitter-go:0.23.3")
     implementation("io.github.bonede:tree-sitter-perl:1.1.0")
-    implementation("io.github.bonede:tree-sitter-nim:0.6.0")
     implementation("io.github.bonede:tree-sitter-d:0.4.0")
     implementation("io.github.bonede:tree-sitter-yaml:0.5.0")
     implementation("io.github.bonede:tree-sitter-pascal:0.9.1")
