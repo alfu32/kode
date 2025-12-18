@@ -62,8 +62,7 @@ class CodeEditorView(
     private var hoveredSuggestionIndex: Int = -1
     private var hoveredUsage: HoveredUsage? = null
     private var rerenderOnce: Boolean = false
-    private var imageMode: Boolean = false
-    private val wordRegex = Regex("[\\p{L}\\p{N}_]+")
+    private var imageMode: ImageRenderMode = ImageRenderMode.NONE
 
     fun textContent(): String = buffer.text()
 
@@ -199,7 +198,7 @@ class CodeEditorView(
         val searchActiveMatchStyle =
             localStyleSheet.getStyle("code-search-active").withDefaults(searchMatchStyle.fg, searchMatchStyle.bg)
         val bodyStyle = baseBody
-        val effectiveSearchVisible = searchVisible && !imageMode
+        val effectiveSearchVisible = searchVisible && imageMode == ImageRenderMode.NONE
         val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyStartRow = 1 + searchHeight
 
@@ -233,9 +232,14 @@ class CodeEditorView(
         val gutterWidth = computeGutterWidth()
         val contentCols = (cols - gutterWidth).coerceAtLeast(0)
         val lines = buffer.text().split("\n")
-        if (imageMode) {
-            renderWordQuads(canvas, lines, gutterWidth, bodyStartRow, bodyRows, gutterStyle, bodyStyle)
-            return
+        when (imageMode) {
+            ImageRenderMode.BRAILLE -> {
+                renderBrailleBlocks(canvas, lines, gutterWidth, bodyStartRow, bodyRows, gutterStyle, bodyStyle)
+                return
+            }
+            else -> {
+                // continue with normal rendering
+            }
         }
         val layout = buildLayout(lines, contentCols)
         lastLayout = layout
@@ -355,12 +359,12 @@ class CodeEditorView(
         val gutterWidth = computeGutterWidth()
         val contentCols = (cols - gutterWidth).coerceAtLeast(0)
         val layout = buildLayout(buffer.text().split("\n"), contentCols).also { lastLayout = it }
-        val effectiveSearchVisible = searchVisible && !imageMode
+        val effectiveSearchVisible = searchVisible && imageMode == ImageRenderMode.NONE
         val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyRows = (rows - 1 - searchHeight).coerceAtLeast(0)
         val bodyStartRow = 1 + searchHeight
 
-        if (event.kind == "key_down" && event.ctrl && event.key?.lowercase() == "f" && !imageMode) {
+        if (event.kind == "key_down" && event.ctrl && event.key?.lowercase() == "f" && imageMode == ImageRenderMode.NONE) {
             val selection = if (buffer.hasSelection()) buffer.selectionText() else ""
             openSearch(selection)
             return true
@@ -477,7 +481,10 @@ class CodeEditorView(
             "key_down" -> {
                 val key = event.key?.lowercase()
                 if (event.ctrl && key == "i") {
-                    imageMode = !imageMode
+                    imageMode = when (imageMode) {
+                        ImageRenderMode.NONE -> ImageRenderMode.BRAILLE
+                        ImageRenderMode.BRAILLE -> ImageRenderMode.NONE
+                    }
                     searchVisible = false
                     searchHasFocus = false
                     rerenderOnce = true
@@ -1074,8 +1081,9 @@ class CodeEditorView(
 
     private data class StyledSegment(val start: Int, val end: Int, val style: StyleSet)
     private data class HoveredUsage(val line: Int, val startColumn: Int, val endColumn: Int)
+    private enum class ImageRenderMode { NONE, BRAILLE }
 
-    private fun renderWordQuads(
+    private fun renderBrailleBlocks(
         canvas: CanvasRenderer,
         lines: List<String>,
         gutterWidth: Int,
@@ -1084,54 +1092,58 @@ class CodeEditorView(
         gutterStyle: StyleSet,
         bodyStyle: StyleSet
     ) {
-        val totalLines = lines.size
         val contentCols = (canvas.cols() - gutterWidth).coerceAtLeast(0)
-        val maxOffset = (totalLines - bodyRows).coerceAtLeast(0)
+        if (contentCols <= 0 || bodyRows <= 0) return
+        // Each braille cell represents 2 columns (x) and 4 rows (y) of source.
+        // Horizontal squashing: map 4 source columns into 2 (effectively half width).
+        val cellsPerRow = (contentCols / 2).coerceAtLeast(1)
+        val maxBlocks = bodyRows
+        val totalBlocks = (lines.size + 3) / 4
+        val maxOffset = (totalBlocks - maxBlocks).coerceAtLeast(0)
         scrollTop = scrollTop.coerceIn(0, maxOffset)
 
         canvas.withStyle(bodyStyle) {
             drawRect(0, bodyStartRow, canvas.cols(), bodyRows)
         }
 
-        for (idx in 0 until bodyRows) {
-            val lineIndex = scrollTop + idx
-            if (lineIndex !in lines.indices) break
-            val y = bodyStartRow + idx
-            val line = lines[lineIndex]
-            val number = (lineIndex + 1).toString().padStart(gutterWidth, ' ')
+        for (blockIdx in 0 until bodyRows) {
+            val block = scrollTop + blockIdx
+            if (block >= totalBlocks) break
+            val y = bodyStartRow + blockIdx
+            val lineNumber = block * 4 + 1
+            val number = lineNumber.toString().padStart(gutterWidth, ' ')
             canvas.withStyle(gutterStyle) {
                 drawText(0, y, number.take(gutterWidth).padEnd(gutterWidth, ' '))
             }
-            if (contentCols <= 0) continue
-            val chars = CharArray(contentCols) { ' ' }
-            wordRegex.findAll(line).forEach { mr ->
-                val start = mr.range.first
-                if (start >= contentCols) return@forEach
-                chars[start] = glyphForMask((mr.value.hashCode() ushr 1) and 0xF)
+            val sb = StringBuilder()
+            for (cellX in 0 until cellsPerRow) {
+                var mask = 0
+                for (dy in 0 until 4) {
+                    val srcLineIdx = block * 4 + dy
+                    val srcLine = lines.getOrNull(srcLineIdx) ?: ""
+                    val x0 = cellX * 4
+                    val c1 = srcLine.getOrNull(x0) ?: ' '
+                    val c2 = srcLine.getOrNull(x0 + 1) ?: ' '
+                    val c3 = srcLine.getOrNull(x0 + 2) ?: ' '
+                    val c4 = srcLine.getOrNull(x0 + 3) ?: ' '
+                    if (c1 != ' ' || c2 != ' ') mask = mask or dotMask(0, dy)
+                    if (c3 != ' ' || c4 != ' ') mask = mask or dotMask(1, dy)
+                }
+                sb.append((0x2800 + mask).toChar())
             }
             canvas.withStyle(bodyStyle) {
-                drawText(gutterWidth, y, String(chars))
+                drawText(gutterWidth, y, sb.toString())
             }
         }
     }
 
-    private fun glyphForMask(mask: Int): Char = when (mask and 0xF) {
-        0x0 -> ' '
-        0x1 -> '\u2598' // upper-left
-        0x2 -> '\u259D' // upper-right
-        0x3 -> '\u2580' // upper half
-        0x4 -> '\u2596' // lower-left
-        0x5 -> '\u258C' // left half
-        0x6 -> '\u259E' // upper-right + lower-left
-        0x7 -> '\u259B' // upper-left + upper-right + lower-left
-        0x8 -> '\u2597' // lower-right
-        0x9 -> '\u259A' // diag
-        0xA -> '\u2590' // right half
-        0xB -> '\u259C' // upper-left + upper-right + lower-right
-        0xC -> '\u2584' // lower half
-        0xD -> '\u2599' // upper-left + lower-left + lower-right
-        0xE -> '\u259F' // upper-right + lower-left + lower-right
-        else -> '\u2588'
+    private fun dotMask(dx: Int, dy: Int): Int {
+        return when (dy) {
+            0 -> if (dx == 0) 0x01 else 0x08   // dots 1,4
+            1 -> if (dx == 0) 0x02 else 0x10   // dots 2,5
+            2 -> if (dx == 0) 0x04 else 0x20   // dots 3,6
+            else -> if (dx == 0) 0x40 else 0x80 // dots 7,8
+        }
     }
 
     private fun buildSegments(
