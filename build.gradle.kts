@@ -31,6 +31,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.h2database:h2:$h2Version")
+    implementation("net.java.dev.jna:jna:5.14.0")
     add("h2Dist", "com.h2database:h2:$h2Version")
 }
 

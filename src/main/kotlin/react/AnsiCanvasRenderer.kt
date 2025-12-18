@@ -1,9 +1,10 @@
 package react.renderer
 
-import java.io.Flushable
-import java.io.InputStream
 import react.UIEvent
 import react.util.runCommand
+import react.util.WindowsConsole
+import java.io.Flushable
+import java.io.InputStream
 
 /* =====================================================================
    ANSI Terminal Renderer
@@ -44,6 +45,9 @@ class AnsiCanvasRenderer(
     private var lastSizeCheckNanos: Long = 0L
 
     private val frame = StringBuilder()
+    private val ansiReady: Boolean =
+        !WindowsConsole.isWindows() || WindowsConsole.enableVirtualTerminalProcessing()
+    private var warnedPlain = false
 
     init {
         queryTerminalSize()?.let { (rows, cols) ->
@@ -53,6 +57,13 @@ class AnsiCanvasRenderer(
     }
 
     private fun esc(code: String) {
+        if (!ansiReady) {
+            if (!warnedPlain) {
+                frame.append("ANSI disabled; VT not available on this console.\n")
+                warnedPlain = true
+            }
+            return
+        }
         frame.append("\u001b[$code")
     }
 
@@ -64,6 +75,7 @@ class AnsiCanvasRenderer(
        ============================================================ */
 
     override fun clear() {
+        if (!ansiReady) return
         esc("2J")      // clear
         esc("H")       // cursor home
     }
@@ -94,6 +106,7 @@ class AnsiCanvasRenderer(
 
     override fun drawRect(x: Int, y: Int, width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
+        if (!ansiReady) return
         for (row in 0 until height) {
             esc("${y + row + 1};${x + 1}H")
             repeat(width) { frame.append(" ") }
@@ -101,11 +114,17 @@ class AnsiCanvasRenderer(
     }
 
     override fun drawText(x: Int, y: Int, text: String) {
+        if (!ansiReady) {
+            frame.append(text)
+            frame.append("\n")
+            return
+        }
         esc("${y + 1};${x + 1}H")
         frame.append(text)
     }
 
     override fun setCursorPosition(x: Int, y: Int) {
+        if (!ansiReady) return
         esc("${y + 1};${x + 1}H")
     }
 
