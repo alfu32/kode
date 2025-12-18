@@ -54,10 +54,10 @@ interface StatusLineProvider {
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     val perf = PerformanceTracker()
-    // Cap rendering to avoid excessive redraws; default 25 FPS (40ms). Allow tuning via env.
+    // Cap rendering to avoid excessive redraws; default ~125 FPS (8ms). Allow tuning via env.
     val frameIntervalMs = System.getenv("KODE_FRAME_MS")?.toLongOrNull()
-        ?.coerceIn(40L, 200L) // 40ms ~25fps, 200ms ~5fps
-        ?: 40L
+        ?.coerceIn(8L, 200L) // 8ms ~125fps, 200ms ~5fps
+        ?: 8L
     fun redraw() {
         val totalCols = renderer.cols().coerceAtLeast(1)
         val totalRows = renderer.rows().coerceAtLeast(0)
@@ -97,35 +97,48 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
 
         var needsRender = true
         var lastRenderMs = System.currentTimeMillis()
+        var nextFrameTime = lastRenderMs + frameIntervalMs
         redraw()
         lastRenderMs = System.currentTimeMillis()
+        nextFrameTime = lastRenderMs + frameIntervalMs
 
-        var lastAnimationMs = System.currentTimeMillis()
-        val animationIntervalMs = 500L
+        var lastAnimationMs = lastRenderMs
+        var nextAnimationTime = lastAnimationMs + 500L
+        val minSleepMs = idleSleepMillis.coerceAtLeast(1L)
+
         while (renderer.isRunning()) {
             val event = renderer.tryPollEvent()
             if (event != null) {
-                needsRender = app.dispatch(event) || event.kind == "resize"
+                needsRender = app.dispatch(event) || event.kind == "resize" || needsRender
             }
-            val now = System.currentTimeMillis()
-            val perfDirty = perf.loopTick(now)
-            if (now - lastAnimationMs >= animationIntervalMs) {
+
+            var now = System.currentTimeMillis()
+
+            // Periodic animation_frame dispatch
+            if (now >= nextAnimationTime) {
                 val ticked = app.dispatch(UIEvent(kind = "animation_frame", timeMs = now))
                 if (ticked) needsRender = true
                 lastAnimationMs = now
+                nextAnimationTime = lastAnimationMs + 500L
+                now = System.currentTimeMillis()
             }
 
-            if (needsRender || perfDirty) {
-                val nowRender = System.currentTimeMillis()
-                val delta = nowRender - lastRenderMs
-                if (delta < frameIntervalMs) {
-                    Thread.sleep(frameIntervalMs - delta)
+            val perfDirty = perf.loopTick(now)
+            val wantRender = needsRender || perfDirty
+
+            if (wantRender) {
+                if (now < nextFrameTime) {
+                    Thread.sleep((nextFrameTime - now).coerceAtLeast(minSleepMs))
+                    now = System.currentTimeMillis()
                 }
                 redraw()
                 needsRender = false
-                lastRenderMs = System.currentTimeMillis()
+                lastRenderMs = now
+                nextFrameTime = lastRenderMs + frameIntervalMs
             } else {
-                Thread.sleep(idleSleepMillis)
+                val sleepUntil = minOf(nextFrameTime, nextAnimationTime)
+                val sleepMs = (sleepUntil - now).coerceAtLeast(minSleepMs)
+                Thread.sleep(sleepMs)
             }
         }
         if (app is SplitPanelsApp) app.shutdownServices()
