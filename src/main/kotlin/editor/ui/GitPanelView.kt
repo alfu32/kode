@@ -10,6 +10,7 @@ import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSheet
 import react.UIEvent
+import react.Tickable
 import react.renderer.CanvasRenderer
 import java.nio.file.Path
 
@@ -20,7 +21,7 @@ class GitPanelView(
     private var root: Path,
     private var git: IGitService?,
     private val onShowDiff: (GitDiff) -> Unit = {}
-) : BaseComponent(styleSheet) {
+) : BaseComponent(styleSheet), Tickable {
 
     private var statusEntries: List<GitStatusEntry> = emptyList()
     private var commitEntries: List<GitCommitEntry> = emptyList()
@@ -34,6 +35,8 @@ class GitPanelView(
     private val selectStarted: Boolean = false
     private var initButtonRow: Int = -1
     private var initButtonRange: IntRange = IntRange.EMPTY
+    private var lastRefreshMs: Long = 0L
+    private val refreshIntervalMs: Long = 4_000L
 
     init {
         refreshData()
@@ -62,6 +65,13 @@ class GitPanelView(
         commitEntries = svc.listCommits()
         commitScroll = commitScroll.coerceIn(0, (commitEntries.size - 1).coerceAtLeast(0))
         commitRows = buildCommitRows()
+    }
+
+    override fun tick(nowMs: Long): Boolean {
+        if (nowMs - lastRefreshMs < refreshIntervalMs) return false
+        lastRefreshMs = nowMs
+        refreshData()
+        return true
     }
 
     override fun render(canvas: CanvasRenderer) {

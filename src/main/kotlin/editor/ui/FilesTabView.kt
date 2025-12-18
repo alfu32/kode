@@ -7,6 +7,7 @@ import editor.lib.IFileTree
 import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSheet
+import react.Tickable
 import react.UIEvent
 import react.renderer.CanvasRenderer
 
@@ -23,16 +24,25 @@ class FilesTabView(
     private val onSelectFile: (FileTreeEntry, String?) -> Unit = { _, _ -> },
     private val onSelectRecent: (RecentFileEntry) -> Unit = {},
     private val onRemoveRecent: (RecentFileEntry) -> Unit = {}
-) : BaseComponent(styleSheet) {
+) : BaseComponent(styleSheet), Tickable {
 
     private val fileTreeView = FileTreeView(styleSheet, tree, onSelectFile)
     private var recentHeight: Int = 0
     private var recentScroll: Int = 0
     private var lastRows: Int = 0
+    private var lastRefreshMs: Long = 0L
+    private val refreshIntervalMs: Long = 4_000L
     private var rootButtonRange: IntRange = IntRange.EMPTY
 
     fun refreshFileTree() {
         tree.refreshOpenNodes()
+    }
+
+    override fun tick(nowMs: Long): Boolean {
+        if (nowMs - lastRefreshMs < refreshIntervalMs) return false
+        lastRefreshMs = nowMs
+        refreshFileTree()
+        return true
     }
 
     fun setRoot(root: String) {

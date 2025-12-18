@@ -7,6 +7,7 @@ import react.StyleSheet
 import react.TabView
 import react.UIEvent
 import react.renderer.AnsiCanvasRenderer
+import react.Tickable
 import react.renderer.CanvasRenderer
 import react.util.enterRawMode
 import react.util.restoreStty
@@ -288,9 +289,6 @@ private class SplitPanelsApp(
     private var projectSearchVisible = false
     private var workspacePickerVisible = false
     private var workspacePicker: WorkspacePickerDialog? = null
-    private var lastFileRefreshMs: Long = 0L
-    private var lastGitRefreshMs: Long = 0L
-    private val refreshIntervalMs: Long = 5_000L
     private var activeDiff: GitDiff? = null
     init {
         dbManager.start(projectRoot)
@@ -681,8 +679,6 @@ private class SplitPanelsApp(
         gitService = createGitService(projectRoot)
         gitPanel.setGitService(gitService, projectRoot)
         projectSearchDialog.setProjectRoot(projectRoot)
-        lastFileRefreshMs = 0L
-        lastGitRefreshMs = 0L
         workspacePickerVisible = false
         workspacePicker = null
         restoreLastSession()
@@ -1038,16 +1034,8 @@ private class SplitPanelsApp(
 
     override fun tick(nowMs: Long): Boolean {
         var needsRender = false
-        if (nowMs - lastFileRefreshMs >= refreshIntervalMs) {
-            (leftTabs.children.getOrNull(0) as? editor.ui.FilesTabView)?.refreshFileTree()
-            lastFileRefreshMs = nowMs
-            needsRender = true
-        }
-        if (nowMs - lastGitRefreshMs >= refreshIntervalMs) {
-            gitPanel.refreshData()
-            lastGitRefreshMs = nowMs
-            needsRender = true
-        }
+        needsRender = (filesTabView as? Tickable)?.tick(nowMs) == true || needsRender
+        needsRender = (gitPanel as? Tickable)?.tick(nowMs) == true || needsRender
         return needsRender
     }
 }
