@@ -48,6 +48,7 @@ class CodeEditorView(
     private var lastLayout: VisualLayout? = null
     private var dragging = false
     private var lastCols: Int = 0
+    private var lastTotalCols: Int = 0
     private var lastRows: Int = 0
     private var searchVisible = false
     private var searchHasFocus = false
@@ -62,7 +63,6 @@ class CodeEditorView(
     private var hoveredSuggestionIndex: Int = -1
     private var hoveredUsage: HoveredUsage? = null
     private var rerenderOnce: Boolean = false
-    private var imageMode: ImageRenderMode = ImageRenderMode.NONE
 
     fun textContent(): String = buffer.text()
 
@@ -183,9 +183,12 @@ class CodeEditorView(
     }
 
     override fun render(canvas: CanvasRenderer) {
-        val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
+        val totalCols = canvas.cols().coerceAtLeast(1)
+        val previewCols = computePreviewWidth(totalCols)
+        val cols = (totalCols - previewCols).coerceAtLeast(1)
         lastCols = cols
+        lastTotalCols = totalCols
         lastRows = rows
         val headerStyle = localStyleSheet.getStyle("code-header").withDefaults()
         val baseBody = localStyleSheet.getStyle("code-body").withDefaults()
@@ -198,7 +201,7 @@ class CodeEditorView(
         val searchActiveMatchStyle =
             localStyleSheet.getStyle("code-search-active").withDefaults(searchMatchStyle.fg, searchMatchStyle.bg)
         val bodyStyle = baseBody
-        val effectiveSearchVisible = searchVisible && imageMode == ImageRenderMode.NONE
+        val effectiveSearchVisible = searchVisible
         val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyStartRow = 1 + searchHeight
 
@@ -209,8 +212,8 @@ class CodeEditorView(
             val langLabel = language?.let { "· $it$grammarInfo" } ?: grammarInfo
             val saveMarker = if (buffer.isDirty()) "*" else " "
             val label = "$saveMarker${filePath.ifEmpty { "[no file]" }} $mimeLabel $langLabel"
-                .take(cols)
-            drawText(0, 0, label.padEnd(cols, ' '))
+                .take(totalCols)
+            drawText(0, 0, label.padEnd(totalCols, ' '))
         }
 
         if (effectiveSearchVisible && searchHeight > 0) {
@@ -232,15 +235,6 @@ class CodeEditorView(
         val gutterWidth = computeGutterWidth()
         val contentCols = (cols - gutterWidth).coerceAtLeast(0)
         val lines = buffer.text().split("\n")
-        when (imageMode) {
-            ImageRenderMode.BRAILLE -> {
-                renderBrailleBlocks(canvas, lines, gutterWidth, bodyStartRow, bodyRows, gutterStyle, bodyStyle)
-                return
-            }
-            else -> {
-                // continue with normal rendering
-            }
-        }
         val layout = buildLayout(lines, contentCols)
         lastLayout = layout
 
@@ -344,6 +338,34 @@ class CodeEditorView(
 
         renderUsagePopup(canvas, bodyStartRow, gutterWidth, cols, rows, layout)
         renderSuggestionPopup(canvas, bodyStartRow, gutterWidth, cols, rows, layout)
+
+        if (previewCols > 0) {
+            val previewCanvas = ClippedCanvasRenderer(
+                base = canvas,
+                offsetX = cols,
+                offsetY = 0,
+                width = previewCols,
+                height = rows
+            )
+            val previewGutter = computeGutterWidth().coerceAtMost(previewCols)
+            val firstVisibleLine = visibleRows.firstOrNull()?.lineIndex ?: 0
+            val previewOffset = (firstVisibleLine / 4).coerceAtLeast(0)
+            if (bodyStartRow > 1) {
+                previewCanvas.withStyle(bodyStyle) {
+                    drawRect(0, 1, previewCols, bodyStartRow - 1)
+                }
+            }
+            renderBrailleBlocks(
+                previewCanvas,
+                lines,
+                previewGutter,
+                bodyStartRow,
+                bodyRows,
+                gutterStyle,
+                bodyStyle,
+                previewOffset
+            )
+        }
     }
 
     override fun dispatch(event: UIEvent): Boolean {
@@ -354,17 +376,19 @@ class CodeEditorView(
             triggerCodeIntel(force = true, immediate = true)
             return true
         }
-        val cols = (event.cols ?: lastCols).coerceAtLeast(1)
+        val totalCols = (event.cols ?: lastTotalCols).coerceAtLeast(1)
+        val previewCols = computePreviewWidth(totalCols)
+        val cols = (totalCols - previewCols).coerceAtLeast(1)
         val rows = (event.rows ?: lastRows).coerceAtLeast(1)
         val gutterWidth = computeGutterWidth()
         val contentCols = (cols - gutterWidth).coerceAtLeast(0)
         val layout = buildLayout(buffer.text().split("\n"), contentCols).also { lastLayout = it }
-        val effectiveSearchVisible = searchVisible && imageMode == ImageRenderMode.NONE
+        val effectiveSearchVisible = searchVisible
         val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyRows = (rows - 1 - searchHeight).coerceAtLeast(0)
         val bodyStartRow = 1 + searchHeight
 
-        if (event.kind == "key_down" && event.ctrl && event.key?.lowercase() == "f" && imageMode == ImageRenderMode.NONE) {
+        if (event.kind == "key_down" && event.ctrl && event.key?.lowercase() == "f") {
             val selection = if (buffer.hasSelection()) buffer.selectionText() else ""
             openSearch(selection)
             return true
@@ -427,6 +451,21 @@ class CodeEditorView(
                 val y = event.y ?: return false
                 if (y == 0) return false // header
                 if (effectiveSearchVisible && y in 1 until bodyStartRow) return true
+                val ex = event.x ?: return false
+                if (ex >= cols) {
+                    if (y < bodyStartRow || y >= rows) return false
+                    val firstVisibleLine = layout.wrapped.getOrNull(scrollTop)?.lineIndex ?: 0
+                    val blockOffset = (firstVisibleLine / 4).coerceAtLeast(0)
+                    val blockIdx = (y - bodyStartRow).coerceAtLeast(0)
+                    val targetBlock = blockOffset + blockIdx
+                    val targetLine = (targetBlock * 4).coerceAtMost(buffer.totalLines().coerceAtLeast(1) - 1)
+                    val targetPos = Position(targetLine, 0)
+                    val targetRow = visualRowForPosition(targetPos, layout)
+                    val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
+                    scrollTop = targetRow.coerceIn(0, maxOffset)
+                    buffer.moveCursorTo(targetPos, expand = false)
+                    return true
+                }
                 if (handleUsageClick(event)) return true
                 if (handleSuggestionClick(event)) return true
                 if (event.ctrl && handleCtrlClick(event, bodyStartRow, layout, gutterWidth)) {
@@ -464,6 +503,7 @@ class CodeEditorView(
             }
             "mouse_move" -> {
                 if (!dragging) {
+                    if ((event.x ?: 0) >= cols) return false
                     if (updatePopupHover(event)) return true
                     if (updateHoveredUsage(event, bodyStartRow, layout, gutterWidth)) return true
                     return false
@@ -480,16 +520,6 @@ class CodeEditorView(
             }
             "key_down" -> {
                 val key = event.key?.lowercase()
-                if (event.ctrl && key == "i") {
-                    imageMode = when (imageMode) {
-                        ImageRenderMode.NONE -> ImageRenderMode.BRAILLE
-                        ImageRenderMode.BRAILLE -> ImageRenderMode.NONE
-                    }
-                    searchVisible = false
-                    searchHasFocus = false
-                    rerenderOnce = true
-                    return true
-                }
                 if (readOnly) {
                     val mutating = when (key) {
                         "backspace", "delete", "enter" -> true
@@ -1081,7 +1111,11 @@ class CodeEditorView(
 
     private data class StyledSegment(val start: Int, val end: Int, val style: StyleSet)
     private data class HoveredUsage(val line: Int, val startColumn: Int, val endColumn: Int)
-    private enum class ImageRenderMode { NONE, BRAILLE }
+
+    private fun computePreviewWidth(totalCols: Int): Int {
+        if (totalCols < 40) return 0
+        return (totalCols / 3).coerceIn(8, 20)
+    }
 
     private fun renderBrailleBlocks(
         canvas: CanvasRenderer,
@@ -1090,24 +1124,24 @@ class CodeEditorView(
         bodyStartRow: Int,
         bodyRows: Int,
         gutterStyle: StyleSet,
-        bodyStyle: StyleSet
+        bodyStyle: StyleSet,
+        blockOffset: Int
     ) {
         val contentCols = (canvas.cols() - gutterWidth).coerceAtLeast(0)
         if (contentCols <= 0 || bodyRows <= 0) return
         // Each braille cell represents 2 columns (x) and 4 rows (y) of source.
-        // Horizontal squashing: map 4 source columns into 2 (effectively half width).
-        val cellsPerRow = (contentCols / 2).coerceAtLeast(1)
+        // Horizontal squashing: pack two source columns into one braille cell.
+        val cellsPerRow = contentCols.coerceAtLeast(1)
         val maxBlocks = bodyRows
         val totalBlocks = (lines.size + 3) / 4
-        val maxOffset = (totalBlocks - maxBlocks).coerceAtLeast(0)
-        scrollTop = scrollTop.coerceIn(0, maxOffset)
+        val offset = blockOffset.coerceIn(0, (totalBlocks - maxBlocks).coerceAtLeast(0))
 
         canvas.withStyle(bodyStyle) {
             drawRect(0, bodyStartRow, canvas.cols(), bodyRows)
         }
 
         for (blockIdx in 0 until bodyRows) {
-            val block = scrollTop + blockIdx
+            val block = offset + blockIdx
             if (block >= totalBlocks) break
             val y = bodyStartRow + blockIdx
             val lineNumber = block * 4 + 1
@@ -1121,13 +1155,11 @@ class CodeEditorView(
                 for (dy in 0 until 4) {
                     val srcLineIdx = block * 4 + dy
                     val srcLine = lines.getOrNull(srcLineIdx) ?: ""
-                    val x0 = cellX * 4
+                    val x0 = cellX * 2
                     val c1 = srcLine.getOrNull(x0) ?: ' '
                     val c2 = srcLine.getOrNull(x0 + 1) ?: ' '
-                    val c3 = srcLine.getOrNull(x0 + 2) ?: ' '
-                    val c4 = srcLine.getOrNull(x0 + 3) ?: ' '
-                    if (c1 != ' ' || c2 != ' ') mask = mask or dotMask(0, dy)
-                    if (c3 != ' ' || c4 != ' ') mask = mask or dotMask(1, dy)
+                    if (c1 != ' ') mask = mask or dotMask(0, dy)
+                    if (c2 != ' ') mask = mask or dotMask(1, dy)
                 }
                 sb.append((0x2800 + mask).toChar())
             }
