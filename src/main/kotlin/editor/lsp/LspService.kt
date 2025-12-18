@@ -177,3 +177,4 @@ class LspService(
 data class LspCommand(val cmd: List<String>, val workdir: Path?)
 
 data class CommandResolution(val command: LspCommand?, val error: String? = null)
+

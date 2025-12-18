@@ -61,6 +61,7 @@ class CodeEditorView(
     private var hoveredUsageIndex: Int = -1
     private var hoveredSuggestionIndex: Int = -1
     private var hoveredUsage: HoveredUsage? = null
+    private var rerenderOnce: Boolean = false
 
     fun textContent(): String = buffer.text()
 
@@ -68,11 +69,12 @@ class CodeEditorView(
         buffer.loadText(text)
         scrollTop = 0
         lastIndexedVersion = -1
-        triggerCodeIntel(force = true)
+        triggerCodeIntel(force = true, immediate = true)
         syncLsp(open = true)
+        rerenderOnce = true
     }
 
-    private fun triggerCodeIntel(force: Boolean = false) {
+    private fun triggerCodeIntel(force: Boolean = false, immediate: Boolean = false) {
         val service = codeIntelIndexer ?: return
         if (filePath.isEmpty()) return
         val version = buffer.version()
@@ -80,7 +82,11 @@ class CodeEditorView(
         lastIndexedVersion = version
         val lang = grammarLanguage ?: language
         if (!lang.isNullOrBlank()) {
-            service.indexDocument(filePath, lang, buffer.text(), version)
+            if (immediate) {
+                service.indexDocumentNow(filePath, lang, buffer.text(), version)
+            } else {
+                service.indexDocument(filePath, lang, buffer.text(), version)
+            }
         }
         lsp?.changeDocument(filePath, buffer.text(), version.toInt())
     }
@@ -116,11 +122,21 @@ class CodeEditorView(
         language = state.language
         grammarAvailable = state.grammarAvailable
         grammarLanguage = state.grammarLanguage ?: state.language
+        if ((language.isNullOrBlank() || grammarLanguage.isNullOrBlank()) && filePath.isNotBlank()) {
+            val ext = filePath.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+            val inferred = ext.takeIf { it.isNotEmpty() }?.let { syntaxProvider?.languageForExtension(it) }
+            if (!inferred.isNullOrBlank()) {
+                if (language.isNullOrBlank()) language = inferred
+                if (grammarLanguage.isNullOrBlank()) grammarLanguage = inferred
+                grammarAvailable = grammarAvailable || syntaxProvider?.languages()?.contains(inferred) == true
+            }
+        }
         buffer.restoreState(state.buffer)
         scrollTop = state.scrollTop.coerceAtLeast(0)
         lastIndexedVersion = -1
-        triggerCodeIntel(force = true)
+        triggerCodeIntel(force = true, immediate = true)
         syncLsp(open = true)
+        rerenderOnce = true
     }
 
     fun loadVirtualContent(label: String, content: String, language: String? = null) {
@@ -320,6 +336,13 @@ class CodeEditorView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind == "animation_frame" && rerenderOnce) {
+            rerenderOnce = false
+            lastLayout = null
+            // Re-run code intel to ensure tokens are ready before the redraw.
+            triggerCodeIntel(force = true, immediate = true)
+            return true
+        }
         val cols = (event.cols ?: lastCols).coerceAtLeast(1)
         val rows = (event.rows ?: lastRows).coerceAtLeast(1)
         val gutterWidth = computeGutterWidth()

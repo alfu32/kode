@@ -93,6 +93,15 @@ class CodeIntelService(
         }
     }
 
+    fun indexDocumentNow(path: String, language: String?, text: String, version: Long) {
+        if (language.isNullOrBlank()) return
+        synchronized(lock) {
+            latestVersionByPath[path] = version
+            pendingJobs.remove(path)?.cancel(false)
+        }
+        performIndex(path, language, text, version)
+    }
+
     override fun definitions(request: DefinitionRequest): List<NavigationTarget> {
         if (request.symbol.isBlank()) return emptyList()
         val lower = request.symbol.lowercase(Locale.ROOT)
