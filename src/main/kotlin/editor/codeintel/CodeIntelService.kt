@@ -562,43 +562,100 @@ private class TreeSitterDefinitionExtractor(
     private val fallback: DefinitionExtractor = RegexDefinitionExtractor()
 ) : DefinitionExtractor {
     override fun extract(path: String, text: String, language: String?): ExtractedSymbols {
-        val langKey = language?.lowercase(Locale.ROOT) ?: return fallback.extract(path, text, language)
-        val tsLang = loadLanguage(langKey) ?: return fallback.extract(path, text, language)
+        val base = fallback.extract(path, text, language)
+        val langKey = language?.lowercase(Locale.ROOT) ?: return base
+        val tsLang = loadLanguage(langKey) ?: return base
         val parser = TSParser()
         val setOk = runCatching { parser.setLanguage(tsLang) }.getOrDefault(false)
-        if (!setOk) return fallback.extract(path, text, language)
-        val tree = runCatching { parser.parseString(null, text) }.getOrNull() ?: return fallback.extract(path, text, language)
+        if (!setOk) return base
+        val tree = runCatching { parser.parseString(null, text) }.getOrNull() ?: return base
         val root = tree.rootNode
-        val base = fallback.extract(path, text, language)
         val tsLangName = runCatching { tsLang.name() }.getOrNull()
-        val enrichedDefs = base.symbols.map { def ->
-            val node = findNode(root, def.line, def.startColumn, def.name.length)
-            if (node == null) {
-                def.copy(tsLanguage = tsLangName)
-            } else {
-                def.copy(
-                    tsLanguage = tsLangName,
-                    tsParent = node.parent?.type,
-                    tsKind = node.type,
-                    tsIsNamed = node.isNamed,
-                    tsFieldNames = collectFieldNames(node)
-                )
+        val spec = languageSpecs[langKey] ?: defaultSpec
+        val defs = mutableListOf<LocalSymbol>()
+        val identifiers = mutableMapOf<Int, MutableList<IdentifierToken>>()
+
+        val stack = ArrayDeque<TSNode>()
+        stack.add(root)
+        while (stack.isNotEmpty()) {
+            val node = stack.removeLast()
+            val childCount = node.namedChildCount
+            for (i in 0 until childCount) {
+                val child = node.getNamedChild(i)
+                if (child == null || child.isNull) continue
+                val type = child.type
+                val parentType = node.type
+                val name = extractName(text, child) ?: run {
+                    stack.add(child)
+                    continue
+                }
+                if (KeywordSyntaxProvider.isKeyword(language, name)) {
+                    stack.add(child)
+                    continue
+                }
+                val isIdentifier = type in identifierTypes
+                val isDeclaration = parentType in spec.declNodes
+                val kind = if (isDeclaration) spec.kindFor(parentType) else SymbolKind.VARIABLE
+                if (isIdentifier) {
+                    val startPoint = child.startPoint
+                    val endPoint = child.endPoint
+                    val line = startPoint.row
+                    val startCol = startPoint.column
+                    val endCol = endPoint.column
+                    val container = findContainerName(child, spec, text)
+                    if (isDeclaration) {
+                        defs.add(
+                            LocalSymbol(
+                                name = name,
+                                kind = kind,
+                                startOffset = child.startByte,
+                                endOffset = child.endByte,
+                                line = line,
+                                startColumn = startCol,
+                                endColumn = endCol,
+                                filePath = path,
+                                container = container,
+                                tsLanguage = tsLangName,
+                                tsParent = child.parent?.type,
+                                tsKind = type,
+                                tsIsNamed = child.isNamed,
+                                tsFieldNames = collectFieldNames(child)
+                            )
+                        )
+                    }
+                    identifiers.getOrPut(line) { mutableListOf() }.add(
+                        IdentifierToken(
+                            line = line,
+                            start = startCol,
+                            end = endCol,
+                            declaration = isDeclaration,
+                            name = name,
+                            filePath = path,
+                            container = container,
+                            tsLanguage = tsLangName,
+                            tsParent = child.parent?.type,
+                            tsKind = type,
+                            tsIsNamed = child.isNamed,
+                            tsFieldNames = collectFieldNames(child)
+                        )
+                    )
+                }
+                stack.add(child)
             }
         }
-        val enrichedIdents = base.identifiersByLine.mapValues { (_, list) ->
-            list.map { tok ->
-                val node = findNode(root, tok.line, tok.start, tok.end - tok.start)
-                if (node == null) tok.copy(tsLanguage = tsLangName)
-                else tok.copy(
-                    tsLanguage = tsLangName,
-                    tsParent = node.parent?.type,
-                    tsKind = node.type,
-                    tsIsNamed = node.isNamed,
-                    tsFieldNames = collectFieldNames(node)
-                )
-            }
+        val finalDefs = if (defs.isEmpty()) {
+            base.symbols.map { it.copy(tsLanguage = tsLangName) }
+        } else {
+            defs + base.symbols.map { it.copy(tsLanguage = tsLangName) }
         }
-        return ExtractedSymbols(enrichedDefs, enrichedIdents)
+        val mergedIdentifiers = mutableMapOf<Int, MutableList<IdentifierToken>>()
+        identifiers.forEach { (line, list) -> mergedIdentifiers.getOrPut(line) { mutableListOf() }.addAll(list) }
+        base.identifiersByLine.forEach { (line, list) ->
+            mergedIdentifiers.getOrPut(line) { mutableListOf() }
+                .addAll(list.map { tok -> tok.copy(tsLanguage = tsLangName) })
+        }
+        val finalIdents = mergedIdentifiers.mapValues { (_, v) -> v.toList() }
+        return ExtractedSymbols(finalDefs, finalIdents)
     }
 
     private fun loadLanguage(lang: String): TSLanguage? =
@@ -631,14 +688,6 @@ private class TreeSitterDefinitionExtractor(
             else -> null
         }
 
-    private fun findNode(root: TSNode, line: Int?, startCol: Int?, length: Int): TSNode? {
-        if (line == null || startCol == null) return null
-        val start = TSPoint(line, startCol)
-        val end = TSPoint(line, startCol + length)
-        val node = root.getNamedDescendantForPointRange(start, end)
-        return if (node.isNull) null else node
-    }
-
     private fun collectFieldNames(node: TSNode): String? {
         val count = node.namedChildCount
         if (count <= 0) return null
@@ -649,6 +698,155 @@ private class TreeSitterDefinitionExtractor(
         }
         return if (fields.isEmpty()) null else fields.joinToString(",")
     }
+
+    private fun extractName(text: String, node: TSNode): String? {
+        val start = node.startByte
+        val end = node.endByte
+        if (start < 0 || end <= start || end > text.length) return null
+        return runCatching { text.substring(start, end) }.getOrNull()
+    }
+
+    private fun findContainerName(node: TSNode, spec: LangSpec, text: String): String? {
+        var parent = node.parent
+        while (parent != null && !parent.isNull) {
+            val type = parent.type
+            if (type in spec.containerNodes) {
+                val nameChild = parent.getChildByFieldName("name") ?: parent.getNamedChild(0)
+                val name = nameChild?.let { extractName(text, it) }
+                return name ?: type
+            }
+            parent = parent.parent
+        }
+        return null
+    }
+
+    private data class LangSpec(
+        val declNodes: Set<String>,
+        val containerNodes: Set<String>,
+        val kindMap: Map<String, SymbolKind>
+    ) {
+        fun kindFor(type: String): SymbolKind =
+            kindMap[type] ?: when {
+                type.contains("class") -> SymbolKind.CLASS
+                type.contains("interface") -> SymbolKind.INTERFACE
+                type.contains("enum") -> SymbolKind.ENUM
+                type.contains("function") || type.contains("method") -> SymbolKind.FUNCTION
+                else -> SymbolKind.VARIABLE
+            }
+    }
+
+    private val identifierTypes = setOf("identifier", "variable_name", "name")
+
+    private val defaultSpec = LangSpec(
+        declNodes = setOf("function_definition", "function_declaration", "method_definition", "variable_declarator", "lexical_declaration", "assignment", "class_declaration", "class_definition"),
+        containerNodes = setOf("class_declaration", "class_definition", "interface_declaration", "struct_specifier", "enum_specifier"),
+        kindMap = mapOf(
+            "function_definition" to SymbolKind.FUNCTION,
+            "function_declaration" to SymbolKind.FUNCTION,
+            "method_definition" to SymbolKind.METHOD,
+            "class_declaration" to SymbolKind.CLASS,
+            "class_definition" to SymbolKind.CLASS,
+            "interface_declaration" to SymbolKind.INTERFACE,
+            "enum_declaration" to SymbolKind.ENUM,
+            "enum_specifier" to SymbolKind.ENUM,
+            "struct_specifier" to SymbolKind.CLASS
+        )
+    )
+
+    private val languageSpecs: Map<String, LangSpec> = mapOf(
+        "typescript" to LangSpec(
+            declNodes = setOf("function_declaration", "method_definition", "lexical_declaration", "variable_declarator", "class_declaration", "interface_declaration", "enum_declaration"),
+            containerNodes = setOf("class_declaration", "interface_declaration", "enum_declaration"),
+            kindMap = mapOf(
+                "function_declaration" to SymbolKind.FUNCTION,
+                "method_definition" to SymbolKind.METHOD,
+                "class_declaration" to SymbolKind.CLASS,
+                "interface_declaration" to SymbolKind.INTERFACE,
+                "enum_declaration" to SymbolKind.ENUM
+            )
+        ),
+        "javascript" to LangSpec(
+            declNodes = setOf("function_declaration", "method_definition", "lexical_declaration", "variable_declarator", "class_declaration"),
+            containerNodes = setOf("class_declaration"),
+            kindMap = mapOf(
+                "function_declaration" to SymbolKind.FUNCTION,
+                "method_definition" to SymbolKind.METHOD,
+                "class_declaration" to SymbolKind.CLASS
+            )
+        ),
+        "python" to LangSpec(
+            declNodes = setOf("function_definition", "class_definition", "assignment"),
+            containerNodes = setOf("class_definition", "function_definition"),
+            kindMap = mapOf(
+                "function_definition" to SymbolKind.FUNCTION,
+                "class_definition" to SymbolKind.CLASS
+            )
+        ),
+        "c" to LangSpec(
+            declNodes = setOf("function_definition", "declaration"),
+            containerNodes = setOf("struct_specifier", "enum_specifier"),
+            kindMap = mapOf(
+                "function_definition" to SymbolKind.FUNCTION
+            )
+        ),
+        "cpp" to LangSpec(
+            declNodes = setOf("function_definition", "field_declaration", "declaration"),
+            containerNodes = setOf("struct_specifier", "class_specifier", "enum_specifier"),
+            kindMap = mapOf(
+                "function_definition" to SymbolKind.FUNCTION,
+                "class_specifier" to SymbolKind.CLASS,
+                "struct_specifier" to SymbolKind.CLASS,
+                "enum_specifier" to SymbolKind.ENUM
+            )
+        ),
+        "go" to LangSpec(
+            declNodes = setOf("function_declaration", "method_declaration", "short_var_declaration", "var_spec", "const_spec"),
+            containerNodes = setOf("type_declaration"),
+            kindMap = mapOf(
+                "function_declaration" to SymbolKind.FUNCTION,
+                "method_declaration" to SymbolKind.METHOD
+            )
+        ),
+        "php" to LangSpec(
+            declNodes = setOf("function_definition", "method_declaration", "class_declaration", "interface_declaration"),
+            containerNodes = setOf("class_declaration", "interface_declaration"),
+            kindMap = mapOf(
+                "function_definition" to SymbolKind.FUNCTION,
+                "method_declaration" to SymbolKind.METHOD,
+                "class_declaration" to SymbolKind.CLASS,
+                "interface_declaration" to SymbolKind.INTERFACE
+            )
+        ),
+        "bash" to LangSpec(
+            declNodes = setOf("function_definition"),
+            containerNodes = emptySet(),
+            kindMap = mapOf("function_definition" to SymbolKind.FUNCTION)
+        ),
+        "lua" to LangSpec(
+            declNodes = setOf("function_definition"),
+            containerNodes = emptySet(),
+            kindMap = mapOf("function_definition" to SymbolKind.FUNCTION)
+        ),
+        "ruby" to LangSpec(
+            declNodes = setOf("method", "class", "module"),
+            containerNodes = setOf("class", "module"),
+            kindMap = mapOf(
+                "method" to SymbolKind.METHOD,
+                "class" to SymbolKind.CLASS,
+                "module" to SymbolKind.MODULE
+            )
+        ),
+        "swift" to LangSpec(
+            declNodes = setOf("function_declaration", "function_signature", "class_declaration", "struct_declaration", "enum_declaration"),
+            containerNodes = setOf("class_declaration", "struct_declaration", "enum_declaration"),
+            kindMap = mapOf(
+                "function_declaration" to SymbolKind.FUNCTION,
+                "class_declaration" to SymbolKind.CLASS,
+                "struct_declaration" to SymbolKind.CLASS,
+                "enum_declaration" to SymbolKind.ENUM
+            )
+        )
+    )
 }
 
 private class RegexDefinitionExtractor(
