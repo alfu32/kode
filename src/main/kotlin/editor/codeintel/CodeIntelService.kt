@@ -56,7 +56,8 @@ data class SymbolDef(
     val tsParent: String? = null,
     val tsKind: String? = null,
     val tsIsNamed: Boolean? = null,
-    val tsFieldNames: String? = null
+    val tsFieldNames: String? = null,
+    val tsHierarchyKind: String? = null
 )
 
 data class IdentifierToken(
@@ -71,7 +72,8 @@ data class IdentifierToken(
     val tsParent: String? = null,
     val tsKind: String? = null,
     val tsIsNamed: Boolean? = null,
-    val tsFieldNames: String? = null
+    val tsFieldNames: String? = null,
+    val tsHierarchyKind: String? = null
 )
 
 data class LocalSymbol(
@@ -88,7 +90,8 @@ data class LocalSymbol(
     val tsParent: String? = null,
     val tsKind: String? = null,
     val tsIsNamed: Boolean? = null,
-    val tsFieldNames: String? = null
+    val tsFieldNames: String? = null,
+    val tsHierarchyKind: String? = null
 )
 
 data class ExtractedSymbols(
@@ -619,7 +622,8 @@ private class TreeSitterDefinitionExtractor(
                                 tsParent = child.parent?.type,
                                 tsKind = type,
                                 tsIsNamed = child.isNamed,
-                                tsFieldNames = collectFieldNames(child)
+                                tsFieldNames = collectFieldNames(child),
+                                tsHierarchyKind = collectHierarchy(child)
                             )
                         )
                     }
@@ -636,7 +640,8 @@ private class TreeSitterDefinitionExtractor(
                             tsParent = child.parent?.type,
                             tsKind = type,
                             tsIsNamed = child.isNamed,
-                            tsFieldNames = collectFieldNames(child)
+                            tsFieldNames = collectFieldNames(child),
+                            tsHierarchyKind = collectHierarchy(child)
                         )
                     )
                 }
@@ -697,6 +702,17 @@ private class TreeSitterDefinitionExtractor(
             if (name != null && name.isNotBlank()) fields += name
         }
         return if (fields.isEmpty()) null else fields.joinToString(",")
+    }
+
+    private fun collectHierarchy(node: TSNode): String? {
+        val parts = mutableListOf<String>()
+        var cursor: TSNode? = node
+        while (cursor != null && !cursor.isNull) {
+            parts.add(cursor.type)
+            cursor = cursor.parent
+        }
+        if (parts.isEmpty()) return null
+        return parts.joinToString(" / ")
     }
 
     private fun extractName(text: String, node: TSNode): String? {

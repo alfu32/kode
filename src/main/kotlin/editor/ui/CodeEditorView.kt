@@ -905,6 +905,7 @@ class CodeEditorView(
         def?.tsKind?.let { entries += "ts_kind" to it }
         def?.tsIsNamed?.let { entries += "ts_is_named" to it.toString() }
         def?.tsFieldNames?.let { entries += "ts_field_names" to it }
+        def?.tsHierarchyKind?.let { entries += "ts_hierarchy_kind" to it }
         if (refs.isNotEmpty()) entries += "usages" to refs.size.toString()
         if (entries.size == 1) return null // only name, nothing useful
         return InfoPopup(candidate.anchor, entries)

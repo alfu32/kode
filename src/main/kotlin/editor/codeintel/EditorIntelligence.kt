@@ -38,7 +38,8 @@ data class NavigationTarget(
     val tsParent: String? = null,
     val tsKind: String? = null,
     val tsIsNamed: Boolean? = null,
-    val tsFieldNames: String? = null
+    val tsFieldNames: String? = null,
+    val tsHierarchyKind: String? = null
 )
 
 data class CompletionItem(

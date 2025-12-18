@@ -41,7 +41,8 @@ class DbCodeIntelStore(
                         ts_parent VARCHAR(256),
                         ts_kind VARCHAR(128),
                         ts_is_named BOOLEAN,
-                        ts_field_names VARCHAR(1024)
+                        ts_field_names VARCHAR(1024),
+                        ts_hierarchy_kind VARCHAR(2048)
                     )
                     """.trimIndent()
                 )
@@ -62,7 +63,8 @@ class DbCodeIntelStore(
                         ts_parent VARCHAR(256),
                         ts_kind VARCHAR(128),
                         ts_is_named BOOLEAN,
-                        ts_field_names VARCHAR(1024)
+                        ts_field_names VARCHAR(1024),
+                        ts_hierarchy_kind VARCHAR(2048)
                     )
                     """.trimIndent()
                 )
@@ -74,10 +76,12 @@ class DbCodeIntelStore(
                 runCatching { stmt.execute("ALTER TABLE symbols ADD COLUMN ts_kind VARCHAR(128)") }
                 runCatching { stmt.execute("ALTER TABLE symbols ADD COLUMN ts_is_named BOOLEAN") }
                 runCatching { stmt.execute("ALTER TABLE symbols ADD COLUMN ts_field_names VARCHAR(1024)") }
+                runCatching { stmt.execute("ALTER TABLE symbols ADD COLUMN ts_hierarchy_kind VARCHAR(2048)") }
                 runCatching { stmt.execute("ALTER TABLE usages ADD COLUMN ts_parent VARCHAR(256)") }
                 runCatching { stmt.execute("ALTER TABLE usages ADD COLUMN ts_kind VARCHAR(128)") }
                 runCatching { stmt.execute("ALTER TABLE usages ADD COLUMN ts_is_named BOOLEAN") }
                 runCatching { stmt.execute("ALTER TABLE usages ADD COLUMN ts_field_names VARCHAR(1024)") }
+                runCatching { stmt.execute("ALTER TABLE usages ADD COLUMN ts_hierarchy_kind VARCHAR(2048)") }
                 runCatching { stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_container_idx ON usages(name, container)") }
                 stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_idx ON usages(name)")
                 stmt.execute("CREATE INDEX IF NOT EXISTS usages_file_idx ON usages(file)")
@@ -103,7 +107,7 @@ class DbCodeIntelStore(
                 it.executeUpdate()
             }
             c.prepareStatement(
-                "INSERT INTO symbols(name_lc,name,kind,language,ts_language,file,line,start_col,end_col,range_start,range_end,container,ts_parent,ts_kind,ts_is_named,ts_field_names) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO symbols(name_lc,name,kind,language,ts_language,file,line,start_col,end_col,range_start,range_end,container,ts_parent,ts_kind,ts_is_named,ts_field_names,ts_hierarchy_kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             ).use { ps ->
                 defs.forEach { def ->
                     ps.setString(1, def.name.lowercase(Locale.ROOT))
@@ -122,12 +126,13 @@ class DbCodeIntelStore(
                     ps.setString(14, def.tsKind)
                     if (def.tsIsNamed == null) ps.setNull(15, Types.BOOLEAN) else ps.setBoolean(15, def.tsIsNamed)
                     ps.setString(16, def.tsFieldNames)
+                    ps.setString(17, def.tsHierarchyKind)
                     ps.addBatch()
                 }
                 ps.executeBatch()
             }
             c.prepareStatement(
-                "INSERT INTO usages(name_lc,name,file,line,start_col,end_col,is_decl,ts_language,container,ts_parent,ts_kind,ts_is_named,ts_field_names) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO usages(name_lc,name,file,line,start_col,end_col,is_decl,ts_language,container,ts_parent,ts_kind,ts_is_named,ts_field_names,ts_hierarchy_kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             ).use { ps ->
                 identifiers.values.flatten().forEach { tok ->
                     ps.setString(1, tok.name.lowercase(Locale.ROOT))
@@ -143,6 +148,7 @@ class DbCodeIntelStore(
                     ps.setString(11, tok.tsKind)
                     if (tok.tsIsNamed == null) ps.setNull(12, Types.BOOLEAN) else ps.setBoolean(12, tok.tsIsNamed)
                     ps.setString(13, tok.tsFieldNames)
+                    ps.setString(14, tok.tsHierarchyKind)
                     ps.addBatch()
                 }
                 ps.executeBatch()
@@ -160,7 +166,7 @@ class DbCodeIntelStore(
             val defs = mutableListOf<SymbolDef>()
             val usages = mutableListOf<IdentifierToken>()
             c.createStatement().use { stmt ->
-                stmt.executeQuery("SELECT name, kind, language, ts_language, file, line, start_col, range_start, range_end, container, ts_parent, ts_kind, ts_is_named, ts_field_names FROM symbols").use { rs ->
+                stmt.executeQuery("SELECT name, kind, language, ts_language, file, line, start_col, range_start, range_end, container, ts_parent, ts_kind, ts_is_named, ts_field_names, ts_hierarchy_kind FROM symbols").use { rs ->
                     while (rs.next()) {
                         val name = rs.getString(1) ?: continue
                         val kind = runCatching { SymbolKind.valueOf(rs.getString(2)) }.getOrNull() ?: SymbolKind.VARIABLE
@@ -176,6 +182,7 @@ class DbCodeIntelStore(
                         val tsKind = runCatching { rs.getString(12) }.getOrNull()
                         val tsIsNamed = runCatching { rs.getObject(13) as? Boolean }.getOrNull()
                         val tsFields = runCatching { rs.getString(14) }.getOrNull()
+                        val tsHierarchy = runCatching { rs.getString(15) }.getOrNull()
                         defs += SymbolDef(
                             name = name,
                             kind = kind,
@@ -189,11 +196,12 @@ class DbCodeIntelStore(
                             tsParent = tsParent,
                             tsKind = tsKind,
                             tsIsNamed = tsIsNamed,
-                            tsFieldNames = tsFields
+                            tsFieldNames = tsFields,
+                            tsHierarchyKind = tsHierarchy
                         )
                     }
                 }
-                stmt.executeQuery("SELECT name, file, line, start_col, end_col, is_decl, ts_language, container, ts_parent, ts_kind, ts_is_named, ts_field_names FROM usages").use { rs ->
+                stmt.executeQuery("SELECT name, file, line, start_col, end_col, is_decl, ts_language, container, ts_parent, ts_kind, ts_is_named, ts_field_names, ts_hierarchy_kind FROM usages").use { rs ->
                     while (rs.next()) {
                         val name = rs.getString(1) ?: continue
                         val file = rs.getString(2) ?: continue
@@ -207,6 +215,7 @@ class DbCodeIntelStore(
                         val tsKind = runCatching { rs.getString(10) }.getOrNull()
                         val tsIsNamed = runCatching { rs.getObject(11) as? Boolean }.getOrNull()
                         val tsFields = runCatching { rs.getString(12) }.getOrNull()
+                        val tsHierarchy = runCatching { rs.getString(13) }.getOrNull()
                         usages += IdentifierToken(
                             line = line,
                             start = start,
@@ -219,7 +228,8 @@ class DbCodeIntelStore(
                             tsParent = tsParent,
                             tsKind = tsKind,
                             tsIsNamed = tsIsNamed,
-                            tsFieldNames = tsFields
+                            tsFieldNames = tsFields,
+                            tsHierarchyKind = tsHierarchy
                         )
                     }
                 }
