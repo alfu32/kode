@@ -57,11 +57,11 @@ class DbCodeIntelStore(
                 )
                 // best-effort schema upgrade for existing DBs
                 runCatching { stmt.execute("ALTER TABLE usages ADD COLUMN container VARCHAR(256)") }
-                runCatching { stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_container_idx ON usages(name_lc, container)") }
-                stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_idx ON usages(name_lc)")
+                runCatching { stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_container_idx ON usages(name, container)") }
+                stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_idx ON usages(name)")
                 stmt.execute("CREATE INDEX IF NOT EXISTS usages_file_idx ON usages(file)")
-                stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_file_idx ON usages(name_lc, file)")
-                stmt.execute("CREATE INDEX IF NOT EXISTS symbols_name_file_idx ON symbols(name_lc, file)")
+                stmt.execute("CREATE INDEX IF NOT EXISTS usages_name_file_idx ON usages(name, file)")
+                stmt.execute("CREATE INDEX IF NOT EXISTS symbols_name_file_idx ON symbols(name, file)")
             }
             initialized = true
         }

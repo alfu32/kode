@@ -126,19 +126,8 @@ class CodeIntelService(
         val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
             .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
 
-        val (containerHint, clickedKind) = identifierContext(doc, request.position)
-        val narrowed = when {
-            containerHint != null || clickedKind == SymbolKind.VARIABLE -> {
-                val containerMatches = defs.filter { it.container == containerHint }
-                val fileAndContainer = containerMatches.filter { it.filePath == request.filePath }
-                when {
-                    fileAndContainer.isNotEmpty() -> fileAndContainer
-                    containerMatches.isNotEmpty() -> containerMatches
-                    else -> defs
-                }
-            }
-            else -> defs
-        }
+        val (_, _) = identifierContext(doc, request.position)
+        val narrowed = defs
 
         return narrowed.mapNotNull { def ->
             val line = def.line ?: return@mapNotNull null
@@ -182,16 +171,7 @@ class CodeIntelService(
                 }
             }
         }
-        val filterContainer = if (clickedDef?.kind == SymbolKind.VARIABLE) clickedDef.container else null
-        val targetFile = clickedDef?.filePath
         val tokens = synchronized(lock) { usagesIndex[lower]?.toList().orEmpty() }
-            .let { list ->
-                val containerFiltered = if (filterContainer == null) list else list.filter { tok -> tok.container == filterContainer }
-                if (clickedDef != null && targetFile != null) {
-                    val sameFile = containerFiltered.filter { tok -> tok.filePath == targetFile }
-                    if (sameFile.isNotEmpty()) sameFile else containerFiltered
-                } else containerFiltered
-            }
         tokens.forEach { tok ->
             val file = tok.filePath
             if (file != null) {
@@ -212,7 +192,8 @@ class CodeIntelService(
 
     override fun completions(request: CompletionRequest): List<CompletionItem> {
         val trimmed = request.prefix.trim()
-        val items = mutableListOf<CompletionItem>()
+        val items = linkedSetOf<CompletionItem>()
+
         synchronized(lock) {
             val source = if (trimmed.isEmpty()) {
                 workspaceIndex.values.flatten()
@@ -225,15 +206,34 @@ class CodeIntelService(
             source
                 .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
                 .forEach { def ->
+                    items.add(
+                        CompletionItem(
+                            label = def.name,
+                            detail = java.io.File(def.filePath).name,
+                            kind = def.kind
+                        )
+                    )
+                }
+        }
+
+        // If no receiver (no dot), offer language keywords too.
+        if (!request.prefix.contains(".")) {
+            val lang = request.language
+            val kws = KeywordSyntaxProvider.keywords(lang)
+            val lower = trimmed.lowercase(Locale.ROOT)
+            kws.filter { kw ->
+                lower.isEmpty() || kw.lowercase(Locale.ROOT).startsWith(lower)
+            }.forEach { kw ->
                 items.add(
                     CompletionItem(
-                        label = def.name,
-                        detail = java.io.File(def.filePath).name,
-                        kind = def.kind
+                        label = kw,
+                        detail = "keyword",
+                        kind = SymbolKind.KEYWORD
                     )
                 )
             }
         }
+
         return items.take(50)
     }
 

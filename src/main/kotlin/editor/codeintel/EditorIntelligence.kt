@@ -16,7 +16,8 @@ enum class SymbolKind {
     ENUM,
     OBJECT,
     MODULE,
-    PACKAGE
+    PACKAGE,
+    KEYWORD
 }
 
 data class Symbol(

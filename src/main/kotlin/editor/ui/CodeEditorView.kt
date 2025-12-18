@@ -59,6 +59,9 @@ class CodeEditorView(
     private var renderedPopup: RenderedPopup? = null
     private var suggestionPopup: SuggestionPopup? = null
     private var renderedSuggestion: RenderedPopup? = null
+    private var infoPopup: InfoPopup? = null
+    private var renderedInfo: RenderedPopup? = null
+    private var hoverInfoCandidate: HoverInfoCandidate? = null
     private var hoveredUsageIndex: Int = -1
     private var hoveredSuggestionIndex: Int = -1
     private var hoveredUsage: HoveredUsage? = null
@@ -339,6 +342,7 @@ class CodeEditorView(
 
         renderUsagePopup(canvas, bodyStartRow, gutterWidth, cols, rows, layout)
         renderSuggestionPopup(canvas, bodyStartRow, gutterWidth, cols, rows, layout)
+        renderInfoPopup(canvas, bodyStartRow, gutterWidth, cols, rows, layout)
 
         if (previewCols > 0) {
             previewLineNumbers.clear()
@@ -476,6 +480,7 @@ class CodeEditorView(
                     buffer.moveCursorTo(targetPos, expand = false)
                     return true
                 }
+                clearHoverInfo()
                 if (handleUsageClick(event)) return true
                 if (handleSuggestionClick(event)) return true
                 if (event.ctrl && handleCtrlClick(event, bodyStartRow, layout, gutterWidth)) {
@@ -515,10 +520,13 @@ class CodeEditorView(
                 if (!dragging) {
                     if ((event.x ?: 0) >= cols) return false
                     if (updatePopupHover(event)) return true
-                    if (updateHoveredUsage(event, bodyStartRow, layout, gutterWidth)) return true
-                    return false
+                    var consumed = false
+                    if (updateHoveredUsage(event, bodyStartRow, layout, gutterWidth)) consumed = true
+                    if (updateHoverInfo(event, bodyStartRow, layout, gutterWidth)) consumed = true
+                    return consumed
                 }
                 hoveredUsage = null
+                clearHoverInfo()
                 return handleMouse(
                     event = event,
                     bodyStartRow = bodyStartRow,
@@ -814,6 +822,82 @@ class CodeEditorView(
         if (newHover == hoveredUsage) return false
         hoveredUsage = newHover
         return true
+    }
+
+    private fun clearHoverInfo(): Boolean {
+        var changed = false
+        if (infoPopup != null || renderedInfo != null) {
+            infoPopup = null
+            renderedInfo = null
+            changed = true
+        }
+        if (hoverInfoCandidate != null) {
+            hoverInfoCandidate = null
+            changed = true
+        }
+        return changed
+    }
+
+    private fun updateHoverInfo(event: UIEvent, bodyStartRow: Int, layout: VisualLayout, gutterWidth: Int): Boolean {
+        val ex = event.x ?: return clearHoverInfo()
+        val ey = event.y ?: return clearHoverInfo()
+        if (ey < bodyStartRow || ex < gutterWidth) return clearHoverInfo()
+        val relY = ey - bodyStartRow
+        val visualIndex = (scrollTop + relY).coerceAtLeast(0)
+        val wrapped = layout.wrapped.getOrNull(visualIndex) ?: return clearHoverInfo()
+        val lineText = layout.lines.getOrElse(wrapped.lineIndex) { "" }
+        val relX = (ex - gutterWidth).coerceAtLeast(0)
+        val col = (wrapped.startColumn + relX).coerceAtMost(lineText.length)
+        val token = identifyCodeIntelToken(wrapped.lineIndex, col, lineText) ?: return clearHoverInfo()
+        val key = Triple(wrapped.lineIndex, token.start, token.end)
+        val now = event.timeMs ?: System.currentTimeMillis()
+        val candidate = hoverInfoCandidate
+        if (candidate == null || candidate.key != key) {
+            hoverInfoCandidate = HoverInfoCandidate(key, token.text, now, Position(wrapped.lineIndex, token.start))
+            infoPopup = null
+            renderedInfo = null
+            return true
+        }
+        if (infoPopup != null) return false
+        if (now - candidate.startedAt < 2000) return false
+        val popup = buildInfoPopup(candidate)
+        if (popup != null) {
+            infoPopup = popup
+            return true
+        }
+        return false
+    }
+
+    private fun buildInfoPopup(candidate: HoverInfoCandidate): InfoPopup? {
+        val lang = grammarLanguage ?: language
+        val defs = codeIntel?.definitions(
+            DefinitionRequest(
+                filePath = filePath,
+                language = lang,
+                position = TextPosition(candidate.anchor.line, candidate.anchor.column),
+                symbol = candidate.name
+            )
+        ).orEmpty()
+        val refs = codeIntel?.references(
+            ReferenceRequest(
+                filePath = filePath,
+                language = lang,
+                position = TextPosition(candidate.anchor.line, candidate.anchor.column),
+                symbol = candidate.name
+            )
+        ).orEmpty()
+        val entries = mutableListOf<Pair<String, String>>()
+        entries += "name" to candidate.name
+        val def = defs.firstOrNull()
+        def?.kind?.let { entries += "kind" to it.name.lowercase() }
+        def?.filePath?.let { entries += "file" to it }
+        def?.range?.start?.let { pos ->
+            entries += "line" to (pos.line + 1).toString()
+            entries += "column" to (pos.column + 1).toString()
+        }
+        if (refs.isNotEmpty()) entries += "usages" to refs.size.toString()
+        if (entries.size == 1) return null // only name, nothing useful
+        return InfoPopup(candidate.anchor, entries)
     }
 
     private fun clearHoveredUsage(): Boolean {
@@ -1494,6 +1578,37 @@ class CodeEditorView(
         renderedSuggestion = RenderedPopup(finalX, finalY, width, height)
     }
 
+    private fun renderInfoPopup(
+        canvas: CanvasRenderer,
+        bodyStartRow: Int,
+        gutterWidth: Int,
+        cols: Int,
+        rows: Int,
+        layout: VisualLayout
+    ) {
+        val popup = infoPopup ?: run {
+            renderedInfo = null
+            return
+        }
+        val anchorRow = visualRowForPosition(popup.anchor, layout)
+        val screenRow = bodyStartRow + (anchorRow - scrollTop)
+        val maxLabel = popup.entries.maxOfOrNull { "${it.first}: ${it.second}".length } ?: 0
+        val width = (maxLabel + 2).coerceAtMost((cols - gutterWidth).coerceAtLeast(16))
+        val height = (popup.entries.size + 1).coerceAtMost(rows.coerceAtLeast(2))
+        val x = (gutterWidth + popup.anchor.column).coerceIn(0, (cols - width).coerceAtLeast(0))
+        var finalY = (screenRow - height).coerceAtLeast(bodyStartRow)
+        if (finalY + height > rows) finalY = (rows - height).coerceAtLeast(bodyStartRow)
+        val style = localStyleSheet.getStyle("code-search-bar").withDefaults()
+        canvas.withStyle(style) {
+            drawRect(x, finalY, width, height)
+            popup.entries.take(height - 1).forEachIndexed { idx, entry ->
+                val text = "${entry.first}: ${entry.second}".take(width - 2).padEnd(width - 2, ' ')
+                drawText(x + 1, finalY + idx + 1, text)
+            }
+        }
+        renderedInfo = RenderedPopup(x, finalY, width, height)
+    }
+
     private data class WrappedLine(val lineIndex: Int, val startColumn: Int, val endColumn: Int)
     private data class VisualLayout(
         val lines: List<String>,
@@ -1508,4 +1623,6 @@ class CodeEditorView(
     private data class RenderedPopup(val x: Int, val y: Int, val width: Int, val height: Int)
     private data class SuggestionEntry(val name: String, val detail: String?)
     private data class SuggestionPopup(val anchor: Position, val prefix: String, val entries: List<SuggestionEntry>)
+    private data class HoverInfoCandidate(val key: Triple<Int, Int, Int>, val name: String, val startedAt: Long, val anchor: Position)
+    private data class InfoPopup(val anchor: Position, val entries: List<Pair<String, String>>)
 }

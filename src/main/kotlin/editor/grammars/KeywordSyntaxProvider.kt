@@ -15,13 +15,16 @@ object KeywordSyntaxProvider : SyntaxProvider {
 
     private val colorOverrides: Map<String, Color> by lazy { loadColorOverrides() }
     private val defaultColor: Color = colorOverrides["default"] ?: Color.from("#CC7832")!!
-    private val keywordPatterns: Map<String, Pattern> by lazy { loadPatterns() }
+    private data class KeywordEntry(val pattern: Pattern, val keywords: List<String>)
+
+    private val keywordEntries: Map<String, KeywordEntry> by lazy { loadPatterns() }
 
     override fun tokensForLine(lineNumber: Int, lineText: String, language: String): List<Token> =
         tokensForLines(lineNumber, listOf(lineText), language)
 
     override fun tokensForLines(startLine: Int, lines: List<String>, language: String): List<Token> {
-        val pattern = keywordPatterns[language] ?: return emptyList()
+        val entry = keywordEntries[language] ?: return emptyList()
+        val pattern = entry.pattern
         if (lines.isEmpty()) return emptyList()
         val tokens = mutableListOf<Token>()
         lines.forEachIndexed { idx, line ->
@@ -43,28 +46,33 @@ object KeywordSyntaxProvider : SyntaxProvider {
         return tokens
     }
 
-    override fun languages(): Set<String> = keywordPatterns.keys
+    override fun languages(): Set<String> = keywordEntries.keys
 
     override fun languageForExtension(ext: String): String? =
         extensionIndex[ext.removePrefix(".").lowercase(Locale.ROOT)]
 
     fun isKeyword(language: String?, word: String): Boolean {
         if (language.isNullOrBlank() || word.isBlank()) return false
-        val pattern = keywordPatterns[language.lowercase(Locale.ROOT)] ?: return false
+        val pattern = keywordEntries[language.lowercase(Locale.ROOT)]?.pattern ?: return false
         val m = pattern.matcher(word)
         return m.find()
+    }
+
+    fun keywords(language: String?): List<String> {
+        language ?: return emptyList()
+        return keywordEntries[language.lowercase(Locale.ROOT)]?.keywords.orEmpty()
     }
 
     private fun colorFor(qualifier: String): Color =
         colorOverrides[qualifier.lowercase(Locale.ROOT)] ?: defaultColor
 
-    private fun loadPatterns(): Map<String, Pattern> {
+    private fun loadPatterns(): Map<String, KeywordEntry> {
         val source = resolveConfigFile("keyword-patterns.txt")
         try {
             if (source == null || !Files.isRegularFile(source)) {
                 throw IllegalStateException("keyword-patterns.txt not found (looked in working directory and alongside the jar)")
             }
-            val map = linkedMapOf<String, Pattern>()
+            val map = linkedMapOf<String, KeywordEntry>()
             Files.readAllLines(source).forEachIndexed { idx, line ->
                 val trimmed = line.trim()
                 if (trimmed.isEmpty() || trimmed.startsWith("#")) return@forEachIndexed
@@ -77,7 +85,9 @@ object KeywordSyntaxProvider : SyntaxProvider {
                 val lang = parts[0].trim()
                 val regex = parts[1].trim()
                 try {
-                    map[lang.lowercase(Locale.ROOT)] = Pattern.compile(regex)
+                    val pattern = Pattern.compile(regex)
+                    val keywords = extractKeywords(regex)
+                    map[lang.lowercase(Locale.ROOT)] = KeywordEntry(pattern, keywords)
                 } catch (e: Exception) {
                     val msg = "Invalid regex for language '$lang': '$regex' (${e.message})"
                     editor.app.Logger.logRegexError("keyword-patterns", msg, regex)
@@ -107,6 +117,14 @@ object KeywordSyntaxProvider : SyntaxProvider {
             }
         }
         return map
+    }
+
+    private fun extractKeywords(regex: String): List<String> {
+        // Heuristic: take first (...) group and split on '|'
+        val group = Regex("\\(([^()]+)\\)").find(regex)?.groupValues?.get(1) ?: return emptyList()
+        return group.split('|')
+            .map { it.replace("\\b", "").replace("\\", "").trim() }
+            .filter { it.isNotEmpty() }
     }
 
     private fun resolveConfigFile(name: String): Path? {
