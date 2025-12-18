@@ -19,7 +19,8 @@ data class UIEvent(
     val focusId: String? = null,
     val cols: Int? = null,      // resize cols
     val rows: Int? = null,       // resize rows
-    val raw: String = ""       // resize rows
+    val raw: String = "",
+    val timeMs: Long? = null       // optional timestamp for synthetic events (e.g. animation_frame)
 ){
     fun alterCopy(conf:UIEvent)= UIEvent(
             kind= this.kind,
@@ -37,6 +38,8 @@ data class UIEvent(
             focusId= conf.focusId ?: this.focusId,
             cols= conf.cols ?: this.cols,
             rows= conf.rows ?: this.rows,
+            raw = if (conf.raw.isNotEmpty()) conf.raw else this.raw,
+            timeMs = conf.timeMs ?: this.timeMs
         )
 }
 /* =====================================================================

@@ -355,7 +355,8 @@ class CodeEditorView(
                         focusId = event.focusId,
                         cols = event.cols,
                         rows = searchHeight,
-                        raw = event.raw
+                        raw = event.raw,
+                        timeMs = event.timeMs
                     )
                 )
                 val handled = searchBar.dispatch(forwarded)

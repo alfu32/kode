@@ -7,7 +7,6 @@ import react.StyleSheet
 import react.TabView
 import react.UIEvent
 import react.renderer.AnsiCanvasRenderer
-import react.Tickable
 import react.renderer.CanvasRenderer
 import react.util.enterRawMode
 import react.util.restoreStty
@@ -48,8 +47,6 @@ import editor.codeintel.CompositeEditorIntelligenceService
 import editor.codeintel.LspEditorIntelligence
 import editor.lsp.LspManager
 import editor.lsp.LspService
-import react.util.restoreStty
-import react.util.enterRawMode
 
 interface StatusLineProvider {
     fun statusRight(): String
@@ -57,6 +54,10 @@ interface StatusLineProvider {
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     val perf = PerformanceTracker()
+    // Cap rendering to avoid excessive redraws; default 25 FPS (40ms). Allow tuning via env.
+    val frameIntervalMs = System.getenv("KODE_FRAME_MS")?.toLongOrNull()
+        ?.coerceIn(40L, 200L) // 40ms ~25fps, 200ms ~5fps
+        ?: 40L
     fun redraw() {
         val totalCols = renderer.cols().coerceAtLeast(1)
         val totalRows = renderer.rows().coerceAtLeast(0)
@@ -95,9 +96,12 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
         renderer.hideCursor()
 
         var needsRender = true
+        var lastRenderMs = System.currentTimeMillis()
         redraw()
+        lastRenderMs = System.currentTimeMillis()
 
-        var lastTickMs = System.currentTimeMillis()
+        var lastAnimationMs = System.currentTimeMillis()
+        val animationIntervalMs = 500L
         while (renderer.isRunning()) {
             val event = renderer.tryPollEvent()
             if (event != null) {
@@ -105,15 +109,21 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
             }
             val now = System.currentTimeMillis()
             val perfDirty = perf.loopTick(now)
-            if (now - lastTickMs >= 500) { // lightweight periodic tick
-                val ticked = (app as? Tickable)?.tick(now) ?: false
+            if (now - lastAnimationMs >= animationIntervalMs) {
+                val ticked = app.dispatch(UIEvent(kind = "animation_frame", timeMs = now))
                 if (ticked) needsRender = true
-                lastTickMs = now
+                lastAnimationMs = now
             }
 
             if (needsRender || perfDirty) {
+                val nowRender = System.currentTimeMillis()
+                val delta = nowRender - lastRenderMs
+                if (delta < frameIntervalMs) {
+                    Thread.sleep(frameIntervalMs - delta)
+                }
                 redraw()
                 needsRender = false
+                lastRenderMs = System.currentTimeMillis()
             } else {
                 Thread.sleep(idleSleepMillis)
             }
@@ -201,7 +211,7 @@ private class SplitPanelsApp(
     private var projectRoot: Path,
     private val renderer: AnsiCanvasRenderer,
     private val onQuit: () -> Unit
-) : BaseComponent(styleSheet), Tickable, StatusLineProvider {
+) : BaseComponent(styleSheet), StatusLineProvider {
     // gotcha
     private var sessionManager = ProjectSessionManager(projectRoot)
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
@@ -374,6 +384,22 @@ private class SplitPanelsApp(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind == "animation_frame") {
+            var handled = false
+            if (workspacePickerVisible) {
+                handled = (workspacePicker?.dispatch(event) ?: false) || handled
+            }
+            if (projectSearchVisible) {
+                handled = projectSearchDialog.dispatch(event) || handled
+            }
+            handled = leftTabs.dispatch(event) || handled
+            handled = codeEditor.dispatch(event) || handled
+            handled = hexViewer.dispatch(event) || handled
+            handled = imageViewer.dispatch(event) || handled
+            handled = diffViewer.dispatch(event) || handled
+            return handled
+        }
+
         if (workspacePickerVisible) {
             val handled = workspacePicker?.dispatch(event) ?: false
             return handled
@@ -459,7 +485,8 @@ private class SplitPanelsApp(
                     focusId = event.focusId,
                     cols = event.cols,
                     rows = event.rows,
-                    raw = event.raw
+                    raw = event.raw,
+                    timeMs = event.timeMs
                 )
             )
             return leftTabs.dispatch(forwarded)
@@ -477,18 +504,19 @@ private class SplitPanelsApp(
                         scrollDelta = event.scrollDelta,
                         key = event.key,
                         ctrl = event.ctrl,
-                        alt = event.alt,
-                        shift = event.shift,
-                        meta = event.meta,
-                        focusId = event.focusId,
-                        cols = rightWidthState.coerceAtLeast(0),
-                        rows = rightHeightState.coerceAtLeast(0),
-                        raw = event.raw
-                    )
+                    alt = event.alt,
+                    shift = event.shift,
+                    meta = event.meta,
+                    focusId = event.focusId,
+                    cols = rightWidthState.coerceAtLeast(0),
+                    rows = rightHeightState.coerceAtLeast(0),
+                    raw = event.raw,
+                    timeMs = event.timeMs
                 )
-                val handled = dispatchToRight(forwarded)
-                persistSession()
-                return handled
+            )
+            val handled = dispatchToRight(forwarded)
+            persistSession()
+            return handled
             }
         }
 
@@ -1032,22 +1060,9 @@ private class SplitPanelsApp(
         }
     }
 
-    override fun tick(nowMs: Long): Boolean {
-        var needsRender = false
-        needsRender = (filesTabView as? Tickable)?.tick(nowMs) == true || needsRender
-        needsRender = (gitPanel as? Tickable)?.tick(nowMs) == true || needsRender
-        return needsRender
-    }
 }
 
 private enum class FocusTarget { FILES, CODE, HEX, IMAGE, DIFF }
-
-private interface Tickable {
-    /**
-     * Called periodically from the main loop. Return true to request a repaint.
-     */
-    fun tick(nowMs: Long): Boolean
-}
 
 private data class PerfSnapshot(
     val loopFps: Int,

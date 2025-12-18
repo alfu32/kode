@@ -10,7 +10,6 @@ import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSheet
 import react.UIEvent
-import react.Tickable
 import react.renderer.CanvasRenderer
 import java.nio.file.Path
 
@@ -21,7 +20,7 @@ class GitPanelView(
     private var root: Path,
     private var git: IGitService?,
     private val onShowDiff: (GitDiff) -> Unit = {}
-) : BaseComponent(styleSheet), Tickable {
+) : BaseComponent(styleSheet) {
 
     private var statusEntries: List<GitStatusEntry> = emptyList()
     private var commitEntries: List<GitCommitEntry> = emptyList()
@@ -65,13 +64,6 @@ class GitPanelView(
         commitEntries = svc.listCommits()
         commitScroll = commitScroll.coerceIn(0, (commitEntries.size - 1).coerceAtLeast(0))
         commitRows = buildCommitRows()
-    }
-
-    override fun tick(nowMs: Long): Boolean {
-        if (nowMs - lastRefreshMs < refreshIntervalMs) return false
-        lastRefreshMs = nowMs
-        refreshData()
-        return true
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -174,6 +166,16 @@ class GitPanelView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind == "animation_frame") {
+            val now = event.timeMs ?: System.currentTimeMillis()
+            if (now - lastRefreshMs >= refreshIntervalMs) {
+                lastRefreshMs = now
+                refreshData()
+                return true
+            }
+            return false
+        }
+
         if (git == null) {
             if (event.kind == "mouse_down") {
                 val y = event.y ?: return false
@@ -265,7 +267,8 @@ class GitPanelView(
                         focusId = event.focusId,
                         cols = event.cols,
                         rows = editorHeight,
-                        raw = event.raw
+                        raw = event.raw,
+                        timeMs = event.timeMs
                     )
                 )
                 return commitEditor.dispatch(forwarded)
@@ -322,7 +325,8 @@ class GitPanelView(
                     focusId = event.focusId,
                     cols = event.cols,
                     rows = editorHeight,
-                    raw = event.raw
+                    raw = event.raw,
+                    timeMs = event.timeMs
             )
             )
             return commitEditor.dispatch(forwarded)
@@ -355,7 +359,8 @@ class GitPanelView(
                 focusId = event.focusId,
                 cols = event.cols,
                 rows = editorHeight,
-                raw = event.raw
+                raw = event.raw,
+                timeMs = event.timeMs
             )))
         } else if (y >= topH + midH) {
             val bottomHeight = rows - topH - midH

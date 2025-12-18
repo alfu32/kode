@@ -63,6 +63,13 @@ class TabView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind == "animation_frame") {
+            var handled = false
+            children.forEach { child ->
+                handled = child.dispatch(event) || handled
+            }
+            return handled
+        }
         when (event.kind) {
             "mouse_down" -> {
                 val ex = event.x ?: return false
@@ -119,7 +126,8 @@ class TabView(
                 focusId = event.focusId,
                 cols = lastContentWidth,
                 rows = lastContentHeight,
-                raw = event.raw
+                raw = event.raw,
+                timeMs = event.timeMs
             )
         )
         return child.dispatch(forwarded)

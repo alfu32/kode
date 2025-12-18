@@ -696,7 +696,8 @@ class ProjectSearchDialog(
                 focusId = event.focusId,
                 cols = contentWidth,
                 rows = contentHeight,
-                raw = event.raw
+                raw = event.raw,
+                timeMs = event.timeMs
             )
         )
     }

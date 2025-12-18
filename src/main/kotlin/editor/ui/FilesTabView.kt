@@ -7,7 +7,6 @@ import editor.lib.IFileTree
 import react.BaseComponent
 import react.ClippedCanvasRenderer
 import react.StyleSheet
-import react.Tickable
 import react.UIEvent
 import react.renderer.CanvasRenderer
 
@@ -24,7 +23,7 @@ class FilesTabView(
     private val onSelectFile: (FileTreeEntry, String?) -> Unit = { _, _ -> },
     private val onSelectRecent: (RecentFileEntry) -> Unit = {},
     private val onRemoveRecent: (RecentFileEntry) -> Unit = {}
-) : BaseComponent(styleSheet), Tickable {
+) : BaseComponent(styleSheet) {
 
     private val fileTreeView = FileTreeView(styleSheet, tree, onSelectFile)
     private var recentHeight: Int = 0
@@ -36,13 +35,6 @@ class FilesTabView(
 
     fun refreshFileTree() {
         tree.refreshOpenNodes()
-    }
-
-    override fun tick(nowMs: Long): Boolean {
-        if (nowMs - lastRefreshMs < refreshIntervalMs) return false
-        lastRefreshMs = nowMs
-        refreshFileTree()
-        return true
     }
 
     fun setRoot(root: String) {
@@ -88,6 +80,16 @@ class FilesTabView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind == "animation_frame") {
+            val now = event.timeMs ?: System.currentTimeMillis()
+            if (now - lastRefreshMs >= refreshIntervalMs) {
+                lastRefreshMs = now
+                refreshFileTree()
+                return true
+            }
+            return false
+        }
+
         val rows = (event.rows ?: 0).let { if (it > 0) it else lastRows }
         val y = event.y
         val recents = recentFilesProvider()
@@ -129,28 +131,29 @@ class FilesTabView(
                 return false
             }
         }
-        val forwarded = event.alterCopy(
-            UIEvent(
-                kind = event.kind,
-                x = event.x,
-                y = event.y?.let { it - 1 - if (hasRecents) headerRows else 0 },
-                relX = event.relX,
-                relY = event.relY?.let { it - 1 - if (hasRecents) headerRows else 0 },
-                button = event.button,
-                scrollDelta = event.scrollDelta,
-                key = event.key,
-                ctrl = event.ctrl,
-                alt = event.alt,
-                shift = event.shift,
-                meta = event.meta,
-                focusId = event.focusId,
-                cols = event.cols,
-                rows = event.rows?.let { it - 1 - if (hasRecents) headerRows else 0 },
-                raw = event.raw
+            val forwarded = event.alterCopy(
+                UIEvent(
+                    kind = event.kind,
+                    x = event.x,
+                    y = event.y?.let { it - 1 - if (hasRecents) headerRows else 0 },
+                    relX = event.relX,
+                    relY = event.relY?.let { it - 1 - if (hasRecents) headerRows else 0 },
+                    button = event.button,
+                    scrollDelta = event.scrollDelta,
+                    key = event.key,
+                    ctrl = event.ctrl,
+                    alt = event.alt,
+                    shift = event.shift,
+                    meta = event.meta,
+                    focusId = event.focusId,
+                    cols = event.cols,
+                    rows = event.rows?.let { it - 1 - if (hasRecents) headerRows else 0 },
+                    raw = event.raw,
+                    timeMs = event.timeMs
+                )
             )
-        )
-        return fileTreeView.dispatch(forwarded)
-    }
+            return fileTreeView.dispatch(forwarded)
+        }
 
     private fun renderRecentList(canvas: CanvasRenderer, recents: List<RecentFileEntry>, cols: Int, height: Int) {
         if (height <= 0 || cols <= 0 || recents.isEmpty()) return
