@@ -62,6 +62,8 @@ class CodeEditorView(
     private var hoveredSuggestionIndex: Int = -1
     private var hoveredUsage: HoveredUsage? = null
     private var rerenderOnce: Boolean = false
+    private var imageMode: Boolean = false
+    private val wordRegex = Regex("[\\p{L}\\p{N}_]+")
 
     fun textContent(): String = buffer.text()
 
@@ -197,7 +199,8 @@ class CodeEditorView(
         val searchActiveMatchStyle =
             localStyleSheet.getStyle("code-search-active").withDefaults(searchMatchStyle.fg, searchMatchStyle.bg)
         val bodyStyle = baseBody
-        val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
+        val effectiveSearchVisible = searchVisible && !imageMode
+        val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyStartRow = 1 + searchHeight
 
         // Header bar with file path and mime
@@ -211,7 +214,7 @@ class CodeEditorView(
             drawText(0, 0, label.padEnd(cols, ' '))
         }
 
-        if (searchVisible && searchHeight > 0) {
+        if (effectiveSearchVisible && searchHeight > 0) {
             val clipped = ClippedCanvasRenderer(
                 base = canvas,
                 offsetX = 0,
@@ -230,6 +233,10 @@ class CodeEditorView(
         val gutterWidth = computeGutterWidth()
         val contentCols = (cols - gutterWidth).coerceAtLeast(0)
         val lines = buffer.text().split("\n")
+        if (imageMode) {
+            renderWordQuads(canvas, lines, gutterWidth, bodyStartRow, bodyRows, gutterStyle, bodyStyle)
+            return
+        }
         val layout = buildLayout(lines, contentCols)
         lastLayout = layout
 
@@ -348,17 +355,18 @@ class CodeEditorView(
         val gutterWidth = computeGutterWidth()
         val contentCols = (cols - gutterWidth).coerceAtLeast(0)
         val layout = buildLayout(buffer.text().split("\n"), contentCols).also { lastLayout = it }
-        val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
+        val effectiveSearchVisible = searchVisible && !imageMode
+        val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyRows = (rows - 1 - searchHeight).coerceAtLeast(0)
         val bodyStartRow = 1 + searchHeight
 
-        if (event.kind == "key_down" && event.ctrl && event.key?.lowercase() == "f") {
+        if (event.kind == "key_down" && event.ctrl && event.key?.lowercase() == "f" && !imageMode) {
             val selection = if (buffer.hasSelection()) buffer.selectionText() else ""
             openSearch(selection)
             return true
         }
 
-        if (searchVisible && event.kind.startsWith("mouse")) {
+        if (effectiveSearchVisible && event.kind.startsWith("mouse")) {
             val y = event.y ?: 0
             if (y in 1 until bodyStartRow) {
                 val forwarded = event.alterCopy(
@@ -384,7 +392,7 @@ class CodeEditorView(
                 )
                 val handled = searchBar.dispatch(forwarded)
                 if (handled) {
-                    searchHasFocus = searchVisible
+                    searchHasFocus = effectiveSearchVisible
                     syncSearchUiFromBuffer()
                     ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
                     return true
@@ -392,7 +400,7 @@ class CodeEditorView(
             }
         }
 
-        if (searchVisible && event.kind == "key_down" && searchHasFocus) {
+        if (effectiveSearchVisible && event.kind == "key_down" && searchHasFocus) {
             val handled = searchBar.dispatch(event)
             if (handled) {
                 syncSearchUiFromBuffer()
@@ -414,7 +422,7 @@ class CodeEditorView(
             "mouse_down" -> {
                 val y = event.y ?: return false
                 if (y == 0) return false // header
-                if (searchVisible && y in 1 until bodyStartRow) return true
+                if (effectiveSearchVisible && y in 1 until bodyStartRow) return true
                 if (handleUsageClick(event)) return true
                 if (handleSuggestionClick(event)) return true
                 if (event.ctrl && handleCtrlClick(event, bodyStartRow, layout, gutterWidth)) {
@@ -468,6 +476,13 @@ class CodeEditorView(
             }
             "key_down" -> {
                 val key = event.key?.lowercase()
+                if (event.ctrl && key == "i") {
+                    imageMode = !imageMode
+                    searchVisible = false
+                    searchHasFocus = false
+                    rerenderOnce = true
+                    return true
+                }
                 if (readOnly) {
                     val mutating = when (key) {
                         "backspace", "delete", "enter" -> true
@@ -1059,6 +1074,65 @@ class CodeEditorView(
 
     private data class StyledSegment(val start: Int, val end: Int, val style: StyleSet)
     private data class HoveredUsage(val line: Int, val startColumn: Int, val endColumn: Int)
+
+    private fun renderWordQuads(
+        canvas: CanvasRenderer,
+        lines: List<String>,
+        gutterWidth: Int,
+        bodyStartRow: Int,
+        bodyRows: Int,
+        gutterStyle: StyleSet,
+        bodyStyle: StyleSet
+    ) {
+        val totalLines = lines.size
+        val contentCols = (canvas.cols() - gutterWidth).coerceAtLeast(0)
+        val maxOffset = (totalLines - bodyRows).coerceAtLeast(0)
+        scrollTop = scrollTop.coerceIn(0, maxOffset)
+
+        canvas.withStyle(bodyStyle) {
+            drawRect(0, bodyStartRow, canvas.cols(), bodyRows)
+        }
+
+        for (idx in 0 until bodyRows) {
+            val lineIndex = scrollTop + idx
+            if (lineIndex !in lines.indices) break
+            val y = bodyStartRow + idx
+            val line = lines[lineIndex]
+            val number = (lineIndex + 1).toString().padStart(gutterWidth, ' ')
+            canvas.withStyle(gutterStyle) {
+                drawText(0, y, number.take(gutterWidth).padEnd(gutterWidth, ' '))
+            }
+            if (contentCols <= 0) continue
+            val chars = CharArray(contentCols) { ' ' }
+            wordRegex.findAll(line).forEach { mr ->
+                val start = mr.range.first
+                if (start >= contentCols) return@forEach
+                chars[start] = glyphForMask((mr.value.hashCode() ushr 1) and 0xF)
+            }
+            canvas.withStyle(bodyStyle) {
+                drawText(gutterWidth, y, String(chars))
+            }
+        }
+    }
+
+    private fun glyphForMask(mask: Int): Char = when (mask and 0xF) {
+        0x0 -> ' '
+        0x1 -> '\u2598' // upper-left
+        0x2 -> '\u259D' // upper-right
+        0x3 -> '\u2580' // upper half
+        0x4 -> '\u2596' // lower-left
+        0x5 -> '\u258C' // left half
+        0x6 -> '\u259E' // upper-right + lower-left
+        0x7 -> '\u259B' // upper-left + upper-right + lower-left
+        0x8 -> '\u2597' // lower-right
+        0x9 -> '\u259A' // diag
+        0xA -> '\u2590' // right half
+        0xB -> '\u259C' // upper-left + upper-right + lower-right
+        0xC -> '\u2584' // lower half
+        0xD -> '\u2599' // upper-left + lower-left + lower-right
+        0xE -> '\u259F' // upper-right + lower-left + lower-right
+        else -> '\u2588'
+    }
 
     private fun buildSegments(
         text: String,

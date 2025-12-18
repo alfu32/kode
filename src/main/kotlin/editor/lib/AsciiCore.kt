@@ -257,4 +257,109 @@ object AsciiCore {
         sb.append("\u001B[0m")
         return sb.toString()
     }
+
+    /**
+     * Render using quarter-block (quadrant) glyphs. Each cell covers a 2x2 pixel block.
+     * Foreground color = average of "on" quadrants; background = average of "off" quadrants.
+     */
+    fun pixelsToQuadxels(
+        outWidth: Int,
+        outHeight: Int,
+        srcWidth: Int,
+        srcHeight: Int,
+        pixelAt: (x: Int, y: Int) -> Int
+    ): String {
+        require(outWidth > 0 && outHeight > 0) { "outWidth/outHeight must be > 0" }
+        require(srcWidth > 0 && srcHeight > 0) { "srcWidth/srcHeight must be > 0" }
+
+        val sb = StringBuilder()
+        val scaleX = srcWidth.toDouble() / (outWidth * 2.0)
+        val scaleY = srcHeight.toDouble() / (outHeight * 2.0)
+
+        fun glyphFor(mask: Int): Char = when (mask) {
+            0 -> ' '
+            1 -> '\u2598' // ▘ upper-left
+            2 -> '\u259D' // ▝ upper-right
+            3 -> '\u2580' // ▀ upper half
+            4 -> '\u2596' // ▖ lower-left
+            5 -> '\u258C' // ▌ left half
+            6 -> '\u259E' // ▞ upper-right + lower-left
+            7 -> '\u259B' // ▛
+            8 -> '\u2597' // ▗ lower-right
+            9 -> '\u259A' // ▚ upper-left + lower-right
+            10 -> '\u2590' // ▐ right half
+            11 -> '\u259C' // ▜
+            12 -> '\u2584' // ▄ lower half
+            13 -> '\u2599' // ▙
+            14 -> '\u259F' // ▟
+            else -> '\u2588' // ▇ all
+        }
+
+        fun avgColor(points: List<Pair<Int, Int>>): Triple<Int, Int, Int> {
+            if (points.isEmpty()) return Triple(0, 0, 0)
+            var rSum = 0
+            var gSum = 0
+            var bSum = 0
+            points.forEach { (sx, sy) ->
+                val argb = pixelAt(sx, sy)
+                rSum += (argb shr 16) and 0xFF
+                gSum += (argb shr 8) and 0xFF
+                bSum += argb and 0xFF
+            }
+            val c = points.size
+            return Triple(rSum / c, gSum / c, bSum / c)
+        }
+
+        fun luminance(argb: Int): Double {
+            val r = argb shr 16 and 0xFF
+            val g = argb shr 8 and 0xFF
+            val b = argb and 0xFF
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b
+        }
+
+        for (cy in 0 until outHeight) {
+            val baseY = cy * 2
+            for (cx in 0 until outWidth) {
+                val baseX = cx * 2
+                val samples = Array(4) { mutableListOf<Pair<Int, Int>>() }
+                val lums = DoubleArray(4)
+
+                for (dy in 0 until 2) {
+                    val sy = ((baseY + dy) * scaleY).toInt().coerceIn(0, srcHeight - 1)
+                    for (dx in 0 until 2) {
+                        val sx = ((baseX + dx) * scaleX).toInt().coerceIn(0, srcWidth - 1)
+                        val idx = dy * 2 + dx // 0: UL, 1: UR, 2: LL, 3: LR
+                        samples[idx].add(sx to sy)
+                    }
+                }
+
+                for (i in 0 until 4) {
+                    val avg = samples[i].firstOrNull()?.let { (sx, sy) -> pixelAt(sx, sy) } ?: 0
+                    lums[i] = luminance(avg)
+                }
+
+                val avgLum = lums.average()
+                var mask = 0
+                for (i in 0 until 4) {
+                    if (lums[i] >= avgLum) mask = mask or (1 shl i)
+                }
+
+                val fgPoints = mutableListOf<Pair<Int, Int>>()
+                val bgPoints = mutableListOf<Pair<Int, Int>>()
+                for (i in 0 until 4) {
+                    if ((mask and (1 shl i)) != 0) fgPoints.addAll(samples[i]) else bgPoints.addAll(samples[i])
+                }
+
+                val (fr, fg, fb) = if (fgPoints.isNotEmpty()) avgColor(fgPoints) else avgColor(bgPoints)
+                val (br, bg, bb) = if (bgPoints.isNotEmpty()) avgColor(bgPoints) else avgColor(fgPoints)
+
+                sb.append("\u001B[48;2;${br};${bg};${bb}m")
+                sb.append("\u001B[38;2;${fr};${fg};${fb}m")
+                sb.append(glyphFor(mask))
+            }
+            sb.append("\u001B[0m\n")
+        }
+        sb.append("\u001B[0m")
+        return sb.toString()
+    }
 }

@@ -1,8 +1,9 @@
 package editor.ui
 
 import editor.lib.AsciiImageRenderer
-import editor.lib.BrailleAsciiImageRenderer
 import editor.lib.BixelAsciiImageRenderer
+import editor.lib.QuadxelAsciiImageRenderer
+import editor.lib.BrailleAsciiImageRenderer
 import editor.mime.MimeTypeResult
 import korlibs.image.format.readBitmap
 import korlibs.io.file.std.localVfs
@@ -19,9 +20,7 @@ import kotlin.math.min
  * Image viewer using ASCII rendering via Korim.
  */
 class ImageViewerView(
-    styleSheet: StyleSheet,
-    private val asciiRenderer: AsciiImageRenderer = BixelAsciiImageRenderer(),
-    private val brailleRenderer: AsciiImageRenderer = BrailleAsciiImageRenderer()
+    styleSheet: StyleSheet
 ) : BaseComponent(styleSheet) {
 
     private var filePath: String = ""
@@ -34,6 +33,8 @@ class ImageViewerView(
     private var imageDirty: Boolean = false
     private var srcWidth: Int = 0
     private var srcHeight: Int = 0
+    private var useQuartGlyph: Boolean = true
+    private var useDemiGlyph: Boolean = false
     private var useBraille: Boolean = false
     private val sliders = listOf(
         SliderControl(
@@ -94,7 +95,12 @@ class ImageViewerView(
 
         canvas.withStyle(headerStyle) {
             val mimeLabel = mime?.let { "[$it]" } ?: "[image]"
-            val modeLabel = if (useBraille) "[braille]" else "[blocks]"
+            val modeLabel = when {
+                useQuartGlyph -> "[quart-glyph]"
+                useDemiGlyph -> "[demi-glyph]"
+                useBraille -> "[braille]"
+                else -> "[bixel]"
+            }
             val label = "${filePath.ifEmpty { "[no file]" }} $mimeLabel $modeLabel"
             drawText(0, 0, label.take(cols).padEnd(cols, ' '))
         }
@@ -112,6 +118,13 @@ class ImageViewerView(
                 slider.renderAt(canvas, 1 + idx, cols)
             }
             lastButtonRegion = null
+            val toggleLabel = when {
+                useQuartGlyph -> "[ demi ]"
+                useDemiGlyph -> "[ braille ]"
+                useBraille -> "[ bixel ]"
+                else -> "[ quart ]"
+            }
+            lastButtonRegion = renderButton(canvas, sliderRows, cols, buttonStyle, toggleLabel)
             val availableRows = bodyRows - sliderRows
             if (availableRows <= 0) return@withStyle
             ascii.take(availableRows).forEachIndexed { idx, line ->
@@ -136,6 +149,29 @@ class ImageViewerView(
             "mouse_down" -> {
                 val x = event.x ?: return false
                 val y = event.y ?: return false
+                lastButtonRegion?.let {
+                    if (it.contains(x, y)) {
+                        when {
+                            useQuartGlyph -> {
+                                useQuartGlyph = false
+                                useDemiGlyph = true
+                            }
+                            useDemiGlyph -> {
+                                useDemiGlyph = false
+                                useBraille = true
+                            }
+                            useBraille -> {
+                                useBraille = false
+                            }
+                            else -> {
+                                useQuartGlyph = true
+                            }
+                        }
+                        imageDirty = true
+                        needsRender = true
+                        return true
+                    }
+                }
                 visibleSliders().forEach { slider ->
                     if (slider.onMouseDown(x, y)) return true
                 }
@@ -186,7 +222,12 @@ class ImageViewerView(
         val width = min(targetWidth, cols.coerceAtLeast(8))
         val height = computeHeight(width)
         val rendered = runCatching {
-            val renderer = if (useBraille) brailleRenderer else asciiRenderer
+            val renderer: AsciiImageRenderer = when {
+                useQuartGlyph -> QuadxelAsciiImageRenderer()
+                useDemiGlyph -> BixelAsciiImageRenderer()
+                useBraille -> BrailleAsciiImageRenderer()
+                else -> BixelAsciiImageRenderer()
+            }
             renderer.imageToAscii(
                 path = filePath,
                 outWidth = width,
