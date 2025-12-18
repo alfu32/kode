@@ -63,6 +63,7 @@ class CodeEditorView(
     private var hoveredSuggestionIndex: Int = -1
     private var hoveredUsage: HoveredUsage? = null
     private var rerenderOnce: Boolean = false
+    private val previewLineNumbers: MutableList<Int> = mutableListOf()
 
     fun textContent(): String = buffer.text()
 
@@ -340,6 +341,7 @@ class CodeEditorView(
         renderSuggestionPopup(canvas, bodyStartRow, gutterWidth, cols, rows, layout)
 
         if (previewCols > 0) {
+            previewLineNumbers.clear()
             val previewCanvas = ClippedCanvasRenderer(
                 base = canvas,
                 offsetX = cols,
@@ -370,7 +372,12 @@ class CodeEditorView(
                 previewOffset,
                 cursorLine,
                 previewHighlight
-            )
+            ) { rowIdx, lineNumber ->
+                if (rowIdx >= 0) {
+                    while (previewLineNumbers.size <= rowIdx) previewLineNumbers.add(-1)
+                    previewLineNumbers[rowIdx] = (lineNumber - 1).coerceAtLeast(0)
+                }
+            }
         }
     }
 
@@ -460,11 +467,8 @@ class CodeEditorView(
                 val ex = event.x ?: return false
                 if (ex >= cols) {
                     if (y < bodyStartRow || y >= rows) return false
-                    val firstVisibleLine = layout.wrapped.getOrNull(scrollTop)?.lineIndex ?: 0
-                    val blockOffset = (firstVisibleLine / 4).coerceAtLeast(0)
                     val blockIdx = (y - bodyStartRow).coerceAtLeast(0)
-                    val targetBlock = blockOffset + blockIdx
-                    val targetLine = (targetBlock * 4).coerceAtMost(buffer.totalLines().coerceAtLeast(1) - 1)
+                    val targetLine = previewLineNumbers.getOrNull(blockIdx) ?: return false
                     val targetPos = Position(targetLine, 0)
                     val targetRow = visualRowForPosition(targetPos, layout)
                     val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
@@ -1133,7 +1137,8 @@ class CodeEditorView(
         bodyStyle: StyleSet,
         blockOffset: Int,
         highlightLine: Int? = null,
-        highlightStyle: StyleSet? = null
+        highlightStyle: StyleSet? = null,
+        onRow: (rowIdx: Int, lineNumber: Int) -> Unit = { _, _ -> }
     ) {
         val contentCols = (canvas.cols() - gutterWidth).coerceAtLeast(0)
         if (contentCols <= 0 || bodyRows <= 0) return
@@ -1159,6 +1164,8 @@ class CodeEditorView(
                     drawText(0, y, number.take(gutterWidth).padEnd(gutterWidth, ' '))
                 }
             }
+            val lineNumber = block * 4 + 1
+            onRow(blockIdx, lineNumber)
             val rowStyle = if (highlightLine != null && highlightLine in (block * 4) until (block * 4 + 4)) {
                 highlightStyle ?: bodyStyle
             } else {
