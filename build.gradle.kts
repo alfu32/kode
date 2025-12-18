@@ -238,27 +238,27 @@ tasks.register("generateLaunchers") {
             |""".trimMargin()
         outDir.resolve("kode.bat").writeText(batText)
         outDir.resolve("kode.cmd").writeText(batText)
-        val psText = """
+        val psTemplate = """
             |# Powershell launcher for Kode
-            |$ErrorActionPreference = 'SilentlyContinue'
-            |$PSStyle.OutputRendering = 'Ansi'  # PS 7+ best-effort
+            |###ErrorActionPreference = 'SilentlyContinue'
+            |###PSStyle.OutputRendering = 'Ansi'  # PS 7+ best-effort
             |
-            |$dir = Split-Path -LiteralPath $MyInvocation.MyCommand.Path -Parent
+            |###dir = Split-Path -LiteralPath ###MyInvocation.MyCommand.Path -Parent
             |# Enable virtual terminal processing on Windows consoles
-            |$sig = '[DllImport("kernel32.dll")]public static extern IntPtr GetStdHandle(int n);
+            |###sig = '[DllImport("kernel32.dll")]public static extern IntPtr GetStdHandle(int n);
             |[DllImport("kernel32.dll")]public static extern bool GetConsoleMode(IntPtr h, out int m);
             |[DllImport("kernel32.dll")]public static extern bool SetConsoleMode(IntPtr h, int m);'
-            |Add-Type -Namespace VT -Name Native -MemberDefinition $sig -ErrorAction SilentlyContinue | Out-Null
-            |$h = [VT.Native]::GetStdHandle(-11) # STD_OUTPUT_HANDLE
-            |if ($h -ne [IntPtr]::Zero) {
-            |  $m = 0
-            |  if ([VT.Native]::GetConsoleMode($h, [ref]$m)) {
-            |    [VT.Native]::SetConsoleMode($h, $m -bor 0x4 -bor 0x8) | Out-Null
+            |Add-Type -Namespace VT -Name Native -MemberDefinition ###sig -ErrorAction SilentlyContinue | Out-Null
+            |###h = [VT.Native]::GetStdHandle(-11) # STD_OUTPUT_HANDLE
+            |if (###h -ne [IntPtr]::Zero) {
+            |  ###m = 0
+            |  if ([VT.Native]::GetConsoleMode(###h, [ref]###m)) {
+            |    [VT.Native]::SetConsoleMode(###h, ###m -bor 0x4 -bor 0x8) | Out-Null
             |  }
             |}
-            |& java -D"kode.home=$dir" -jar (Join-Path $dir "kode.jar") @args
+            |& java -D"kode.home=###dir" -jar (Join-Path ###dir "kode.jar") @args
             |""".trimMargin()
+        val psText = psTemplate.replace("###", "$")
         outDir.resolve("kode.ps1").writeText(psText)
     }
 }
-
