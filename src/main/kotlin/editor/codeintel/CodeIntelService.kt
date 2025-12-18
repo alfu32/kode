@@ -22,7 +22,11 @@ data class SymbolDef(
     val container: String? = null,
     val line: Int? = null,
     val startColumn: Int? = null,
-    val language: String? = null
+    val language: String? = null,
+    val tsParent: String? = null,
+    val tsKind: String? = null,
+    val tsIsNamed: Boolean? = null,
+    val tsFieldNames: String? = null
 )
 
 data class IdentifierToken(
@@ -32,7 +36,11 @@ data class IdentifierToken(
     val declaration: Boolean,
     val name: String,
     val filePath: String? = null,
-    val container: String? = null
+    val container: String? = null,
+    val tsParent: String? = null,
+    val tsKind: String? = null,
+    val tsIsNamed: Boolean? = null,
+    val tsFieldNames: String? = null
 )
 
 data class LocalSymbol(

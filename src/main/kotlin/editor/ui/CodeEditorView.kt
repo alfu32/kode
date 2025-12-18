@@ -386,12 +386,17 @@ class CodeEditorView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
-        if (event.kind == "animation_frame" && rerenderOnce) {
-            rerenderOnce = false
-            lastLayout = null
-            // Re-run code intel to ensure tokens are ready before the redraw.
-            triggerCodeIntel(force = true, immediate = true)
-            return true
+        if (event.kind == "animation_frame") {
+            val now = event.timeMs ?: System.currentTimeMillis()
+            val infoShown = maybeShowHoverInfo(now)
+            if (rerenderOnce) {
+                rerenderOnce = false
+                lastLayout = null
+                // Re-run code intel to ensure tokens are ready before the redraw.
+                triggerCodeIntel(force = true, immediate = true)
+                return true
+            }
+            if (infoShown) return true
         }
         val totalCols = (event.cols ?: lastTotalCols).coerceAtLeast(1)
         val previewCols = computePreviewWidth(totalCols)
@@ -895,9 +900,22 @@ class CodeEditorView(
             entries += "line" to (pos.line + 1).toString()
             entries += "column" to (pos.column + 1).toString()
         }
+        def?.tsParent?.let { entries += "ts_parent" to it }
+        def?.tsKind?.let { entries += "ts_kind" to it }
+        def?.tsIsNamed?.let { entries += "ts_is_named" to it.toString() }
+        def?.tsFieldNames?.let { entries += "ts_field_names" to it }
         if (refs.isNotEmpty()) entries += "usages" to refs.size.toString()
         if (entries.size == 1) return null // only name, nothing useful
         return InfoPopup(candidate.anchor, entries)
+    }
+
+    private fun maybeShowHoverInfo(now: Long): Boolean {
+        if (infoPopup != null) return false
+        val candidate = hoverInfoCandidate ?: return false
+        if (now - candidate.startedAt < 2000) return false
+        val popup = buildInfoPopup(candidate) ?: return false
+        infoPopup = popup
+        return true
     }
 
     private fun clearHoveredUsage(): Boolean {
