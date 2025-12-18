@@ -44,11 +44,36 @@ class AboutView(
             license = "Apache-2.0",
             licenseUrl = "https://www.apache.org/licenses/LICENSE-2.0",
             sourceUrl = "https://github.com/Kotlin/kotlinx.serialization"
+        ),
+        Credit(
+            name = "H2 Database 2.2.224",
+            license = "MPL-2.0 / EPL-1.0",
+            licenseUrl = "https://h2database.com/html/license.html",
+            sourceUrl = "https://h2database.com"
+        ),
+        Credit(
+            name = "JNA 5.14.0",
+            license = "Apache-2.0",
+            licenseUrl = "https://www.apache.org/licenses/LICENSE-2.0",
+            sourceUrl = "https://github.com/java-native-access/jna"
+        ),
+        Credit(
+            name = "Tree-sitter core 0.25.3",
+            license = "MIT",
+            licenseUrl = "https://opensource.org/licenses/MIT",
+            sourceUrl = "https://github.com/tree-sitter/tree-sitter"
+        ),
+        Credit(
+            name = "Tree-sitter grammars (bonede): TS/JS, Python, JSON, C, Kotlin, SQL, PHP, CSS, HTML, Zig, Markdown, Swift, Lua, C++, Svelte, Bash, Go, Perl, Nim, D, YAML, Pascal, Ruby, OCaml, C#",
+            license = "MIT",
+            licenseUrl = "https://opensource.org/licenses/MIT",
+            sourceUrl = "https://github.com/bonede"
         )
     )
 
     private val languages: List<String> = loadLanguages()
     private var selectedLanguage: String? = null
+    private var creditsScroll: Int = 0
     private var scrollOffset: Int = 0
 
     override fun render(canvas: CanvasRenderer) {
@@ -59,25 +84,40 @@ class AboutView(
         canvas.withStyle(style) {
             drawRect(0, 0, cols, rows)
             val textWidth = (cols - 2).coerceAtLeast(0)
-            val lines = mutableListOf<String>()
-            lines += "Kode version: $version"
-            lines += "License: MIT (see LICENSE.md)"
-            lines += ""
-            lines += "Credits (license | source):"
-            credits.forEach { credit ->
-                lines += "- ${credit.name}"
-                lines += "  ${credit.license} | ${credit.licenseUrl}"
-                lines += "  source: ${credit.sourceUrl}"
-            }
-            val langHeaderRow = lines.size + 1
-            val langStartRow = langHeaderRow + 1
-            val langHeight = (rows - langStartRow).coerceAtLeast(0)
-            val maxScroll = (languages.size - langHeight).coerceAtLeast(0)
-            scrollOffset = scrollOffset.coerceIn(0, maxScroll)
+            val headerLines = listOf(
+                "Kode version: $version",
+                "License: MIT (see LICENSE.md)",
+                ""
+            )
 
-            lines.take(rows).forEachIndexed { idx, line ->
+            headerLines.forEachIndexed { idx, line ->
                 val content = line.take(textWidth).padEnd(textWidth, ' ')
                 drawText(1, idx, content)
+            }
+
+            val creditHeaderRow = headerLines.size
+            val langMinRows = 5
+            val creditStart = creditHeaderRow + 1
+            val creditHeight = (rows - creditStart - langMinRows).coerceAtLeast(3)
+            val langHeaderRow = creditStart + creditHeight
+            val langStartRow = langHeaderRow + 1
+            val langHeight = (rows - langStartRow).coerceAtLeast(0)
+
+            val creditLines = buildCreditsLines()
+            val creditMaxScroll = (creditLines.size - creditHeight).coerceAtLeast(0)
+            creditsScroll = creditsScroll.coerceIn(0, creditMaxScroll)
+            val langMaxScroll = (languages.size - langHeight).coerceAtLeast(0)
+            scrollOffset = scrollOffset.coerceIn(0, langMaxScroll)
+
+            val creditHeader = "Credits (license | source):"
+            if (creditHeaderRow < rows) {
+                drawText(1, creditHeaderRow, creditHeader.take(textWidth).padEnd(textWidth, ' '))
+            }
+            creditLines.drop(creditsScroll).take(creditHeight).forEachIndexed { idx, line ->
+                val y = creditStart + idx
+                if (y >= rows) return@forEachIndexed
+                val content = line.take(textWidth).padEnd(textWidth, ' ')
+                drawText(1, y, content)
             }
 
             if (langHeaderRow < rows) {
@@ -92,6 +132,7 @@ class AboutView(
                 }
                 languages.drop(scrollOffset).take(langHeight).forEachIndexed { idx, lang ->
                     val y = langStartRow + idx
+                    if (y >= rows) return@forEachIndexed
                     val content = "- $lang".take(textWidth).padEnd(textWidth, ' ')
                     val isSelected = lang == selectedLanguage
                     canvas.withStyle(if (isSelected) selectedStyle else style) {
@@ -105,16 +146,29 @@ class AboutView(
     override fun dispatch(event: UIEvent): Boolean {
         val cols = event.cols?.coerceAtLeast(1) ?: return false
         val rows = event.rows?.coerceAtLeast(1) ?: return false
-        val introRows = 4 + credits.size * 3
-        val langHeaderRow = introRows + 1
+        val headerLines = 3
+        val creditHeaderRow = headerLines
+        val creditStart = creditHeaderRow + 1
+        val langMinRows = 5
+        val creditHeight = (rows - creditStart - langMinRows).coerceAtLeast(3)
+        val langHeaderRow = creditStart + creditHeight
         val langStartRow = langHeaderRow + 1
         val langHeight = (rows - langStartRow).coerceAtLeast(0)
-        val maxScroll = (languages.size - langHeight).coerceAtLeast(0)
-        scrollOffset = scrollOffset.coerceIn(0, maxScroll)
+
+        val creditLines = buildCreditsLines()
+        val creditMaxScroll = (creditLines.size - creditHeight).coerceAtLeast(0)
+        val langMaxScroll = (languages.size - langHeight).coerceAtLeast(0)
+        creditsScroll = creditsScroll.coerceIn(0, creditMaxScroll)
+        scrollOffset = scrollOffset.coerceIn(0, langMaxScroll)
 
         if (event.kind == "mouse_scroll") {
             val delta = event.scrollDelta ?: 0
-            scrollOffset = (scrollOffset - delta.sign()).coerceIn(0, maxScroll)
+            val y = event.y ?: 0
+            if (y in creditStart until (creditStart + creditHeight)) {
+                creditsScroll = (creditsScroll - delta.sign()).coerceIn(0, creditMaxScroll)
+            } else if (y >= langStartRow) {
+                scrollOffset = (scrollOffset - delta.sign()).coerceIn(0, langMaxScroll)
+            }
             return true
         }
         if (event.kind == "mouse_down") {
@@ -128,6 +182,16 @@ class AboutView(
             }
         }
         return false
+    }
+
+    private fun buildCreditsLines(): List<String> {
+        val lines = mutableListOf<String>()
+        credits.forEach { credit ->
+            lines += "- ${credit.name}"
+            lines += "  ${credit.license} | ${credit.licenseUrl}"
+            lines += "  source: ${credit.sourceUrl}"
+        }
+        return lines
     }
 
     private fun loadLanguages(): List<String> {

@@ -33,7 +33,12 @@ data class NavigationTarget(
     val filePath: String,
     val range: TextRange,
     val kind: SymbolKind? = null,
-    val name: String? = null
+    val name: String? = null,
+    val tsLanguage: String? = null,
+    val tsParent: String? = null,
+    val tsKind: String? = null,
+    val tsIsNamed: Boolean? = null,
+    val tsFieldNames: String? = null
 )
 
 data class CompletionItem(

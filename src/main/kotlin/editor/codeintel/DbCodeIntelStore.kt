@@ -30,6 +30,7 @@ class DbCodeIntelStore(
                         name VARCHAR(256),
                         kind VARCHAR(64),
                         language VARCHAR(64),
+                        ts_language VARCHAR(64),
                         file VARCHAR(2048),
                         line INT,
                         start_col INT,
@@ -56,6 +57,7 @@ class DbCodeIntelStore(
                         start_col INT,
                         end_col INT,
                         is_decl BOOLEAN,
+                        ts_language VARCHAR(64),
                         container VARCHAR(256),
                         ts_parent VARCHAR(256),
                         ts_kind VARCHAR(128),
@@ -66,6 +68,8 @@ class DbCodeIntelStore(
                 )
                 // best-effort schema upgrade for existing DBs
                 runCatching { stmt.execute("ALTER TABLE usages ADD COLUMN container VARCHAR(256)") }
+                runCatching { stmt.execute("ALTER TABLE symbols ADD COLUMN ts_language VARCHAR(64)") }
+                runCatching { stmt.execute("ALTER TABLE usages ADD COLUMN ts_language VARCHAR(64)") }
                 runCatching { stmt.execute("ALTER TABLE symbols ADD COLUMN ts_parent VARCHAR(256)") }
                 runCatching { stmt.execute("ALTER TABLE symbols ADD COLUMN ts_kind VARCHAR(128)") }
                 runCatching { stmt.execute("ALTER TABLE symbols ADD COLUMN ts_is_named BOOLEAN") }
@@ -99,30 +103,31 @@ class DbCodeIntelStore(
                 it.executeUpdate()
             }
             c.prepareStatement(
-                "INSERT INTO symbols(name_lc,name,kind,language,file,line,start_col,end_col,range_start,range_end,container,ts_parent,ts_kind,ts_is_named,ts_field_names) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO symbols(name_lc,name,kind,language,ts_language,file,line,start_col,end_col,range_start,range_end,container,ts_parent,ts_kind,ts_is_named,ts_field_names) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             ).use { ps ->
                 defs.forEach { def ->
                     ps.setString(1, def.name.lowercase(Locale.ROOT))
                     ps.setString(2, def.name)
                     ps.setString(3, def.kind.name)
                     ps.setString(4, language)
-                    ps.setString(5, path)
-                    ps.setInt(6, def.line ?: -1)
-                    ps.setInt(7, def.startColumn ?: -1)
-                    ps.setInt(8, (def.startColumn ?: 0) + def.name.length)
-                    ps.setInt(9, def.range.first)
-                    ps.setInt(10, def.range.last)
-                    ps.setString(11, def.container)
-                    ps.setString(12, def.tsParent)
-                    ps.setString(13, def.tsKind)
-                    if (def.tsIsNamed == null) ps.setNull(14, Types.BOOLEAN) else ps.setBoolean(14, def.tsIsNamed)
-                    ps.setString(15, def.tsFieldNames)
+                    ps.setString(5, def.tsLanguage)
+                    ps.setString(6, path)
+                    ps.setInt(7, def.line ?: -1)
+                    ps.setInt(8, def.startColumn ?: -1)
+                    ps.setInt(9, (def.startColumn ?: 0) + def.name.length)
+                    ps.setInt(10, def.range.first)
+                    ps.setInt(11, def.range.last)
+                    ps.setString(12, def.container)
+                    ps.setString(13, def.tsParent)
+                    ps.setString(14, def.tsKind)
+                    if (def.tsIsNamed == null) ps.setNull(15, Types.BOOLEAN) else ps.setBoolean(15, def.tsIsNamed)
+                    ps.setString(16, def.tsFieldNames)
                     ps.addBatch()
                 }
                 ps.executeBatch()
             }
             c.prepareStatement(
-                "INSERT INTO usages(name_lc,name,file,line,start_col,end_col,is_decl,container,ts_parent,ts_kind,ts_is_named,ts_field_names) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO usages(name_lc,name,file,line,start_col,end_col,is_decl,ts_language,container,ts_parent,ts_kind,ts_is_named,ts_field_names) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
             ).use { ps ->
                 identifiers.values.flatten().forEach { tok ->
                     ps.setString(1, tok.name.lowercase(Locale.ROOT))
@@ -132,11 +137,12 @@ class DbCodeIntelStore(
                     ps.setInt(5, tok.start)
                     ps.setInt(6, tok.end)
                     ps.setBoolean(7, tok.declaration)
-                    ps.setString(8, tok.container)
-                    ps.setString(9, tok.tsParent)
-                    ps.setString(10, tok.tsKind)
-                    if (tok.tsIsNamed == null) ps.setNull(11, Types.BOOLEAN) else ps.setBoolean(11, tok.tsIsNamed)
-                    ps.setString(12, tok.tsFieldNames)
+                    ps.setString(8, tok.tsLanguage)
+                    ps.setString(9, tok.container)
+                    ps.setString(10, tok.tsParent)
+                    ps.setString(11, tok.tsKind)
+                    if (tok.tsIsNamed == null) ps.setNull(12, Types.BOOLEAN) else ps.setBoolean(12, tok.tsIsNamed)
+                    ps.setString(13, tok.tsFieldNames)
                     ps.addBatch()
                 }
                 ps.executeBatch()
@@ -154,21 +160,22 @@ class DbCodeIntelStore(
             val defs = mutableListOf<SymbolDef>()
             val usages = mutableListOf<IdentifierToken>()
             c.createStatement().use { stmt ->
-                stmt.executeQuery("SELECT name, kind, language, file, line, start_col, range_start, range_end, container, ts_parent, ts_kind, ts_is_named, ts_field_names FROM symbols").use { rs ->
+                stmt.executeQuery("SELECT name, kind, language, ts_language, file, line, start_col, range_start, range_end, container, ts_parent, ts_kind, ts_is_named, ts_field_names FROM symbols").use { rs ->
                     while (rs.next()) {
                         val name = rs.getString(1) ?: continue
                         val kind = runCatching { SymbolKind.valueOf(rs.getString(2)) }.getOrNull() ?: SymbolKind.VARIABLE
                         val lang = rs.getString(3)
-                        val file = rs.getString(4) ?: continue
-                        val line = rs.getInt(5)
-                        val startCol = rs.getInt(6)
-                        val rangeStart = rs.getInt(7)
-                        val rangeEnd = rs.getInt(8)
-                        val container = rs.getString(9)
-                        val tsParent = runCatching { rs.getString(10) }.getOrNull()
-                        val tsKind = runCatching { rs.getString(11) }.getOrNull()
-                        val tsIsNamed = runCatching { rs.getObject(12) as? Boolean }.getOrNull()
-                        val tsFields = runCatching { rs.getString(13) }.getOrNull()
+                        val tsLang = rs.getString(4)
+                        val file = rs.getString(5) ?: continue
+                        val line = rs.getInt(6)
+                        val startCol = rs.getInt(7)
+                        val rangeStart = rs.getInt(8)
+                        val rangeEnd = rs.getInt(9)
+                        val container = rs.getString(10)
+                        val tsParent = runCatching { rs.getString(11) }.getOrNull()
+                        val tsKind = runCatching { rs.getString(12) }.getOrNull()
+                        val tsIsNamed = runCatching { rs.getObject(13) as? Boolean }.getOrNull()
+                        val tsFields = runCatching { rs.getString(14) }.getOrNull()
                         defs += SymbolDef(
                             name = name,
                             kind = kind,
@@ -178,6 +185,7 @@ class DbCodeIntelStore(
                             line = line,
                             startColumn = startCol,
                             language = lang,
+                            tsLanguage = tsLang,
                             tsParent = tsParent,
                             tsKind = tsKind,
                             tsIsNamed = tsIsNamed,
@@ -185,7 +193,7 @@ class DbCodeIntelStore(
                         )
                     }
                 }
-                stmt.executeQuery("SELECT name, file, line, start_col, end_col, is_decl, container, ts_parent, ts_kind, ts_is_named, ts_field_names FROM usages").use { rs ->
+                stmt.executeQuery("SELECT name, file, line, start_col, end_col, is_decl, ts_language, container, ts_parent, ts_kind, ts_is_named, ts_field_names FROM usages").use { rs ->
                     while (rs.next()) {
                         val name = rs.getString(1) ?: continue
                         val file = rs.getString(2) ?: continue
@@ -193,11 +201,12 @@ class DbCodeIntelStore(
                         val start = rs.getInt(4)
                         val end = rs.getInt(5)
                         val decl = rs.getBoolean(6)
-                        val container = rs.getString(7)
-                        val tsParent = runCatching { rs.getString(8) }.getOrNull()
-                        val tsKind = runCatching { rs.getString(9) }.getOrNull()
-                        val tsIsNamed = runCatching { rs.getObject(10) as? Boolean }.getOrNull()
-                        val tsFields = runCatching { rs.getString(11) }.getOrNull()
+                        val tsLang = rs.getString(7)
+                        val container = rs.getString(8)
+                        val tsParent = runCatching { rs.getString(9) }.getOrNull()
+                        val tsKind = runCatching { rs.getString(10) }.getOrNull()
+                        val tsIsNamed = runCatching { rs.getObject(11) as? Boolean }.getOrNull()
+                        val tsFields = runCatching { rs.getString(12) }.getOrNull()
                         usages += IdentifierToken(
                             line = line,
                             start = start,
@@ -205,6 +214,7 @@ class DbCodeIntelStore(
                             declaration = decl,
                             name = name,
                             filePath = file,
+                            tsLanguage = tsLang,
                             container = container,
                             tsParent = tsParent,
                             tsKind = tsKind,

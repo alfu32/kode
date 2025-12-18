@@ -900,6 +900,7 @@ class CodeEditorView(
             entries += "line" to (pos.line + 1).toString()
             entries += "column" to (pos.column + 1).toString()
         }
+        def?.tsLanguage?.let { entries += "ts_language" to it }
         def?.tsParent?.let { entries += "ts_parent" to it }
         def?.tsKind?.let { entries += "ts_kind" to it }
         def?.tsIsNamed?.let { entries += "ts_is_named" to it.toString() }

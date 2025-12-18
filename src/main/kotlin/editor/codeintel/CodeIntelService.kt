@@ -2,6 +2,38 @@ package editor.codeintel
 
 import editor.grammars.KeywordSyntaxProvider
 import editor.grammars.Token
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import org.treesitter.TSLanguage
+import org.treesitter.TSNode
+import org.treesitter.TSParser
+import org.treesitter.TSPoint
+import org.treesitter.TreeSitterC
+import org.treesitter.TreeSitterJavascript
+import org.treesitter.TreeSitterJson
+import org.treesitter.TreeSitterPython
+import org.treesitter.TreeSitterTypescript
+import org.treesitter.TreeSitterKotlin
+import org.treesitter.TreeSitterSql
+import org.treesitter.TreeSitterPhp
+import org.treesitter.TreeSitterCss
+import org.treesitter.TreeSitterHtml
+import org.treesitter.TreeSitterZig
+import org.treesitter.TreeSitterMarkdown
+import org.treesitter.TreeSitterSwift
+import org.treesitter.TreeSitterLua
+import org.treesitter.TreeSitterCpp
+import org.treesitter.TreeSitterSvelte
+import org.treesitter.TreeSitterBash
+import org.treesitter.TreeSitterGo
+import org.treesitter.TreeSitterPerl
+import org.treesitter.TreeSitterNim
+import org.treesitter.TreeSitterD
+import org.treesitter.TreeSitterYaml
+import org.treesitter.TreeSitterPascal
+import org.treesitter.TreeSitterRuby
+import org.treesitter.TreeSitterOcaml
+import org.treesitter.TreeSitterCSharp
 import react.Color
 import java.nio.file.Files
 import java.nio.file.Path
@@ -11,8 +43,6 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 data class SymbolDef(
     val name: String,
@@ -23,6 +53,7 @@ data class SymbolDef(
     val line: Int? = null,
     val startColumn: Int? = null,
     val language: String? = null,
+    val tsLanguage: String? = null,
     val tsParent: String? = null,
     val tsKind: String? = null,
     val tsIsNamed: Boolean? = null,
@@ -37,6 +68,7 @@ data class IdentifierToken(
     val name: String,
     val filePath: String? = null,
     val container: String? = null,
+    val tsLanguage: String? = null,
     val tsParent: String? = null,
     val tsKind: String? = null,
     val tsIsNamed: Boolean? = null,
@@ -52,7 +84,12 @@ data class LocalSymbol(
     val startColumn: Int,
     val endColumn: Int,
     val filePath: String,
-    val container: String? = null
+    val container: String? = null,
+    val tsLanguage: String? = null,
+    val tsParent: String? = null,
+    val tsKind: String? = null,
+    val tsIsNamed: Boolean? = null,
+    val tsFieldNames: String? = null
 )
 
 data class ExtractedSymbols(
@@ -71,7 +108,7 @@ interface DefinitionExtractor {
 }
 
 class CodeIntelService(
-    private val extractor: DefinitionExtractor = RegexDefinitionExtractor(),
+    private val extractor: DefinitionExtractor = TreeSitterDefinitionExtractor(RegexDefinitionExtractor()),
     private val debounceMs: Long = 200L,
     private val store: DbCodeIntelStore? = null
 ) : EditorIntelligenceService {
@@ -127,7 +164,12 @@ class CodeIntelService(
                         )
                     ),
                     kind = defAtCursor.kind,
-                    name = defAtCursor.name
+                    name = defAtCursor.name,
+                    tsLanguage = defAtCursor.tsLanguage,
+                    tsParent = defAtCursor.tsParent,
+                    tsKind = defAtCursor.tsKind,
+                    tsIsNamed = defAtCursor.tsIsNamed,
+                    tsFieldNames = defAtCursor.tsFieldNames
                 )
             )
         }
@@ -147,7 +189,12 @@ class CodeIntelService(
                     end = TextPosition(line, col + def.name.length)
                 ),
                 kind = def.kind,
-                name = def.name
+                name = def.name,
+                tsLanguage = def.tsLanguage,
+                tsParent = def.tsParent,
+                tsKind = def.tsKind,
+                tsIsNamed = def.tsIsNamed,
+                tsFieldNames = def.tsFieldNames
             )
         }
     }
@@ -190,7 +237,12 @@ class CodeIntelService(
                             start = TextPosition(tok.line, tok.start),
                             end = TextPosition(tok.line, tok.end)
                         ),
-                        name = tok.name
+                        name = tok.name,
+                        tsLanguage = tok.tsLanguage,
+                        tsParent = tok.tsParent,
+                        tsKind = tok.tsKind,
+                        tsIsNamed = tok.tsIsNamed,
+                        tsFieldNames = tok.tsFieldNames
                     )
                 )
             }
@@ -382,12 +434,25 @@ class CodeIntelService(
                 container = it.container,
                 line = it.line,
                 startColumn = it.startColumn,
-                language = language
+                language = language,
+                tsLanguage = it.tsLanguage ?: language,
+                tsParent = it.tsParent ?: it.container,
+                tsKind = it.tsKind ?: it.kind.name.lowercase(Locale.ROOT),
+                tsIsNamed = it.tsIsNamed ?: true,
+                tsFieldNames = it.tsFieldNames
             )
         }
         val allowedNames = (knownNames + defs.map { it.name.lowercase(Locale.ROOT) }).toSet()
         val filteredIdents = extracted.identifiersByLine.mapValues { (_, list) ->
-            list.filter { it.name.lowercase(Locale.ROOT) in allowedNames }
+            list.filter { it.name.lowercase(Locale.ROOT) in allowedNames }.map { tok ->
+                tok.copy(
+                    tsLanguage = tok.tsLanguage ?: language,
+                    tsParent = tok.tsParent ?: tok.container,
+                    tsKind = tok.tsKind ?: "identifier",
+                    tsIsNamed = tok.tsIsNamed ?: true,
+                    tsFieldNames = tok.tsFieldNames
+                )
+            }
         }
         val docIndex = DocumentIndex(
             version = version,
@@ -481,6 +546,110 @@ class CodeIntelService(
     companion object {
         private const val DECL_SCOPE = "codeintel.declaration"
         private const val USAGE_SCOPE = "codeintel.usage"
+    }
+}
+
+private class CompositeDefinitionExtractor(
+    private val primary: DefinitionExtractor,
+    private val fallback: DefinitionExtractor
+) : DefinitionExtractor {
+    override fun extract(path: String, text: String, language: String?): ExtractedSymbols {
+        return runCatching { primary.extract(path, text, language) }.getOrNull()
+            ?: fallback.extract(path, text, language)
+    }
+}
+
+private class TreeSitterDefinitionExtractor(
+    private val fallback: DefinitionExtractor = RegexDefinitionExtractor()
+) : DefinitionExtractor {
+    override fun extract(path: String, text: String, language: String?): ExtractedSymbols {
+        val langKey = language?.lowercase(Locale.ROOT) ?: return fallback.extract(path, text, language)
+        val tsLang = loadLanguage(langKey) ?: return fallback.extract(path, text, language)
+        val parser = TSParser()
+        val setOk = runCatching { parser.setLanguage(tsLang) }.getOrDefault(false)
+        if (!setOk) return fallback.extract(path, text, language)
+        val tree = runCatching { parser.parseString(null, text) }.getOrNull() ?: return fallback.extract(path, text, language)
+        val root = tree.rootNode
+        val base = fallback.extract(path, text, language)
+        val tsLangName = runCatching { tsLang.name() }.getOrNull()
+        val enrichedDefs = base.symbols.map { def ->
+            val node = findNode(root, def.line, def.startColumn, def.name.length)
+            if (node == null) {
+                def.copy(tsLanguage = tsLangName)
+            } else {
+                def.copy(
+                    tsLanguage = tsLangName,
+                    tsParent = node.parent?.type,
+                    tsKind = node.type,
+                    tsIsNamed = node.isNamed,
+                    tsFieldNames = collectFieldNames(node)
+                )
+            }
+        }
+        val enrichedIdents = base.identifiersByLine.mapValues { (_, list) ->
+            list.map { tok ->
+                val node = findNode(root, tok.line, tok.start, tok.end - tok.start)
+                if (node == null) tok.copy(tsLanguage = tsLangName)
+                else tok.copy(
+                    tsLanguage = tsLangName,
+                    tsParent = node.parent?.type,
+                    tsKind = node.type,
+                    tsIsNamed = node.isNamed,
+                    tsFieldNames = collectFieldNames(node)
+                )
+            }
+        }
+        return ExtractedSymbols(enrichedDefs, enrichedIdents)
+    }
+
+    private fun loadLanguage(lang: String): TSLanguage? =
+        when (lang) {
+            "typescript", "ts", "tsx" -> runCatching { TreeSitterTypescript() }.getOrNull()
+            "javascript", "js" -> runCatching { TreeSitterJavascript() }.getOrNull()
+            "python", "py" -> runCatching { TreeSitterPython() }.getOrNull()
+            "c" -> runCatching { TreeSitterC() }.getOrNull()
+            "json" -> runCatching { TreeSitterJson() }.getOrNull()
+            "kotlin", "kt" -> runCatching { TreeSitterKotlin() }.getOrNull()
+            "sql" -> runCatching { TreeSitterSql() }.getOrNull()
+            "php" -> runCatching { TreeSitterPhp() }.getOrNull()
+            "css" -> runCatching { TreeSitterCss() }.getOrNull()
+            "html", "htm" -> runCatching { TreeSitterHtml() }.getOrNull()
+            "zig" -> runCatching { TreeSitterZig() }.getOrNull()
+            "markdown", "md" -> runCatching { TreeSitterMarkdown() }.getOrNull()
+            "swift" -> runCatching { TreeSitterSwift() }.getOrNull()
+            "lua" -> runCatching { TreeSitterLua() }.getOrNull()
+            "cpp", "c++", "cc", "cxx", "hpp", "h++", "hh", "hxx" -> runCatching { TreeSitterCpp() }.getOrNull()
+            "svelte" -> runCatching { TreeSitterSvelte() }.getOrNull()
+            "bash", "sh" -> runCatching { TreeSitterBash() }.getOrNull()
+            "go", "golang" -> runCatching { TreeSitterGo() }.getOrNull()
+            "perl", "pl" -> runCatching { TreeSitterPerl() }.getOrNull()
+            "nim" -> runCatching { TreeSitterNim() }.getOrNull()
+            "d" -> runCatching { TreeSitterD() }.getOrNull()
+            "yaml", "yml" -> runCatching { TreeSitterYaml() }.getOrNull()
+            "pascal", "pas" -> runCatching { TreeSitterPascal() }.getOrNull()
+            "ruby", "rb" -> runCatching { TreeSitterRuby() }.getOrNull()
+            "ocaml", "ml", "mli" -> runCatching { TreeSitterOcaml() }.getOrNull()
+            "csharp", "cs" -> runCatching { TreeSitterCSharp() }.getOrNull()
+            else -> null
+        }
+
+    private fun findNode(root: TSNode, line: Int?, startCol: Int?, length: Int): TSNode? {
+        if (line == null || startCol == null) return null
+        val start = TSPoint(line, startCol)
+        val end = TSPoint(line, startCol + length)
+        val node = root.getNamedDescendantForPointRange(start, end)
+        return if (node.isNull) null else node
+    }
+
+    private fun collectFieldNames(node: TSNode): String? {
+        val count = node.namedChildCount
+        if (count <= 0) return null
+        val fields = mutableListOf<String>()
+        for (i in 0 until count) {
+            val name = node.getFieldNameForNamedChild(i)
+            if (name != null && name.isNotBlank()) fields += name
+        }
+        return if (fields.isEmpty()) null else fields.joinToString(",")
     }
 }
 
