@@ -347,9 +347,13 @@ class CodeEditorView(
                 width = previewCols,
                 height = rows
             )
-            val previewGutter = computeGutterWidth().coerceAtMost(previewCols)
+            val previewGutter = 0
             val firstVisibleLine = visibleRows.firstOrNull()?.lineIndex ?: 0
             val previewOffset = (firstVisibleLine / 4).coerceAtLeast(0)
+            val cursorLine = buffer.cursorPosition().line
+            val previewHighlight =
+                localStyleSheet.getStyle("code-selection")
+                    .withDefaults(fg = bodyStyle.bg ?: gutterStyle.bg, bg = bodyStyle.fg ?: gutterStyle.fg)
             if (bodyStartRow > 1) {
                 previewCanvas.withStyle(bodyStyle) {
                     drawRect(0, 1, previewCols, bodyStartRow - 1)
@@ -363,7 +367,9 @@ class CodeEditorView(
                 bodyRows,
                 gutterStyle,
                 bodyStyle,
-                previewOffset
+                previewOffset,
+                cursorLine,
+                previewHighlight
             )
         }
     }
@@ -1125,7 +1131,9 @@ class CodeEditorView(
         bodyRows: Int,
         gutterStyle: StyleSet,
         bodyStyle: StyleSet,
-        blockOffset: Int
+        blockOffset: Int,
+        highlightLine: Int? = null,
+        highlightStyle: StyleSet? = null
     ) {
         val contentCols = (canvas.cols() - gutterWidth).coerceAtLeast(0)
         if (contentCols <= 0 || bodyRows <= 0) return
@@ -1144,10 +1152,17 @@ class CodeEditorView(
             val block = offset + blockIdx
             if (block >= totalBlocks) break
             val y = bodyStartRow + blockIdx
-            val lineNumber = block * 4 + 1
-            val number = lineNumber.toString().padStart(gutterWidth, ' ')
-            canvas.withStyle(gutterStyle) {
-                drawText(0, y, number.take(gutterWidth).padEnd(gutterWidth, ' '))
+            if (gutterWidth > 0) {
+                val lineNumber = block * 4 + 1
+                val number = lineNumber.toString().padStart(gutterWidth, ' ')
+                canvas.withStyle(gutterStyle) {
+                    drawText(0, y, number.take(gutterWidth).padEnd(gutterWidth, ' '))
+                }
+            }
+            val rowStyle = if (highlightLine != null && highlightLine in (block * 4) until (block * 4 + 4)) {
+                highlightStyle ?: bodyStyle
+            } else {
+                bodyStyle
             }
             val sb = StringBuilder()
             for (cellX in 0 until cellsPerRow) {
@@ -1163,7 +1178,7 @@ class CodeEditorView(
                 }
                 sb.append((0x2800 + mask).toChar())
             }
-            canvas.withStyle(bodyStyle) {
+            canvas.withStyle(rowStyle) {
                 drawText(gutterWidth, y, sb.toString())
             }
         }
