@@ -49,7 +49,12 @@ class AnsiCanvasRenderer(
     private val ansiReady: Boolean =
         !WindowsConsole.isWindows() || WindowsConsole.enableVirtualTerminalProcessing()
     private var warnedPlain = false
-    private val inputBuffer = InputBuffer(input, WindowsConsole.isWindows())
+    private val useThreadedInput = WindowsConsole.isWindows() ||
+        (System.getenv("KODE_FORCE_THREADED_INPUT") == "1")
+    private val useWin32Input = WindowsConsole.isWindows() &&
+        WindowsConsole.canUseWin32Input() &&
+        (System.getenv("KODE_WIN32_INPUT") == "1" || WindowsConsole.isVtInputEnabled() == false)
+    private val inputBuffer = InputBuffer(input, useThreadedInput)
 
     init {
         queryTerminalSize()?.let { (rows, cols) ->
@@ -180,6 +185,36 @@ class AnsiCanvasRenderer(
         pendingResize?.let {
             pendingResize = null
             return it
+        }
+        if (useWin32Input) {
+            val winEvent = WindowsConsole.pollConsoleEvent()
+            if (winEvent != null) {
+                return when (winEvent) {
+                    is WindowsConsole.KeyEvent -> UIEvent(
+                        kind = "key_down",
+                        key = winEvent.key,
+                        ctrl = winEvent.ctrl,
+                        alt = winEvent.alt,
+                        shift = winEvent.shift
+                    )
+                    is WindowsConsole.MouseEvent -> UIEvent(
+                        kind = winEvent.kind,
+                        x = winEvent.x,
+                        y = winEvent.y,
+                        button = winEvent.button,
+                        scrollDelta = winEvent.scrollDelta,
+                        ctrl = winEvent.ctrl,
+                        alt = winEvent.alt,
+                        shift = winEvent.shift
+                    )
+                    is WindowsConsole.ResizeEvent -> {
+                        currentRows = winEvent.rows
+                        currentCols = winEvent.cols
+                        UIEvent("resize", cols = currentCols, rows = currentRows)
+                    }
+                }
+            }
+            return null
         }
         if (inputBuffer.available() <= 0) return null
         val b = inputBuffer.readNonBlocking() ?: return null
