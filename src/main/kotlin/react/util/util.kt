@@ -1,5 +1,7 @@
 package react.util
 
+import react.util.WindowsConsole
+
 fun runCommand(vararg cmd: String): String? = try {
     ProcessBuilder(*cmd)
         .redirectErrorStream(true)
@@ -10,12 +12,20 @@ fun runCommand(vararg cmd: String): String? = try {
 
 
 fun enterRawMode(): String? {
+    if (WindowsConsole.isWindows()) {
+        WindowsConsole.enableVirtualTerminalInput()
+        return null
+    }
     val state = runCommand("sh", "-c", "stty -g < /dev/tty")?.trim()
     runCommand("sh", "-c", "stty raw -echo < /dev/tty")
     return state
 }
 
 fun restoreStty(state: String?) {
+    if (WindowsConsole.isWindows()) {
+        WindowsConsole.restoreInputMode()
+        return
+    }
     val cmd = if (state != null) {
         "stty $state < /dev/tty"
     } else {

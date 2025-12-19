@@ -141,6 +141,9 @@ class AnsiCanvasRenderer(
        ============================================================ */
 
     private fun queryTerminalSize(): Pair<Int, Int>? {
+        if (WindowsConsole.isWindows()) {
+            return WindowsConsole.getConsoleSize()
+        }
         val output = runCommand("sh", "-c", "stty size < /dev/tty")?.trim() ?: return null
         val parts = output.split(Regex("\\s+"))
         if (parts.size != 2) return null
