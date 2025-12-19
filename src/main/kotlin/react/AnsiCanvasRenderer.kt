@@ -5,6 +5,7 @@ import react.util.runCommand
 import react.util.WindowsConsole
 import java.io.Flushable
 import java.io.InputStream
+import java.util.ArrayDeque
 
 /* =====================================================================
    ANSI Terminal Renderer
@@ -48,6 +49,7 @@ class AnsiCanvasRenderer(
     private val ansiReady: Boolean =
         !WindowsConsole.isWindows() || WindowsConsole.enableVirtualTerminalProcessing()
     private var warnedPlain = false
+    private val inputBuffer = InputBuffer(input, WindowsConsole.isWindows())
 
     init {
         queryTerminalSize()?.let { (rows, cols) ->
@@ -179,9 +181,8 @@ class AnsiCanvasRenderer(
             pendingResize = null
             return it
         }
-        if (input.available() <= 0) return null
-
-        val b = input.read()
+        if (inputBuffer.available() <= 0) return null
+        val b = inputBuffer.readNonBlocking() ?: return null
         if (b < 0) return null
 
         return parseAnsiInput(b)
@@ -190,7 +191,7 @@ class AnsiCanvasRenderer(
     private fun parseAnsiInput(firstByte: Int): UIEvent? {
         // Handle ESC sequences
         if (firstByte == 0x1b) {
-            val next = input.read()
+            val next = inputBuffer.readBlocking() ?: return UIEvent(kind = "key_down", key = "Escape")
             if (next == '['.code) {
                 return parseCsi()
             }
@@ -214,8 +215,9 @@ class AnsiCanvasRenderer(
 
     private fun parseCsi(): UIEvent? {
         val seq = StringBuilder()
-        while (input.available() > 0) {
-            val c = input.read().toChar()
+        while (true) {
+            val next = inputBuffer.readBlocking(2) ?: break
+            val c = next.toChar()
             seq.append(c)
             if ((c in 'A'..'Z') || (c in 'a'..'z')) break
         }
@@ -458,5 +460,66 @@ class AnsiCanvasRenderer(
 
     fun leaveAlternateScreen() {
         output.append("\u001b[?1049l")
+    }
+
+    private class InputBuffer(
+        private val input: InputStream,
+        private val threaded: Boolean
+    ) {
+        private val queue = ArrayDeque<Int>()
+        private val lock = Any()
+
+        init {
+            if (threaded) {
+                val thread = Thread {
+                    while (true) {
+                        val b = try {
+                            input.read()
+                        } catch (_: Exception) {
+                            -1
+                        }
+                        if (b < 0) break
+                        synchronized(lock) {
+                            queue.addLast(b)
+                        }
+                    }
+                }
+                thread.isDaemon = true
+                thread.name = "kode-ansi-input"
+                thread.start()
+            }
+        }
+
+        fun available(): Int {
+            return if (threaded) {
+                synchronized(lock) { queue.size }
+            } else {
+                input.available()
+            }
+        }
+
+        fun readNonBlocking(): Int? {
+            return if (threaded) {
+                synchronized(lock) {
+                    if (queue.isEmpty()) null else queue.removeFirst()
+                }
+            } else {
+                if (input.available() <= 0) null else input.read()
+            }
+        }
+
+        fun readBlocking(timeoutMs: Int = 10): Int? {
+            if (!threaded) {
+                return input.read()
+            }
+            val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+            while (System.nanoTime() < deadline) {
+                synchronized(lock) {
+                    if (queue.isNotEmpty()) return queue.removeFirst()
+                }
+                Thread.sleep(1)
+            }
+            return null
+        }
     }
 }
