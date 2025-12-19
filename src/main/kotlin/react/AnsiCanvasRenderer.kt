@@ -58,7 +58,7 @@ class AnsiCanvasRenderer(
     private var warnedPlain = false
     private val useThreadedInput = WindowsConsole.isWindows() ||
         (System.getenv("KODE_FORCE_THREADED_INPUT") == "1")
-    private val inputBuffer = InputBuffer(input, useThreadedInput)
+    private val inputBuffer = InputBuffer(input, useThreadedInput, WindowsConsole.isWindows())
     private var currentFg: Int = -1
     private var currentBg: Int = -1
     private var currentStyle: Int = 0
@@ -670,7 +670,8 @@ class AnsiCanvasRenderer(
 
     private class InputBuffer(
         private val input: InputStream,
-        private val threaded: Boolean
+        private val threaded: Boolean,
+        private val tolerateEof: Boolean
     ) {
         private val queue = ArrayDeque<Int>()
         private val lock = Any()
@@ -684,7 +685,13 @@ class AnsiCanvasRenderer(
                         } catch (_: Exception) {
                             -1
                         }
-                        if (b < 0) break
+                        if (b < 0) {
+                            if (tolerateEof) {
+                                Thread.sleep(10)
+                                continue
+                            }
+                            break
+                        }
                         synchronized(lock) {
                             queue.addLast(b)
                         }

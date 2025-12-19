@@ -154,14 +154,17 @@ fun handleKeyForBuffer(buffer: ITextBuffer, ev: UIEvent, singleLine: Boolean = f
         "Home" -> buffer.moveStartOfLine(expand = shift)
         "End" -> buffer.moveEndOfLine(expand = shift)
         else -> {
-            if (ctrl) {
+            if (ctrl && shift) {
                 when (key.lowercase()) {
                     "c" -> buffer.copySelection()
                     "x" -> if (buffer.cutSelection()) {}
                     "v" -> buffer.pasteClipboard()
+                    "u" -> buffer.undo()
+                    "r" -> buffer.redo()
+                }
+            } else if (ctrl) {
+                when (key.lowercase()) {
                     "a" -> buffer.selectAll()
-                    "z" -> if (ev.shift) buffer.redo() else buffer.undo()
-                    "y" -> buffer.redo()
                     "s" -> {} // placeholder for save hook
                 }
             } else if (!ev.alt && key.length == 1) {

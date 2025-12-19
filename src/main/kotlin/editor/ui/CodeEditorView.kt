@@ -548,7 +548,7 @@ class CodeEditorView(
                         "backspace", "delete", "enter" -> true
                         else -> false
                     } || (!event.ctrl && !event.alt && (event.key?.length == 1)) ||
-                        (event.ctrl && (key == "x" || key == "v"))
+                        (event.ctrl && event.shift && (key == "x" || key == "v"))
                     if (mutating) return true
                 }
                 if (event.ctrl && key == "s") {

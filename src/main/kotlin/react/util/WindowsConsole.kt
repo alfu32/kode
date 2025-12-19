@@ -22,6 +22,9 @@ object WindowsConsole {
     private const val ENABLE_WINDOW_INPUT = 0x0008
     private const val ENABLE_EXTENDED_FLAGS = 0x0080
     private const val ENABLE_QUICK_EDIT_MODE = 0x0040
+    private const val ENABLE_ECHO_INPUT = 0x0004
+    private const val ENABLE_LINE_INPUT = 0x0002
+    private const val ENABLE_PROCESSED_INPUT = 0x0001
     private const val ENABLE_PROCESSED_OUTPUT = 0x0001
     private const val ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002
     private const val KEY_EVENT = 0x0001
@@ -112,7 +115,9 @@ object WindowsConsole {
         if (savedInputMode == null) {
             savedInputMode = modeRef.value
         }
-        var mode = ENABLE_VIRTUAL_TERMINAL_INPUT or ENABLE_EXTENDED_FLAGS or ENABLE_WINDOW_INPUT
+        var mode = modeRef.value
+        mode = mode or ENABLE_VIRTUAL_TERMINAL_INPUT or ENABLE_EXTENDED_FLAGS or ENABLE_WINDOW_INPUT
+        mode = mode and (ENABLE_ECHO_INPUT or ENABLE_LINE_INPUT or ENABLE_PROCESSED_INPUT).inv()
         mode = mode and ENABLE_QUICK_EDIT_MODE.inv()
         val ok = k32.SetConsoleMode(handle, mode)
         vtInputEnabled = ok
