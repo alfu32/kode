@@ -1,7 +1,9 @@
 package react.util
 
+import com.sun.jna.Function
 import com.sun.jna.Library
 import com.sun.jna.Native
+import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.IntByReference
 
@@ -16,10 +18,14 @@ object WindowsConsole {
     private const val STD_INPUT_HANDLE = -10
     private const val ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
     private const val ENABLE_MOUSE_INPUT = 0x0010
+    private const val ENABLE_WINDOW_INPUT = 0x0008
     private const val ENABLE_EXTENDED_FLAGS = 0x0080
     private const val ENABLE_QUICK_EDIT_MODE = 0x0040
     private const val ENABLE_ECHO_INPUT = 0x0004
     private const val ENABLE_LINE_INPUT = 0x0002
+    private const val ENABLE_PROCESSED_INPUT = 0x0001
+    private const val ENABLE_PROCESSED_OUTPUT = 0x0001
+    private const val ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002
     private const val KEY_EVENT = 0x0001
     private const val MOUSE_EVENT = 0x0002
     private const val WINDOW_BUFFER_SIZE_EVENT = 0x0004
@@ -33,6 +39,14 @@ object WindowsConsole {
     private const val RIGHT_ALT_PRESSED = 0x0001
     private const val LEFT_CTRL_PRESSED = 0x0008
     private const val RIGHT_CTRL_PRESSED = 0x0004
+    private const val FILE_TYPE_CHAR = 0x0002
+    private const val GENERIC_READ = 0x80000000.toInt()
+    private const val GENERIC_WRITE = 0x40000000
+    private const val FILE_SHARE_READ = 0x00000001
+    private const val FILE_SHARE_WRITE = 0x00000002
+    private const val OPEN_EXISTING = 3
+    private const val CONSOLE_READ_NOWAIT = 0x0002
+    private const val CP_UTF8 = 65001
 
     private val isWindows: Boolean =
         System.getProperty("os.name")?.startsWith("Windows", ignoreCase = true) == true
@@ -40,9 +54,20 @@ object WindowsConsole {
     private val kernel32: Kernel32? = if (isWindows) {
         runCatching { Native.load("kernel32", Kernel32::class.java) as Kernel32 }.getOrNull()
     } else null
+    private val readConsoleInputExW: Function? = if (isWindows) {
+        loadReadConsoleInputExW()
+    } else null
     @Volatile private var savedInputMode: Int? = null
+    @Volatile private var savedOutputMode: Int? = null
+    @Volatile private var savedInputCp: Int = 0
+    @Volatile private var savedOutputCp: Int = 0
     @Volatile private var vtInputEnabled: Boolean? = null
     @Volatile private var lastButtonState: Int = 0
+    @Volatile private var stdinHandle: Pointer? = null
+    @Volatile private var stdoutHandle: Pointer? = null
+    private val eventQueue = ArrayDeque<ConsoleEvent>()
+    private val queueLock = Any()
+    @Volatile private var inputThreadStarted = false
 
     fun isWindows(): Boolean = isWindows
     fun isVtInputEnabled(): Boolean? = vtInputEnabled
@@ -53,11 +78,16 @@ object WindowsConsole {
     fun enableVirtualTerminalProcessing(): Boolean {
         if (!isWindows) return true
         val k32 = kernel32 ?: return false
-        val handle = k32.GetStdHandle(STD_OUTPUT_HANDLE) ?: return false
+        val handle = ensureStdoutHandle(k32) ?: return false
         val modeRef = IntByReference()
         if (!k32.GetConsoleMode(handle, modeRef)) return false
+        if (savedOutputMode == null) {
+            savedOutputMode = modeRef.value
+        }
         val newMode = modeRef.value or ENABLE_VIRTUAL_TERMINAL_PROCESSING or DISABLE_NEWLINE_AUTO_RETURN
-        if (!k32.SetConsoleMode(handle, newMode)) return false
+        val outputMode = newMode or ENABLE_PROCESSED_OUTPUT or ENABLE_WRAP_AT_EOL_OUTPUT
+        if (!k32.SetConsoleMode(handle, outputMode)) return false
+        ensureUtf8CodePage(k32)
         return true
     }
 
@@ -67,33 +97,49 @@ object WindowsConsole {
     fun enableVirtualTerminalInput(): Boolean {
         if (!isWindows) return true
         val k32 = kernel32 ?: return false
-        val handle = k32.GetStdHandle(STD_INPUT_HANDLE) ?: return false
+        val handle = ensureStdinHandle(k32) ?: return false
         val modeRef = IntByReference()
         if (!k32.GetConsoleMode(handle, modeRef)) return false
         if (savedInputMode == null) {
             savedInputMode = modeRef.value
         }
         var mode = modeRef.value
-        mode = mode or ENABLE_VIRTUAL_TERMINAL_INPUT or ENABLE_EXTENDED_FLAGS or ENABLE_MOUSE_INPUT
-        mode = mode and (ENABLE_ECHO_INPUT or ENABLE_LINE_INPUT).inv()
+        mode = mode or ENABLE_VIRTUAL_TERMINAL_INPUT or ENABLE_EXTENDED_FLAGS or ENABLE_MOUSE_INPUT or ENABLE_WINDOW_INPUT
+        mode = mode and (ENABLE_ECHO_INPUT or ENABLE_LINE_INPUT or ENABLE_PROCESSED_INPUT).inv()
         mode = mode and ENABLE_QUICK_EDIT_MODE.inv()
         val ok = k32.SetConsoleMode(handle, mode)
         vtInputEnabled = ok
+        ensureUtf8CodePage(k32)
         return ok
     }
 
     fun restoreInputMode() {
         if (!isWindows) return
         val k32 = kernel32 ?: return
-        val saved = savedInputMode ?: return
-        val handle = k32.GetStdHandle(STD_INPUT_HANDLE) ?: return
-        k32.SetConsoleMode(handle, saved)
+        savedInputMode?.let { saved ->
+            val handle = stdinHandle ?: k32.GetStdHandle(STD_INPUT_HANDLE)
+            if (handle != null) {
+                k32.SetConsoleMode(handle, saved)
+            }
+        }
+        savedOutputMode?.let { saved ->
+            val handle = stdoutHandle ?: k32.GetStdHandle(STD_OUTPUT_HANDLE)
+            if (handle != null) {
+                k32.SetConsoleMode(handle, saved)
+            }
+        }
+        if (savedInputCp != 0) {
+            k32.SetConsoleCP(savedInputCp)
+        }
+        if (savedOutputCp != 0) {
+            k32.SetConsoleOutputCP(savedOutputCp)
+        }
     }
 
     fun canUseWin32Input(): Boolean {
         if (!isWindows) return false
         val k32 = kernel32 ?: return false
-        val handle = k32.GetStdHandle(STD_INPUT_HANDLE) ?: return false
+        val handle = ensureStdinHandle(k32) ?: return false
         val modeRef = IntByReference()
         return k32.GetConsoleMode(handle, modeRef)
     }
@@ -101,7 +147,7 @@ object WindowsConsole {
     fun getConsoleSize(): Pair<Int, Int>? {
         if (!isWindows) return null
         val k32 = kernel32 ?: return null
-        val handle = k32.GetStdHandle(STD_OUTPUT_HANDLE) ?: return null
+        val handle = ensureStdoutHandle(k32) ?: return null
         val info = CONSOLE_SCREEN_BUFFER_INFO()
         if (!k32.GetConsoleScreenBufferInfo(handle, info)) return null
         val cols = info.srWindow.Right - info.srWindow.Left + 1
@@ -111,51 +157,30 @@ object WindowsConsole {
 
     fun pollConsoleEvent(): ConsoleEvent? {
         if (!isWindows) return null
-        val k32 = kernel32 ?: return null
-        val handle = k32.GetStdHandle(STD_INPUT_HANDLE) ?: return null
-        val countRef = IntByReference()
-        if (!k32.GetNumberOfConsoleInputEvents(handle, countRef)) return null
-        if (countRef.value <= 0) return null
-        val record = INPUT_RECORD()
-        val readRef = IntByReference()
-        if (!k32.ReadConsoleInputW(handle, record, 1, readRef)) return null
-        if (readRef.value <= 0) return null
-        record.read()
-        return when (record.EventType.toInt()) {
-            KEY_EVENT -> {
-                record.Event.setType(KEY_EVENT_RECORD::class.java)
-                record.Event.read()
-                val keyEvent = record.Event.KeyEvent
-                if (!keyEvent.bKeyDown) return null
-                val control = keyEvent.dwControlKeyState
-                val shift = (control and SHIFT_PRESSED) != 0
-                val alt = (control and (LEFT_ALT_PRESSED or RIGHT_ALT_PRESSED)) != 0
-                val ctrl = (control and (LEFT_CTRL_PRESSED or RIGHT_CTRL_PRESSED)) != 0
-                val key = decodeKey(keyEvent) ?: return null
-                KeyEvent(key = key, shift = shift, alt = alt, ctrl = ctrl)
-            }
-            MOUSE_EVENT -> {
-                record.Event.setType(MOUSE_EVENT_RECORD::class.java)
-                record.Event.read()
-                decodeMouse(record.Event.MouseEvent)
-            }
-            WINDOW_BUFFER_SIZE_EVENT -> {
-                record.Event.setType(WINDOW_BUFFER_SIZE_RECORD::class.java)
-                record.Event.read()
-                val cols = record.Event.WindowBufferSizeEvent.dwSize.X.toInt()
-                val rows = record.Event.WindowBufferSizeEvent.dwSize.Y.toInt()
-                ResizeEvent(cols = cols, rows = rows)
-            }
-            else -> null
+        startInputPump()
+        return synchronized(queueLock) {
+            if (eventQueue.isEmpty()) null else eventQueue.removeFirst()
         }
     }
 
-    private fun decodeKey(keyEvent: KEY_EVENT_RECORD): String? {
+    private fun decodeKey(keyEvent: KEY_EVENT_RECORD, ctrl: Boolean): String? {
         val ch = keyEvent.uChar
         if (ch.code != 0) {
-            return ch.toString()
+            when (ch) {
+                '\r', '\n' -> return "Enter"
+                '\t' -> return "Tab"
+                '\u0008', '\u007f' -> return "Backspace"
+                '\u001b' -> return "Escape"
+            }
+            if (!Character.isISOControl(ch)) {
+                return ch.toString()
+            }
         }
         val vk = keyEvent.wVirtualKeyCode.toInt()
+        if (vk == 0x10 || vk == 0x11 || vk == 0x12) return null // shift/ctrl/alt keys
+        if (ctrl && vk in 0x41..0x5A) {
+            return vk.toChar().toString()
+        }
         return when (vk) {
             0x08 -> "Backspace"
             0x09 -> "Tab"
@@ -236,6 +261,118 @@ object WindowsConsole {
         return null
     }
 
+    fun pendingConsoleEventCount(): Int? {
+        if (!isWindows) return null
+        startInputPump()
+        return synchronized(queueLock) { eventQueue.size }
+    }
+
+    fun startInputPump() {
+        if (!isWindows) return
+        if (inputThreadStarted) return
+        val k32 = kernel32 ?: return
+        val handle = ensureStdinHandle(k32) ?: return
+        inputThreadStarted = true
+        val thread = Thread {
+            val record = INPUT_RECORD()
+            val readRef = IntByReference()
+            while (true) {
+                val ok = if (readConsoleInputExW != null) {
+                    readConsoleInputExW.invokeInt(arrayOf(handle, record, 1, readRef, 0)) != 0
+                } else {
+                    k32.ReadConsoleInputW(handle, record, 1, readRef)
+                }
+                if (!ok) break
+                if (readRef.value <= 0) continue
+                record.read()
+                val event = when (record.EventType.toInt()) {
+                    KEY_EVENT -> {
+                        record.Event.setType(KEY_EVENT_RECORD::class.java)
+                        record.Event.read()
+                        val keyEvent = record.Event.KeyEvent
+                        if (!keyEvent.bKeyDown) null
+                        else {
+                            val control = keyEvent.dwControlKeyState
+                            val shift = (control and SHIFT_PRESSED) != 0
+                            val alt = (control and (LEFT_ALT_PRESSED or RIGHT_ALT_PRESSED)) != 0
+                            val ctrl = (control and (LEFT_CTRL_PRESSED or RIGHT_CTRL_PRESSED)) != 0
+                            val key = decodeKey(keyEvent, ctrl)
+                            if (key == null) null else KeyEvent(key = key, shift = shift, alt = alt, ctrl = ctrl)
+                        }
+                    }
+                    MOUSE_EVENT -> {
+                        record.Event.setType(MOUSE_EVENT_RECORD::class.java)
+                        record.Event.read()
+                        decodeMouse(record.Event.MouseEvent)
+                    }
+                    WINDOW_BUFFER_SIZE_EVENT -> {
+                        record.Event.setType(WINDOW_BUFFER_SIZE_RECORD::class.java)
+                        record.Event.read()
+                        val cols = record.Event.WindowBufferSizeEvent.dwSize.X.toInt()
+                        val rows = record.Event.WindowBufferSizeEvent.dwSize.Y.toInt()
+                        ResizeEvent(cols = cols, rows = rows)
+                    }
+                    else -> null
+                }
+                if (event != null) {
+                    synchronized(queueLock) {
+                        if (eventQueue.size >= 512) {
+                            eventQueue.removeFirst()
+                        }
+                        eventQueue.addLast(event)
+                    }
+                }
+            }
+        }
+        thread.isDaemon = true
+        thread.name = "kode-win32-input"
+        thread.start()
+    }
+
+    private fun ensureStdinHandle(k32: Kernel32): Pointer? {
+        stdinHandle?.let { return it }
+        var handle = k32.GetStdHandle(STD_INPUT_HANDLE)
+        if (handle == null || k32.GetFileType(handle) != FILE_TYPE_CHAR) {
+            handle = k32.CreateFileW(
+                "CONIN$",
+                GENERIC_READ or GENERIC_WRITE,
+                FILE_SHARE_READ or FILE_SHARE_WRITE,
+                null,
+                OPEN_EXISTING,
+                0,
+                null
+            )
+        }
+        stdinHandle = handle
+        return handle
+    }
+
+    private fun ensureStdoutHandle(k32: Kernel32): Pointer? {
+        stdoutHandle?.let { return it }
+        val handle = k32.GetStdHandle(STD_OUTPUT_HANDLE)
+        stdoutHandle = handle
+        return handle
+    }
+
+    private fun ensureUtf8CodePage(k32: Kernel32) {
+        if (savedInputCp == 0) savedInputCp = k32.GetConsoleCP()
+        if (savedOutputCp == 0) savedOutputCp = k32.GetConsoleOutputCP()
+        k32.SetConsoleCP(CP_UTF8)
+        k32.SetConsoleOutputCP(CP_UTF8)
+    }
+
+    private fun loadReadConsoleInputExW(): Function? {
+        return loadFunction("kernel32", "ReadConsoleInputExW")
+            ?: loadFunction("kernelbase", "ReadConsoleInputExW")
+    }
+
+    private fun loadFunction(lib: String, name: String): Function? {
+        return runCatching {
+            val library = NativeLibrary.getInstance(lib)
+            library.getFunction(name)
+        }.getOrNull()
+    }
+
     private interface Kernel32 : Library {
         fun GetStdHandle(nStdHandle: Int): Pointer?
         fun GetConsoleMode(hConsoleHandle: Pointer?, lpMode: IntByReference): Boolean
@@ -248,6 +385,20 @@ object WindowsConsole {
             nLength: Int,
             lpNumberOfEventsRead: IntByReference
         ): Boolean
+        fun GetFileType(hFile: Pointer?): Int
+        fun CreateFileW(
+            lpFileName: String,
+            dwDesiredAccess: Int,
+            dwShareMode: Int,
+            lpSecurityAttributes: Pointer?,
+            dwCreationDisposition: Int,
+            dwFlagsAndAttributes: Int,
+            hTemplateFile: Pointer?
+        ): Pointer?
+        fun GetConsoleCP(): Int
+        fun SetConsoleCP(wCodePageID: Int): Boolean
+        fun GetConsoleOutputCP(): Int
+        fun SetConsoleOutputCP(wCodePageID: Int): Boolean
     }
 
     @Suppress("unused")
