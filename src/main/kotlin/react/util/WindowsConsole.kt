@@ -6,6 +6,8 @@ import com.sun.jna.Native
 import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.IntByReference
+import java.io.FileInputStream
+import java.io.InputStream
 
 /**
  * Minimal helper to enable ANSI/VT output on Windows consoles (ConHost).
@@ -17,13 +19,9 @@ object WindowsConsole {
     private const val STD_OUTPUT_HANDLE = -11
     private const val STD_INPUT_HANDLE = -10
     private const val ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
-    private const val ENABLE_MOUSE_INPUT = 0x0010
     private const val ENABLE_WINDOW_INPUT = 0x0008
     private const val ENABLE_EXTENDED_FLAGS = 0x0080
     private const val ENABLE_QUICK_EDIT_MODE = 0x0040
-    private const val ENABLE_ECHO_INPUT = 0x0004
-    private const val ENABLE_LINE_INPUT = 0x0002
-    private const val ENABLE_PROCESSED_INPUT = 0x0001
     private const val ENABLE_PROCESSED_OUTPUT = 0x0001
     private const val ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002
     private const val KEY_EVENT = 0x0001
@@ -72,6 +70,17 @@ object WindowsConsole {
     fun isWindows(): Boolean = isWindows
     fun isVtInputEnabled(): Boolean? = vtInputEnabled
 
+    fun openInputStream(): InputStream {
+        if (!isWindows) return System.`in`
+        val k32 = kernel32 ?: return System.`in`
+        val handle = k32.GetStdHandle(STD_INPUT_HANDLE)
+        val fileType = if (handle == null) 0 else k32.GetFileType(handle)
+        if (fileType == FILE_TYPE_CHAR) {
+            return System.`in`
+        }
+        return runCatching { FileInputStream("CONIN$") }.getOrDefault(System.`in`)
+    }
+
     /**
      * Try to enable virtual terminal processing for stdout. Returns true on success.
      */
@@ -103,9 +112,7 @@ object WindowsConsole {
         if (savedInputMode == null) {
             savedInputMode = modeRef.value
         }
-        var mode = modeRef.value
-        mode = mode or ENABLE_VIRTUAL_TERMINAL_INPUT or ENABLE_EXTENDED_FLAGS or ENABLE_MOUSE_INPUT or ENABLE_WINDOW_INPUT
-        mode = mode and (ENABLE_ECHO_INPUT or ENABLE_LINE_INPUT or ENABLE_PROCESSED_INPUT).inv()
+        var mode = ENABLE_VIRTUAL_TERMINAL_INPUT or ENABLE_EXTENDED_FLAGS or ENABLE_WINDOW_INPUT
         mode = mode and ENABLE_QUICK_EDIT_MODE.inv()
         val ok = k32.SetConsoleMode(handle, mode)
         vtInputEnabled = ok

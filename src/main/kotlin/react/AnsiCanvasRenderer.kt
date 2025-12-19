@@ -5,7 +5,6 @@ import react.util.WindowsConsole
 import react.util.runCommand
 import java.io.Flushable
 import java.io.InputStream
-import java.io.File
 import java.util.ArrayDeque
 
 /* =====================================================================
@@ -32,7 +31,7 @@ You’ll need to enable it once, outside this class:
     And raw mode for stdin.
    ===================================================================== */
 class AnsiCanvasRenderer(
-    private val input: InputStream = System.`in`,
+    private val input: InputStream = WindowsConsole.openInputStream(),
     private val output: Appendable = System.out,
     private val initialCols: Int = 200,
     private val initialRows: Int = 80
@@ -53,19 +52,13 @@ class AnsiCanvasRenderer(
     private var lastSizeCheckNanos: Long = 0L
 
     private val frame = StringBuilder()
-    private val useDiffBuffer = (System.getenv("KODE_DIFF_RENDER") == "1") || WindowsConsole.isWindows()
+    private val useDiffBuffer = true
     private val ansiReady: Boolean =
         !WindowsConsole.isWindows() || WindowsConsole.enableVirtualTerminalProcessing()
     private var warnedPlain = false
     private val useThreadedInput = WindowsConsole.isWindows() ||
         (System.getenv("KODE_FORCE_THREADED_INPUT") == "1")
-    private val inputDebug = System.getenv("KODE_INPUT_DEBUG") == "1"
-    private val inputDebugFile = if (inputDebug) {
-        val home = System.getProperty("kode.home") ?: System.getProperty("user.dir") ?: "."
-        File(home, ".kode.input.log")
-    } else null
     private val inputBuffer = InputBuffer(input, useThreadedInput)
-    private var lastWinDebugNanos: Long = 0L
     private var currentFg: Int = -1
     private var currentBg: Int = -1
     private var currentStyle: Int = 0
@@ -75,12 +68,6 @@ class AnsiCanvasRenderer(
     private var lastBuffer: Array<Cell> = emptyArray()
 
     init {
-        if (inputDebug) {
-            logInputDebug(
-                "init os=${System.getProperty("os.name")} win=${WindowsConsole.isWindows()} " +
-                    "vt=${WindowsConsole.isVtInputEnabled()} win32=${shouldUseWin32Input()}"
-            )
-        }
         queryTerminalSize()?.let { (rows, cols) ->
             currentRows = rows
             currentCols = cols
@@ -273,80 +260,11 @@ class AnsiCanvasRenderer(
             pendingResize = null
             return it
         }
-        if (shouldUseWin32Input()) {
-            if (inputDebug) {
-                val now = System.nanoTime()
-                if (now - lastWinDebugNanos > 1_000_000_000L) {
-                    lastWinDebugNanos = now
-                    val vtEnabled = WindowsConsole.isVtInputEnabled()
-                    val pending = WindowsConsole.pendingConsoleEventCount()
-                    logInputDebug("win32 poll vt=$vtEnabled pending=$pending")
-                }
-            }
-            val winEvent = WindowsConsole.pollConsoleEvent()
-            if (inputDebug && winEvent != null) {
-                logInputDebug("win32 event=$winEvent")
-            }
-            if (winEvent != null) {
-                return when (winEvent) {
-                    is WindowsConsole.KeyEvent -> UIEvent(
-                        kind = "key_down",
-                        key = winEvent.key,
-                        ctrl = winEvent.ctrl,
-                        alt = winEvent.alt,
-                        shift = winEvent.shift
-                    )
-                    is WindowsConsole.MouseEvent -> UIEvent(
-                        kind = winEvent.kind,
-                        x = winEvent.x,
-                        y = winEvent.y,
-                        button = winEvent.button,
-                        scrollDelta = winEvent.scrollDelta,
-                        ctrl = winEvent.ctrl,
-                        alt = winEvent.alt,
-                        shift = winEvent.shift
-                    )
-                    is WindowsConsole.ResizeEvent -> {
-                        currentRows = winEvent.rows
-                        currentCols = winEvent.cols
-                        UIEvent("resize", cols = currentCols, rows = currentRows)
-                    }
-                }
-            }
-            return null
-        }
         if (inputBuffer.available() <= 0) return null
         val b = inputBuffer.readNonBlocking() ?: return null
         if (b < 0) return null
 
         return parseAnsiInput(b)
-    }
-
-    private fun shouldUseWin32Input(): Boolean {
-        if (!WindowsConsole.isWindows()) return false
-        if (!WindowsConsole.canUseWin32Input()) return false
-        if (System.getenv("KODE_WIN32_INPUT") == "1") return true
-        val vtEnabled = WindowsConsole.isVtInputEnabled()
-        return vtEnabled == false
-    }
-
-    private fun logInputDebug(message: String) {
-        val target = inputDebugFile ?: return
-        runCatching {
-            target.appendText("${System.currentTimeMillis()} ${sanitizeDebug(message)}\n")
-        }
-    }
-
-    private fun sanitizeDebug(message: String): String {
-        val sb = StringBuilder(message.length)
-        for (ch in message) {
-            if (ch.code < 32 || ch == '\u007f') {
-                sb.append(String.format("\\u%04x", ch.code))
-            } else {
-                sb.append(ch)
-            }
-        }
-        return sb.toString()
     }
 
     private fun parseAnsiInput(firstByte: Int): UIEvent? {
