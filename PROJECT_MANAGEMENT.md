@@ -12,7 +12,7 @@ commits:
 - Audit third-party licenses for Microsoft Store distribution and generate required notices. opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
 commits:
 
-- To mitigate the odd behaviour on Windows terminal where the event input stream is not released and start streaming until the user hits enter for the first time the application will start with a big spash screen (dialog) that shows the name of the application, documents the shortcuts and their function(very brief) and indicates with a text that the user must hit enter to begin, when the user hits enter the application will be shown instead of the splash screen. since kode scans the project always before beginning, we want the scanning process to be presented ( single line, last line ) to the user, only when this scanning process finishes the spash screen will be replaced by the application. opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
+- Relegate scanning to a background task and allow the splash screen to be dismissed immediately. opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
 commits:
 
 ## DONE
@@ -77,6 +77,9 @@ commits:
 - Feature: image render. opened: 2025-12-18 done: 2025-12-18 closed: 2025-12-18
 commits:
  - 0b5dea6 2025-12-18 feat(image-render): quart glyph
+
+- Feature: splash screen. opened: 2025-12-20 done: 2025-12-20 closed: 2025-12-20
+commits:
 
 - Feature: code squash. opened: 2025-12-18 done: 2025-12-18 closed: 2025-12-18
 commits:
