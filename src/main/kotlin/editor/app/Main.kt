@@ -41,6 +41,7 @@ import java.lang.management.ManagementFactory
 import java.lang.ProcessBuilder
 import com.sun.management.OperatingSystemMXBean
 import java.util.Locale
+import java.util.Comparator
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
@@ -977,8 +978,9 @@ private class SplitPanelsApp(
         currentOpenPath = ""
         projectSearchVisible = false
         codeIntelIndexer.clear()
-        dbManager.restart(projectRoot)
-        resetCodeIntelStore()
+        dbManager.stop()
+        clearProjectDb(projectRoot)
+        dbManager.start(projectRoot)
 
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -1010,6 +1012,17 @@ private class SplitPanelsApp(
         restoreLastSession()
         triggerFreshScan()
         persistSession(force = true)
+    }
+
+    private fun clearProjectDb(root: Path) {
+        val dbDir = root.resolve(".kode/db")
+        if (!Files.exists(dbDir)) return
+        runCatching {
+            Files.walk(dbDir)
+                .sorted(Comparator.reverseOrder())
+                .forEach { Files.deleteIfExists(it) }
+            Files.createDirectories(dbDir)
+        }
     }
 
     private fun createGitService(root: Path): editor.lib.IGitService? {
