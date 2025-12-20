@@ -66,6 +66,10 @@ interface AppShutdown {
     fun shutdownApp()
 }
 
+interface RenderInvalidator {
+    fun consumeInvalidation(): Boolean
+}
+
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     val perf = PerformanceTracker()
     // Cap rendering to avoid excessive redraws; default ~125 FPS (8ms). Allow tuning via env.
@@ -123,6 +127,9 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
         val minSleepMs = idleSleepMillis.coerceAtLeast(1L)
 
         while (renderer.isRunning()) {
+            if ((currentApp as? RenderInvalidator)?.consumeInvalidation() == true) {
+                needsRender = true
+            }
             val event = renderer.tryPollEvent()
             if (event != null) {
                 needsRender = currentApp.dispatch(event) || event.kind == "resize" || needsRender
@@ -255,26 +262,34 @@ private class SplashApp(
     private val buildVersion: String,
     private val app: SplitPanelsApp,
     private val renderer: AnsiCanvasRenderer
-) : BaseComponent(styleSheet), StatusLineProvider, StatusLineOverride, AppTransitioner, AppShutdown {
+) : BaseComponent(styleSheet), StatusLineProvider, StatusLineOverride, AppTransitioner, AppShutdown, RenderInvalidator {
 
     private val scanStatus = AtomicReference("Scan: preparing")
     private val scanFile = AtomicReference("Preparing...")
     private val scanDone = AtomicBoolean(false)
+    private val renderDirty = AtomicBoolean(true)
     private var enterPressed = false
     private var splashDismissed = false
     private var lastReportedStatus = ""
     private var lastScanDone = false
+    private var lastReportedFile = ""
     private var scanStarted = false
     private var transitioned = false
 
     private fun startScan() {
         Thread({
             app.fullReindex(
-                progress = { msg -> scanStatus.set(msg) },
-                progressFile = { file -> scanFile.set(file) },
-                logToStdout = false
+                progress = { msg ->
+                    scanStatus.set(msg)
+                    renderDirty.set(true)
+                },
+                progressFile = { file ->
+                    scanFile.set(file)
+                    renderDirty.set(true)
+                },
             )
             scanDone.set(true)
+            renderDirty.set(true)
         }, "codeintel-startup-scan").apply { isDaemon = true }.start()
     }
 
@@ -317,16 +332,21 @@ private class SplashApp(
                     }
                     var changed = false
                     val status = scanStatus.get()
+                    val file = scanFile.get()
                     val done = scanDone.get()
                     if (status != lastReportedStatus) {
                         lastReportedStatus = status
+                        changed = true
+                    }
+                    if (file != lastReportedFile) {
+                        lastReportedFile = file
                         changed = true
                     }
                     if (done != lastScanDone) {
                         lastScanDone = done
                         changed = true
                     }
-                    changed
+                    true
                 }
                 else -> false
             }
@@ -415,6 +435,9 @@ private class SplashApp(
             lines[fileLineIndex] = fileText
         }
         if (scanDone.get()) {
+            if (fileLineIndex in lines.indices) {
+                lines[fileLineIndex] = "Scan complete."
+            }
             lines.add("Scan complete. Press Enter to begin.")
         }
 
@@ -434,6 +457,10 @@ private class SplashApp(
 
     override fun shutdownApp() {
         app.shutdownApp()
+    }
+
+    override fun consumeInvalidation(): Boolean {
+        return renderDirty.getAndSet(false)
     }
 }
 
@@ -980,17 +1007,11 @@ private class SplitPanelsApp(
     fun fullReindex(
         progress: ((String) -> Unit)? = null,
         progressFile: ((String) -> Unit)? = null,
-        logToStdout: Boolean = true
     ) {
-        if (logToStdout) {
-            println("Reindexing project at $projectRoot ...")
-        }
+        progress?.invoke("Indexing: preparing")
         val startMs = System.currentTimeMillis()
         val files = listFilesForIndex()
-        if (logToStdout) {
-            println("Found ${files.size} files to scan")
-        }
-        progress?.invoke("Indexing 0/${files.size}")
+        progress?.invoke("Indexing: 0/${files.size}")
         progressFile?.invoke("Preparing file list...")
         var indexed = 0
         files.forEachIndexed { idx, path ->
@@ -1001,31 +1022,15 @@ private class SplitPanelsApp(
             if (!lang.isNullOrBlank()) {
                 val text = runCatching { Files.readString(path) }.getOrNull()
                 if (text != null) {
-                    codeIntelIndexer.indexDocument(path.toString(), lang, text, version = 0L)
+                    codeIntelIndexer.indexDocumentNow(path.toString(), lang, text, version = 0L)
                     indexed++
-                    if (logToStdout) {
-                        println("loaded $rel")
-                    }
-                } else {
-                    if (logToStdout) {
-                        println("skip   $rel (read error)")
-                    }
-                }
-            } else {
-                if (logToStdout) {
-                    println("skip   $rel (no language)")
                 }
             }
-            progress?.invoke("Indexing ${idx + 1}/${files.size}")
+            progress?.invoke("Indexing: ${idx + 1}/${files.size}")
         }
-        progress?.invoke("Indexing: flushing")
-        codeIntelIndexer.waitForIdle(30_000)
         indexSdkSources()
         val elapsed = System.currentTimeMillis() - startMs
-        if (logToStdout) {
-            println("Reindex complete: $indexed/${files.size} files with language in ${elapsed}ms")
-        }
-        progress?.invoke("Indexing: complete ($indexed/${files.size})")
+        progress?.invoke("Indexing: complete ($indexed/${files.size}) in ${elapsed}ms")
     }
 
     private fun triggerFreshScan() {
