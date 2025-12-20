@@ -37,6 +37,9 @@ class CodeEditorView(
     private val lsp: LspService? = null,
     private val navigationHandler: ((String, Position) -> Unit)? = null
 ) : BaseComponent(styleSheet) {
+    private companion object {
+        private const val HOVER_INFO_DELAY_MS = 500L
+    }
 
     private var localStyleSheet: StyleSheet = styleSheet
     private var filePath: String = ""
@@ -354,9 +357,9 @@ class CodeEditorView(
                 height = rows
             )
             val previewGutter = 0
-            val firstVisibleLine = visibleRows.firstOrNull()?.lineIndex ?: 0
-            val previewOffset = (firstVisibleLine / 4).coerceAtLeast(0)
             val cursorLine = buffer.cursorPosition().line
+            val cursorBlock = cursorLine / 4
+            val previewOffset = (cursorBlock - (bodyRows / 2)).coerceAtLeast(0)
             val previewHighlight =
                 localStyleSheet.getStyle("code-selection")
                     .withDefaults(fg = bodyStyle.bg ?: gutterStyle.bg, bg = bodyStyle.fg ?: gutterStyle.fg)
@@ -462,9 +465,11 @@ class CodeEditorView(
         when (event.kind) {
             "mouse_scroll" -> {
                 val delta = event.scrollDelta ?: return false
+                val multiplier = if (event.alt) 3 else 1
+                val scrollDelta = delta * multiplier
                 val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
                 val prev = scrollTop
-                scrollTop = (scrollTop - delta).coerceIn(0, maxOffset)
+                scrollTop = (scrollTop - scrollDelta).coerceIn(0, maxOffset)
                 suggestionPopup = null
                 renderedSuggestion = null
                 return scrollTop != prev
@@ -548,7 +553,7 @@ class CodeEditorView(
                         "backspace", "delete", "enter" -> true
                         else -> false
                     } || (!event.ctrl && !event.alt && (event.key?.length == 1)) ||
-                        (event.ctrl && event.shift && (key == "x" || key == "v"))
+                        (event.alt && (key == "x" || key == "v" || key == "u" || key == "r"))
                     if (mutating) return true
                 }
                 if (event.ctrl && key == "s") {
@@ -864,7 +869,7 @@ class CodeEditorView(
             return true
         }
         if (infoPopup != null) return false
-        if (now - candidate.startedAt < 2000) return false
+        if (now - candidate.startedAt < HOVER_INFO_DELAY_MS) return false
         val popup = buildInfoPopup(candidate)
         if (popup != null) {
             infoPopup = popup
@@ -914,7 +919,7 @@ class CodeEditorView(
     private fun maybeShowHoverInfo(now: Long): Boolean {
         if (infoPopup != null) return false
         val candidate = hoverInfoCandidate ?: return false
-        if (now - candidate.startedAt < 2000) return false
+        if (now - candidate.startedAt < HOVER_INFO_DELAY_MS) return false
         val popup = buildInfoPopup(candidate) ?: return false
         infoPopup = popup
         return true

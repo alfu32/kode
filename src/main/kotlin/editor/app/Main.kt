@@ -40,6 +40,8 @@ import java.lang.management.ManagementFactory
 import java.lang.ProcessBuilder
 import com.sun.management.OperatingSystemMXBean
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 import editor.app.ProjectFileScanner
 import editor.codeintel.CodeIntelService
@@ -52,12 +54,25 @@ interface StatusLineProvider {
     fun statusRight(): String
 }
 
+interface StatusLineOverride {
+    fun statusLineText(): String?
+}
+
+interface AppTransitioner {
+    fun nextApp(): Component?
+}
+
+interface AppShutdown {
+    fun shutdownApp()
+}
+
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     val perf = PerformanceTracker()
     // Cap rendering to avoid excessive redraws; default ~125 FPS (8ms). Allow tuning via env.
     val frameIntervalMs = System.getenv("KODE_FRAME_MS")?.toLongOrNull()
         ?.coerceIn(8L, 200L) // 8ms ~125fps, 200ms ~5fps
         ?: 8L
+    var currentApp: Component = app
     fun redraw() {
         val totalCols = renderer.cols().coerceAtLeast(1)
         val totalRows = renderer.rows().coerceAtLeast(0)
@@ -75,12 +90,13 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
 
         perf.beforeFrame()
         if (contentRows > 0) {
-            app.render(contentRenderer)
+            currentApp.render(contentRenderer)
         }
         perf.afterFrame()
         if (totalRows > 0) {
-            val right = (app as? StatusLineProvider)?.statusRight()
-            drawStatusLine(renderer, app.styleSheet, perf.snapshot(), totalCols, totalRows - 1, right)
+            val right = (currentApp as? StatusLineProvider)?.statusRight()
+            val override = (currentApp as? StatusLineOverride)?.statusLineText()
+            drawStatusLine(renderer, currentApp.styleSheet, perf.snapshot(), totalCols, totalRows - 1, right, override)
         }
         renderer.flush()
     }
@@ -109,14 +125,21 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
         while (renderer.isRunning()) {
             val event = renderer.tryPollEvent()
             if (event != null) {
-                needsRender = app.dispatch(event) || event.kind == "resize" || needsRender
+                needsRender = currentApp.dispatch(event) || event.kind == "resize" || needsRender
+            }
+            (currentApp as? AppTransitioner)?.nextApp()?.let { next ->
+                currentApp = next
+                if (renderer is AnsiCanvasRenderer) {
+                    renderer.invalidateDiffBuffer()
+                }
+                needsRender = true
             }
 
             var now = System.currentTimeMillis()
 
             // Periodic animation_frame dispatch
             if (now >= nextAnimationTime) {
-                val ticked = app.dispatch(UIEvent(kind = "animation_frame", timeMs = now))
+                val ticked = currentApp.dispatch(UIEvent(kind = "animation_frame", timeMs = now))
                 if (ticked) needsRender = true
                 lastAnimationMs = now
                 nextAnimationTime = lastAnimationMs + 500L
@@ -141,7 +164,10 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
                 Thread.sleep(sleepMs)
             }
         }
-        if (app is SplitPanelsApp) app.shutdownServices()
+        (currentApp as? AppShutdown)?.shutdownApp()
+        if (currentApp !== app) {
+            (app as? AppShutdown)?.shutdownApp()
+        }
     } finally {
 
         // CLEANUP GUARANTEED
@@ -169,15 +195,21 @@ fun main(args: Array<String>) {
     val workingDir = resolveWorkingDirectory(args)
 
     lateinit var app: SplitPanelsApp
-    app = SplitPanelsApp(styleSheet, buildVersion, workingDir, renderer) {
-        app.persistSession(force = true)
-        renderer.requestExit()
-    }
+    app = SplitPanelsApp(
+        styleSheet,
+        buildVersion,
+        workingDir,
+        renderer,
+        onQuit = {
+            app.persistSession(force = true)
+            renderer.requestExit()
+        },
+        runInitialScan = false
+    )
 
-    // Perform a full project reindex before entering the TUI so DB contains complete data.
-    app.fullReindex()
+    val startup = SplashApp(styleSheet, buildVersion, app, renderer)
+    runApp(startup, renderer)
 
-    runApp(app, renderer)
     app.persistSession(force = true)
 }
 
@@ -218,13 +250,201 @@ private fun resolveBuildVersion(): String {
     return System.getProperty("kode.version")?.takeIf { it.isNotBlank() } ?: "dev"
 }
 
+private class SplashApp(
+    styleSheet: StyleSheet,
+    private val buildVersion: String,
+    private val app: SplitPanelsApp,
+    private val renderer: AnsiCanvasRenderer
+) : BaseComponent(styleSheet), StatusLineProvider, StatusLineOverride, AppTransitioner, AppShutdown {
+
+    private val scanStatus = AtomicReference("Scan: preparing")
+    private val scanFile = AtomicReference("Preparing...")
+    private val scanDone = AtomicBoolean(false)
+    private var enterPressed = false
+    private var splashDismissed = false
+    private var lastReportedStatus = ""
+    private var lastScanDone = false
+    private var scanStarted = false
+    private var transitioned = false
+
+    private fun startScan() {
+        Thread({
+            app.fullReindex(
+                progress = { msg -> scanStatus.set(msg) },
+                progressFile = { file -> scanFile.set(file) },
+                logToStdout = false
+            )
+            scanDone.set(true)
+        }, "codeintel-startup-scan").apply { isDaemon = true }.start()
+    }
+
+    override fun statusRight(): String {
+        return if (splashDismissed) app.statusRight() else ""
+    }
+
+    override fun statusLineText(): String? {
+        return if (splashDismissed) null else scanStatus.get()
+    }
+
+    override fun render(canvas: CanvasRenderer) {
+        if (splashDismissed) {
+            app.render(canvas)
+            return
+        }
+        renderSplash(canvas)
+    }
+
+    override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind == "key_down" && event.ctrl && event.key?.equals("q", ignoreCase = true) == true) {
+            renderer.requestExit()
+            return true
+        }
+        if (!splashDismissed) {
+            val dirty = when (event.kind) {
+                "key_down" -> {
+                    if (event.key?.equals("Enter", ignoreCase = true) == true) {
+                        enterPressed = true
+                        true
+                    } else {
+                        false
+                    }
+                }
+                "resize" -> true
+                "animation_frame" -> {
+                    if (!scanStarted) {
+                        scanStarted = true
+                        startScan()
+                    }
+                    var changed = false
+                    val status = scanStatus.get()
+                    val done = scanDone.get()
+                    if (status != lastReportedStatus) {
+                        lastReportedStatus = status
+                        changed = true
+                    }
+                    if (done != lastScanDone) {
+                        lastScanDone = done
+                        changed = true
+                    }
+                    changed
+                }
+                else -> false
+            }
+            return dirty || checkDismiss()
+        }
+        return app.dispatch(event)
+    }
+
+    private fun checkDismiss(): Boolean {
+        if (splashDismissed) return false
+        if (enterPressed && scanDone.get()) {
+            splashDismissed = true
+            return true
+        }
+        return false
+    }
+
+    private fun renderSplash(canvas: CanvasRenderer) {
+        val cols = canvas.cols().coerceAtLeast(1)
+        val rows = canvas.rows().coerceAtLeast(1)
+        val lines = mutableListOf(
+            "██╗  ██╗  ██████╗  ██████╗  ███████╗",
+            "██║ ██╔╝ ██╔═══██╗ ██╔══██╗ ██╔════╝",
+            "█████╔╝  ██║   ██║ ██║  ██║ █████╗",
+            "██╔═██╗  ██║   ██║ ██║  ██║ ██╔══╝",
+            "██║  ██╗ ╚██████╔╝ ██████╔╝ ███████╗",
+            "╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚══════╝",
+            "",
+            "Shortcuts:",
+            "Alt+C  Copy",
+            "Alt+X  Cut",
+            "Alt+V  Paste",
+            "Alt+U  Undo",
+            "Alt+R  Redo",
+            "Ctrl+F Find",
+            "Ctrl+T Shell",
+            "Ctrl+Q Quit",
+            ""
+        )
+        lines.add("Status:")
+        val statusLineIndex = lines.size
+        lines.add("")
+        lines.add("File:")
+        val fileLineIndex = lines.size
+        lines.add("")
+        val targetWidth = ((cols * 3) / 4).coerceAtLeast(20)
+        val targetHeight = ((rows * 3) / 4).coerceAtLeast(6)
+        val contentWidth = lines.maxOf { it.length }.coerceAtLeast(20)
+        val dialogWidth = (contentWidth + 2).coerceAtLeast(targetWidth).coerceAtMost(cols)
+        val dialogHeight = (lines.size + 2).coerceAtLeast(targetHeight).coerceAtMost(rows)
+        val startX = ((cols - dialogWidth) / 2).coerceAtLeast(0)
+        val startY = ((rows - dialogHeight) / 2).coerceAtLeast(0)
+        val style = styleSheet.getStyle("project-search-dialog").withDefaults()
+        val border = styleSheet.getStyle("project-search-dialog-border").withDefaults(style.fg, style.bg)
+        val contentX = startX + 1
+        val contentY = startY + 1
+        val contentHeight = dialogHeight - 2
+        val textWidth = (dialogWidth - 2).coerceAtLeast(1)
+
+        canvas.withStyle(style) {
+            drawRect(startX, startY, dialogWidth, dialogHeight)
+        }
+        canvas.withStyle(border) {
+            val endX = (startX + dialogWidth - 1).coerceAtLeast(startX)
+            val endY = (startY + dialogHeight - 1).coerceAtLeast(startY)
+            for (x in startX..endX) {
+                drawText(x, startY, "-")
+                drawText(x, endY, "-")
+            }
+            for (y in startY..endY) {
+                drawText(startX, y, "|")
+                drawText(endX, y, "|")
+            }
+            drawText(startX, startY, "+")
+            drawText(endX, startY, "+")
+            drawText(startX, endY, "+")
+            drawText(endX, endY, "+")
+        }
+
+        val statusText = scanStatus.get().take(textWidth).padEnd(textWidth, ' ')
+        val fileText = scanFile.get().take(textWidth).padEnd(textWidth, ' ')
+        if (statusLineIndex in lines.indices) {
+            lines[statusLineIndex] = statusText
+        }
+        if (fileLineIndex in lines.indices) {
+            lines[fileLineIndex] = fileText
+        }
+        if (scanDone.get()) {
+            lines.add("Scan complete. Press Enter to begin.")
+        }
+
+        canvas.withStyle(style) {
+            val maxLines = contentHeight.coerceAtMost(lines.size)
+            for (i in 0 until maxLines) {
+                drawText(contentX, contentY + i, lines[i].take(textWidth))
+            }
+        }
+    }
+
+    override fun nextApp(): Component? {
+        if (transitioned || !splashDismissed) return null
+        transitioned = true
+        return app
+    }
+
+    override fun shutdownApp() {
+        app.shutdownApp()
+    }
+}
+
 private class SplitPanelsApp(
     styleSheet: StyleSheet,
     private val buildVersion: String,
     private var projectRoot: Path,
     private val renderer: AnsiCanvasRenderer,
-    private val onQuit: () -> Unit
-) : BaseComponent(styleSheet), StatusLineProvider {
+    private val onQuit: () -> Unit,
+    private val runInitialScan: Boolean = true
+) : BaseComponent(styleSheet), StatusLineProvider, AppShutdown {
     // gotcha
     private var sessionManager = ProjectSessionManager(projectRoot)
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
@@ -327,7 +547,9 @@ private class SplitPanelsApp(
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
         restoreLastSession()
-        triggerFreshScan()
+        if (runInitialScan) {
+            triggerFreshScan()
+        }
     }
     private val leftTabs = TabView(
         styleSheet = styleSheet,
@@ -397,6 +619,10 @@ private class SplitPanelsApp(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        if (event.kind == "key_down" && event.ctrl && event.key?.equals("q", ignoreCase = true) == true) {
+            onQuit()
+            return true
+        }
         if (event.kind == "animation_frame") {
             var handled = false
             if (workspacePickerVisible) {
@@ -602,6 +828,7 @@ private class SplitPanelsApp(
         renderer.enterAlternateScreen()
         renderer.enableMouseTracking()
         renderer.hideCursor()
+        renderer.invalidateDiffBuffer()
     }
 
     private fun showDiffInMain(diff: GitDiff) {
@@ -746,37 +973,59 @@ private class SplitPanelsApp(
         return "$dbLabel  $idxLabel"
     }
 
-    fun shutdownServices() {
+    override fun shutdownApp() {
         dbManager.stop()
     }
 
-    fun fullReindex() {
-        println("Reindexing project at $projectRoot ...")
+    fun fullReindex(
+        progress: ((String) -> Unit)? = null,
+        progressFile: ((String) -> Unit)? = null,
+        logToStdout: Boolean = true
+    ) {
+        if (logToStdout) {
+            println("Reindexing project at $projectRoot ...")
+        }
         val startMs = System.currentTimeMillis()
         val files = listFilesForIndex()
-        println("Found ${files.size} files to scan")
+        if (logToStdout) {
+            println("Found ${files.size} files to scan")
+        }
+        progress?.invoke("Indexing 0/${files.size}")
+        progressFile?.invoke("Preparing file list...")
         var indexed = 0
         files.forEachIndexed { idx, path ->
             val detected = mimeDetector.detectFile(path)
             val lang = detected?.language
             val rel = projectRoot.relativize(path).toString()
+            progressFile?.invoke(rel)
             if (!lang.isNullOrBlank()) {
                 val text = runCatching { Files.readString(path) }.getOrNull()
                 if (text != null) {
                     codeIntelIndexer.indexDocument(path.toString(), lang, text, version = 0L)
                     indexed++
-                    println("loaded $rel")
+                    if (logToStdout) {
+                        println("loaded $rel")
+                    }
                 } else {
-                    println("skip   $rel (read error)")
+                    if (logToStdout) {
+                        println("skip   $rel (read error)")
+                    }
                 }
             } else {
-                println("skip   $rel (no language)")
+                if (logToStdout) {
+                    println("skip   $rel (no language)")
+                }
             }
+            progress?.invoke("Indexing ${idx + 1}/${files.size}")
         }
+        progress?.invoke("Indexing: flushing")
         codeIntelIndexer.waitForIdle(30_000)
         indexSdkSources()
         val elapsed = System.currentTimeMillis() - startMs
-        println("Reindex complete: $indexed/${files.size} files with language in ${elapsed}ms")
+        if (logToStdout) {
+            println("Reindex complete: $indexed/${files.size} files with language in ${elapsed}ms")
+        }
+        progress?.invoke("Indexing: complete ($indexed/${files.size})")
     }
 
     private fun triggerFreshScan() {
@@ -1151,18 +1400,23 @@ private fun drawStatusLine(
     stats: PerfSnapshot,
     cols: Int,
     row: Int,
-    rightText: String?
+    rightText: String?,
+    overrideText: String?
 ) {
     val statusStyle = styleSheet.getStyle("status")
     val textWidth = (cols - 2).coerceAtLeast(0)
-    val cpuText = String.format(Locale.US, "%.1f", stats.cpuPercent)
-    val label = "Loop: ${stats.loopFps}/s  Draw: ${stats.renderFps}/s  Mem: ${stats.usedMb} MB  CPU: $cpuText%"
-    val right = rightText.orEmpty()
-    val padded = if (right.isNotBlank() && label.length + right.length + 4 < textWidth) {
-        val spaces = " ".repeat(textWidth - label.length - right.length - 1)
-        "$label$spaces$right"
+    val padded = if (overrideText != null) {
+        overrideText.take(textWidth)
     } else {
-        label
+        val cpuText = String.format(Locale.US, "%.1f", stats.cpuPercent)
+        val label = "Loop: ${stats.loopFps}/s  Draw: ${stats.renderFps}/s  Mem: ${stats.usedMb} MB  CPU: $cpuText%"
+        val right = rightText.orEmpty()
+        if (right.isNotBlank() && label.length + right.length + 4 < textWidth) {
+            val spaces = " ".repeat(textWidth - label.length - right.length - 1)
+            "$label$spaces$right"
+        } else {
+            label
+        }
     }
     renderer.withStyle(statusStyle) {
         drawRect(0, row, cols, 1)

@@ -154,7 +154,7 @@ fun handleKeyForBuffer(buffer: ITextBuffer, ev: UIEvent, singleLine: Boolean = f
         "Home" -> buffer.moveStartOfLine(expand = shift)
         "End" -> buffer.moveEndOfLine(expand = shift)
         else -> {
-            if (ctrl && shift) {
+            if (ev.alt) {
                 when (key.lowercase()) {
                     "c" -> buffer.copySelection()
                     "x" -> if (buffer.cutSelection()) {}

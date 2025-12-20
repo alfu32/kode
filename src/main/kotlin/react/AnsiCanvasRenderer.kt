@@ -528,6 +528,18 @@ class AnsiCanvasRenderer(
         }
     }
 
+    fun invalidateDiffBuffer() {
+        if (!useDiffBuffer) return
+        ensureBuffers()
+        for (i in lastBuffer.indices) {
+            val cell = lastBuffer[i]
+            cell.ch = '\u0000'
+            cell.fg = Int.MIN_VALUE
+            cell.bg = Int.MIN_VALUE
+            cell.style = Int.MIN_VALUE
+        }
+    }
+
     private fun setCell(index: Int, ch: Char) {
         if (index < 0 || index >= buffer.size) return
         val cell = buffer[index]
