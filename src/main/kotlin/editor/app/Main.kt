@@ -26,6 +26,7 @@ import editor.ui.ProjectSearchDialog
 import editor.ui.AboutView
 import editor.ui.WorkspacePickerDialog
 import editor.ui.SettingsView
+import editor.ui.HelpView
 import editor.db.DbServerManager
 import editor.db.DbStatus
 import editor.codeintel.DbCodeIntelStore
@@ -275,6 +276,10 @@ private class SplashApp(
     private var lastReportedFile = ""
     private var scanStarted = false
     private var transitioned = false
+    private var helpScrollOffset = 0
+    private var helpViewportHeight = 0
+    private var helpMaxScroll = 0
+    private var helpStartY = 0
 
     private fun startScan() {
         Thread({
@@ -321,7 +326,18 @@ private class SplashApp(
                         enterPressed = true
                         true
                     } else {
-                        false
+                        val key = event.key?.lowercase() ?: return false
+                        val prev = helpScrollOffset
+                        when (key) {
+                            "up" -> helpScrollOffset = (helpScrollOffset - 1).coerceAtLeast(0)
+                            "down" -> helpScrollOffset = (helpScrollOffset + 1).coerceAtMost(helpMaxScroll)
+                            "pageup" -> helpScrollOffset = (helpScrollOffset - helpViewportHeight).coerceAtLeast(0)
+                            "pagedown" -> helpScrollOffset = (helpScrollOffset + helpViewportHeight).coerceAtMost(helpMaxScroll)
+                            "home" -> helpScrollOffset = 0
+                            "end" -> helpScrollOffset = helpMaxScroll
+                            else -> return false
+                        }
+                        helpScrollOffset != prev
                     }
                 }
                 "resize" -> true
@@ -346,7 +362,15 @@ private class SplashApp(
                         lastScanDone = done
                         changed = true
                     }
-                    true
+                    changed
+                }
+                "mouse_scroll" -> {
+                    val y = event.y ?: return false
+                    if (y < helpStartY || y >= helpStartY + helpViewportHeight) return false
+                    val delta = event.scrollDelta ?: return false
+                    val prev = helpScrollOffset
+                    helpScrollOffset = (helpScrollOffset - delta).coerceIn(0, helpMaxScroll)
+                    helpScrollOffset != prev
                 }
                 else -> false
             }
@@ -367,7 +391,7 @@ private class SplashApp(
     private fun renderSplash(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        val lines = mutableListOf(
+        val headerLines = listOf(
             "██╗  ██╗  ██████╗  ██████╗  ███████╗",
             "██║ ██╔╝ ██╔═══██╗ ██╔══██╗ ██╔════╝",
             "█████╔╝  ██║   ██║ ██║  ██║ █████╗",
@@ -375,28 +399,25 @@ private class SplashApp(
             "██║  ██╗ ╚██████╔╝ ██████╔╝ ███████╗",
             "╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚══════╝",
             "",
-            "Shortcuts:",
-            "Alt+C  Copy",
-            "Alt+X  Cut",
-            "Alt+V  Paste",
-            "Alt+U  Undo",
-            "Alt+R  Redo",
-            "Ctrl+F Find",
-            "Ctrl+T Shell",
-            "Ctrl+Q Quit",
-            ""
+            "Shortcuts:"
         )
-        lines.add("Status:")
-        val statusLineIndex = lines.size
-        lines.add("")
-        lines.add("File:")
-        val fileLineIndex = lines.size
-        lines.add("")
+        val statusText = scanStatus.get()
+        val fileText = if (scanDone.get()) "Scan complete." else scanFile.get()
+        val footerLines = mutableListOf(
+            "Status:",
+            statusText,
+            "File:",
+            fileText
+        )
+        if (scanDone.get()) {
+            footerLines.add("Scan complete. Press Enter to begin.")
+        }
+        val shortcutLines = HelpView.shortcutLines()
         val targetWidth = ((cols * 3) / 4).coerceAtLeast(20)
         val targetHeight = ((rows * 3) / 4).coerceAtLeast(6)
-        val contentWidth = lines.maxOf { it.length }.coerceAtLeast(20)
+        val contentWidth = (headerLines + footerLines + shortcutLines).maxOf { it.length }.coerceAtLeast(20)
         val dialogWidth = (contentWidth + 2).coerceAtLeast(targetWidth).coerceAtMost(cols)
-        val dialogHeight = (lines.size + 2).coerceAtLeast(targetHeight).coerceAtMost(rows)
+        val dialogHeight = (headerLines.size + footerLines.size + 2).coerceAtLeast(targetHeight).coerceAtMost(rows)
         val startX = ((cols - dialogWidth) / 2).coerceAtLeast(0)
         val startY = ((rows - dialogHeight) / 2).coerceAtLeast(0)
         val style = styleSheet.getStyle("project-search-dialog").withDefaults()
@@ -426,25 +447,33 @@ private class SplashApp(
             drawText(endX, endY, "+")
         }
 
-        val statusText = scanStatus.get().take(textWidth).padEnd(textWidth, ' ')
-        val fileText = scanFile.get().take(textWidth).padEnd(textWidth, ' ')
-        if (statusLineIndex in lines.indices) {
-            lines[statusLineIndex] = statusText
-        }
-        if (fileLineIndex in lines.indices) {
-            lines[fileLineIndex] = fileText
-        }
-        if (scanDone.get()) {
-            if (fileLineIndex in lines.indices) {
-                lines[fileLineIndex] = "Scan complete."
-            }
-            lines.add("Scan complete. Press Enter to begin.")
-        }
-
         canvas.withStyle(style) {
-            val maxLines = contentHeight.coerceAtMost(lines.size)
-            for (i in 0 until maxLines) {
-                drawText(contentX, contentY + i, lines[i].take(textWidth))
+            var cursorY = contentY
+            headerLines.forEach { line ->
+                if (cursorY >= contentY + contentHeight) return@forEach
+                drawText(contentX, cursorY, line.take(textWidth))
+                cursorY++
+            }
+
+            val footerHeight = footerLines.size
+            val listTopY = cursorY
+            val listBottomY = (contentY + contentHeight - footerHeight).coerceAtLeast(listTopY)
+            val listHeight = (listBottomY - listTopY).coerceAtLeast(0)
+            helpViewportHeight = listHeight
+            helpMaxScroll = (shortcutLines.size - listHeight).coerceAtLeast(0)
+            helpScrollOffset = helpScrollOffset.coerceIn(0, helpMaxScroll)
+            helpStartY = listTopY
+
+            val visibleShortcuts = shortcutLines.drop(helpScrollOffset).take(listHeight)
+            visibleShortcuts.forEachIndexed { idx, line ->
+                drawText(contentX, listTopY + idx, line.take(textWidth))
+            }
+
+            var footerY = listBottomY
+            footerLines.forEach { line ->
+                if (footerY >= contentY + contentHeight) return@forEach
+                drawText(contentX, footerY, line.take(textWidth))
+                footerY++
             }
         }
     }
@@ -555,6 +584,7 @@ private class SplitPanelsApp(
         dbManager,
         codeIntelIndexer
     ) { projectRoot }
+    private val helpView = HelpView(styleSheet)
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
     private var workspacePickerVisible = false
@@ -580,12 +610,13 @@ private class SplitPanelsApp(
     }
     private val leftTabs = TabView(
         styleSheet = styleSheet,
-        titles = listOf("Files", "Git", "About", "Settings"),
+        titles = listOf("Files", "Git", "About", "Settings", "Help"),
         tabComponents = listOf(
             filesTabView,
             gitPanel,
             aboutView,
-            settingsView
+            settingsView,
+            helpView
         ),
         initialIndex = 0,
         onSelect = { idx -> handleLeftTabChanged(idx) }
