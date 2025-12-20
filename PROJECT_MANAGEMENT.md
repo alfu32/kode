@@ -15,6 +15,9 @@ commits:
 - Relegate scanning to a background task and allow the splash screen to be dismissed immediately. opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
 commits:
 
+- Bug: after pressing enter and switching applications we should force a rerender. opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
+commits:
+
 ## DONE
 - No items. opened: 2025-12-20 done: 2025-12-20 closed: 2025-12-20
 commits:
