@@ -716,6 +716,7 @@ private class TreeSitterDefinitionExtractor(
     }
 
     private fun extractName(text: String, node: TSNode): String? {
+        if (node.isNull) return null
         val start = node.startByte
         val end = node.endByte
         if (start < 0 || end <= start || end > text.length) return null

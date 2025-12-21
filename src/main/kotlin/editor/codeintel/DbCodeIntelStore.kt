@@ -12,9 +12,18 @@ class DbCodeIntelStore(
     private var initialized = false
     @Volatile
     private var hasDataCache: Boolean = false
+    @Volatile
+    private var lastUrl: String? = null
 
     private fun connection(): Connection? {
         val url = urlProvider() ?: return null
+        synchronized(this) {
+            if (url != lastUrl) {
+                lastUrl = url
+                initialized = false
+                hasDataCache = false
+            }
+        }
         return runCatching { DriverManager.getConnection(url, DB_USER, DB_PASS) }.getOrNull()
     }
 

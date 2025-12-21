@@ -54,10 +54,17 @@ class DefaultMimeTypeDetector(
         if (nameResult.source != MimeTypeDetectionSource.FALLBACK) {
             return nameResult
         }
+        if (!Files.isRegularFile(path)) {
+            return nameResult
+        }
 
         var contentResult: MimeTypeResult? = null
-        Files.newInputStream(path).use { input ->
-            val buffer = readBytes(input, byteLimit)
+        val buffer = runCatching {
+            Files.newInputStream(path).use { input ->
+                readBytes(input, byteLimit)
+            }
+        }.getOrNull()
+        if (buffer != null) {
             contentResult = detect(buffer)
             if (contentResult?.source != MimeTypeDetectionSource.FALLBACK) {
                 val mergedMimeTypeCategory = if (contentResult?.mimeTypeCategory != MimeTypeCategory.UNKNOWN)
