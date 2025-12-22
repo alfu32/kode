@@ -271,8 +271,8 @@ private fun printHelp() {
 }
 
 private fun runUpdate() {
-    val url = URL("https://github.com/alfu32/kode/releases/download/latest/kode.jar")
-    val target = resolveSelfJarPath() ?: Paths.get("kode.jar").toAbsolutePath().normalize()
+    val url = URL("https://github.com/alfu32/kode/releases/latest/download/kode.jar")
+    val target = Paths.get("kode.jar").toAbsolutePath().normalize()
     val temp = target.resolveSibling("${target.fileName}.download")
     runCatching {
         url.openStream().use { input ->
@@ -292,21 +292,29 @@ private fun runUpdate() {
 
 private fun runInstall() {
     val root = Paths.get("").toAbsolutePath().normalize()
-    val jarName = "kode.jar"
-    val sh = """
+    val jarPath = resolveSelfJarPath() ?: root.resolve("kode.jar")
+    val jarAbs = jarPath.toAbsolutePath().normalize().toString()
+    val jarAbsCmd = jarAbs.replace("/", "\\")
+    val sh = buildScript(
+        """
         #!/usr/bin/env sh
-        DIR="$${'$'}(cd "$${'$'}(dirname "$${'$'}0")" && pwd)"
-        exec java -jar "$${'$'}DIR/$jarName" "$${'$'}@"
-    """.trimIndent() + "\n"
-    val cmd = """
+        exec java -jar "__KODE_JAR__" "$@"
+        """.trimIndent() + "\n",
+        jarAbs
+    )
+    val cmd = buildScript(
+        """
         @echo off
-        set SCRIPT_DIR=%~dp0
-        java -jar "%SCRIPT_DIR%$jarName" %*
-    """.trimIndent() + "\r\n"
-    val ps1 = """
-        ${'$'}PSScriptRoot = Split-Path -Parent ${'$'}MyInvocation.MyCommand.Definition
-        & java -jar "${'$'}PSScriptRoot\\$jarName" @args
-    """.trimIndent() + "\r\n"
+        java -jar "__KODE_JAR__" %*
+        """.trimIndent() + "\r\n",
+        jarAbsCmd
+    )
+    val ps1 = buildScript(
+        """
+        & java -jar "__KODE_JAR__" @args
+        """.trimIndent() + "\r\n",
+        jarAbsCmd
+    )
     runCatching {
         Files.writeString(root.resolve("kode.sh"), sh, StandardCharsets.UTF_8)
         Files.writeString(root.resolve("kode.cmd"), cmd, StandardCharsets.UTF_8)
@@ -317,6 +325,9 @@ private fun runInstall() {
         System.err.println("Install failed: ${ex.message}")
     }
 }
+
+private fun buildScript(template: String, jarPath: String): String =
+    template.replace("__KODE_JAR__", jarPath)
 
 private fun runCat(pathArg: String) {
     val path = Paths.get(pathArg).toAbsolutePath().normalize()
@@ -337,13 +348,16 @@ private fun runCat(pathArg: String) {
     val tokensByLine = if (!normalizedLanguage.isNullOrBlank() && syntaxProvider.languages().contains(normalizedLanguage)) {
         runCatching { syntaxProvider.tokensForLines(0, lines, normalizedLanguage).groupBy { it.line } }.getOrNull().orEmpty()
     } else emptyMap()
+    val lineNumberWidth = maxOf(2, lines.size.toString().length)
     lines.forEachIndexed { index, line ->
         val tokens = tokensByLine[index].orEmpty().sortedBy { it.start }
+        val linePrefix = String.format("%${lineNumberWidth}d | ", index + 1)
         if (tokens.isEmpty()) {
-            println(line)
+            println(linePrefix + line)
             return@forEachIndexed
         }
         val sb = StringBuilder()
+        sb.append(linePrefix)
         var cursor = 0
         tokens.forEach { token ->
             val start = token.start.coerceIn(0, line.length)
