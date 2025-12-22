@@ -759,7 +759,8 @@ private class SplitPanelsApp(
             openInViewer(entry.fullPath, detected)
         },
         onSelectRecent = { entry -> openRecent(entry) },
-        onRemoveRecent = { entry -> removeRecent(entry) }
+        onRemoveRecent = { entry -> removeRecent(entry) },
+        syntaxProvider = regexProvider
     )
     private val settingsView = SettingsView(
         styleSheet,

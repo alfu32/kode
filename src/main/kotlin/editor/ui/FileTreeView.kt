@@ -3,6 +3,9 @@ package editor.ui
 import editor.lib.FileTree
 import editor.lib.FileTreeEntry
 import editor.lib.IFileTree
+import editor.mime.DefaultMimeTypeDetector
+import editor.mime.MimeTypeCategory
+import editor.mime.MimeTypeResult
 import react.BaseComponent
 import react.StyleSheet
 import react.UIEvent
@@ -12,7 +15,8 @@ import java.io.File
 class FileTreeView(
     styleSheet: StyleSheet,
     private var tree: IFileTree = FileTree.newFileTree(System.getProperty("user.dir")),
-    private val onSelect: (FileTreeEntry, String?) -> Unit = { _, _ -> }
+    private val onSelect: (FileTreeEntry, String?) -> Unit = { _, _ -> },
+    private val syntaxProvider: editor.grammars.SyntaxProvider? = null
 ) : BaseComponent(styleSheet) {
 
     private var selectedPath: String? = null
@@ -23,6 +27,8 @@ class FileTreeView(
     private var renameRow: Int = -1
     private val renameInput = InputState()
     private var lastRows: Int = 0
+    private val mimeDetector = DefaultMimeTypeDetector()
+    private val mimeCache = mutableMapOf<String, MimeCacheEntry>()
 
     fun refreshFileTree() {
         tree.refreshOpenNodes()
@@ -36,6 +42,7 @@ class FileTreeView(
         renameRow = -1
         renameInput.text = ""
         renameInput.cursor = 0
+        mimeCache.clear()
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -58,13 +65,18 @@ class FileTreeView(
         val selectedStyle = styleSheet.getStyle("file-entry:selected")
         val folderStyle = styleSheet.getStyle("file-entry:folder")
         val selectedFolderStyle = styleSheet.getStyle("file-entry:folder:selected")
+        val plainStyle = styleSheet.getStyle("file-entry:plain")
+        val selectedPlainStyle = styleSheet.getStyle("file-entry:plain:selected")
         val visible = entries.drop(scrollOffset).take(availableRows)
         visible.forEachIndexed { idx, entry ->
             val rowY = idx + 1
             val isSelected = entry.fullPath == selectedPath
+            val isPlain = entry.typ == "file" && shouldUsePlainStyle(entry.fullPath, entry.name)
             val style = when {
                 entry.typ == "folder" && isSelected -> selectedFolderStyle
                 entry.typ == "folder" -> folderStyle
+                isPlain && isSelected -> selectedPlainStyle
+                isPlain -> plainStyle
                 isSelected -> selectedStyle
                 else -> lineStyle
             }
@@ -248,6 +260,40 @@ class FileTreeView(
         ensureSelectionVisible(entries, visibleCount)
         return true
     }
+
+    private fun shouldUsePlainStyle(path: String, name: String): Boolean {
+        val detected = detectMime(path, name)
+        val lang = detected.language
+        val isTextLike = detected.mimeTypeCategory == MimeTypeCategory.TEXT || detected.mime.startsWith("text/")
+        val isPlainText = detected.extension == ".txt" ||
+            lang == "text" ||
+            lang == "plain-text" ||
+            detected.mime == "text/plain" ||
+            detected.mime == "text/text"
+        val syntaxKnown = lang != null && syntaxProvider?.languages()?.contains(lang) == true
+        val isUnknownSyntax = isTextLike && !syntaxKnown
+        return isPlainText || isUnknownSyntax
+    }
+
+    private fun detectMime(path: String, name: String): MimeTypeResult {
+        val file = File(path)
+        val lastModified = file.lastModified()
+        val size = file.length()
+        val cached = mimeCache[path]
+        if (cached != null && cached.lastModified == lastModified && cached.size == size) {
+            return cached.result
+        }
+        val result = runCatching { mimeDetector.detectFile(file.toPath()) }
+            .getOrElse { mimeDetector.detectFilename(name) }
+        mimeCache[path] = MimeCacheEntry(lastModified, size, result)
+        return result
+    }
+
+    private data class MimeCacheEntry(
+        val lastModified: Long,
+        val size: Long,
+        val result: MimeTypeResult
+    )
 
     private fun selectedIndex(entries: List<FileTreeEntry>): Int {
         val sel = selectedPath
