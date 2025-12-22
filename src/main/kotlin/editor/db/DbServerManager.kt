@@ -32,6 +32,7 @@ class DbServerManager {
     private val logBuffer = ArrayDeque<String>()
     private var currentPort: Int? = null
     private var server: Server? = null
+    private var freshStart: Boolean = false
 
     fun start(projectRoot: Path): DbStatus = synchronized(lock) {
         if (currentRoot == projectRoot && status.state == DbStatus.State.RUNNING && server?.isRunning(true) == true) {
@@ -43,6 +44,8 @@ class DbServerManager {
             return status
         }
         val baseDir = projectRoot.resolve(".kode/db")
+        val existingDbFile = baseDir.resolve("kode.mv.db")
+        freshStart = !Files.exists(existingDbFile)
         runCatching { Files.createDirectories(baseDir) }
         status = DbStatus(DbStatus.State.STARTING, jarPath = jar, baseDir = baseDir)
         currentRoot = projectRoot
@@ -175,6 +178,8 @@ class DbServerManager {
         if (status.state != DbStatus.State.RUNNING) return null
         "jdbc:h2:tcp://127.0.0.1:$port/kode;AUTO_RECONNECT=TRUE;DB_CLOSE_ON_EXIT=FALSE;DB_CLOSE_DELAY=-1"
     }
+
+    fun wasFreshStart(): Boolean = synchronized(lock) { freshStart }
 
     companion object {
         private const val DB_USER = "sa"

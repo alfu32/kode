@@ -455,6 +455,14 @@ private class SplashApp(
     private var helpStartY = 0
 
     private fun startScan() {
+        if (app.hasPersistentIndex()) {
+            app.loadCodeIntelFromStore()
+            scanStatus.set("Scan: skipped (persisted index)")
+            scanFile.set("Using existing index")
+            scanDone.set(true)
+            renderDirty.set(true)
+            return
+        }
         Thread({
             app.fullReindex(
                 progress = { msg ->
@@ -777,7 +785,7 @@ private class SplitPanelsApp(
             .toMutableMap()
         restoreLastSession()
         if (runInitialScan) {
-            if (hasExistingDbFile()) {
+            if (hasPersistentIndex()) {
                 codeIntelIndexer.loadFromStore()
             } else {
                 triggerFreshScan()
@@ -1263,9 +1271,13 @@ private class SplitPanelsApp(
         return ProjectFileScanner.listFilesForIndex(projectRoot, ignorePatterns)
     }
 
-    private fun hasExistingDbFile(): Boolean {
-        val dbFile = projectRoot.resolve(".kode/db/kode.mv.db")
-        return Files.exists(dbFile)
+    fun hasPersistentIndex(): Boolean {
+        if (dbManager.wasFreshStart()) return false
+        return codeIntelIndexer.hasPersistentData()
+    }
+
+    fun loadCodeIntelFromStore() {
+        codeIntelIndexer.loadFromStore()
     }
 
     private fun indexSdkSources() {
