@@ -84,9 +84,19 @@ file-entry {
     bg: #1a2134;
     fg: #b6b9c5;
 }
+file-entry:folder {
+    bg: #1a2134;
+    fg: #ffcc22;
+    text-decoration: bold;
+}
 file-entry:selected {
     bg: #243250;
     fg: #ffbf55;
+}
+file-entry:folder:selected {
+    bg: #243250;
+    fg: #ffcc22;
+    text-decoration: bold;
 }
 
 vertical-scrollbar {

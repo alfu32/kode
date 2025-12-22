@@ -56,11 +56,18 @@ class FileTreeView(
 
         val lineStyle = styleSheet.getStyle("file-entry")
         val selectedStyle = styleSheet.getStyle("file-entry:selected")
+        val folderStyle = styleSheet.getStyle("file-entry:folder")
+        val selectedFolderStyle = styleSheet.getStyle("file-entry:folder:selected")
         val visible = entries.drop(scrollOffset).take(availableRows)
         visible.forEachIndexed { idx, entry ->
             val rowY = idx + 1
             val isSelected = entry.fullPath == selectedPath
-            val style = if (isSelected) selectedStyle else lineStyle
+            val style = when {
+                entry.typ == "folder" && isSelected -> selectedFolderStyle
+                entry.typ == "folder" -> folderStyle
+                isSelected -> selectedStyle
+                else -> lineStyle
+            }
             canvas.withStyle(style) {
                 val buttonsText = when (entry.typ) {
                     "folder" -> "[r][+d][+f][-]"
