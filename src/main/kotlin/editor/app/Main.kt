@@ -777,7 +777,11 @@ private class SplitPanelsApp(
             .toMutableMap()
         restoreLastSession()
         if (runInitialScan) {
-            triggerFreshScan()
+            if (hasExistingDbFile()) {
+                codeIntelIndexer.loadFromStore()
+            } else {
+                triggerFreshScan()
+            }
         }
     }
     private val leftTabs = TabView(
@@ -1257,6 +1261,11 @@ private class SplitPanelsApp(
     private fun listFilesForIndex(): List<Path> {
         val ignorePatterns = gitService?.ignoredPatterns().orEmpty()
         return ProjectFileScanner.listFilesForIndex(projectRoot, ignorePatterns)
+    }
+
+    private fun hasExistingDbFile(): Boolean {
+        val dbFile = projectRoot.resolve(".kode/db/kode.mv.db")
+        return Files.exists(dbFile)
     }
 
     private fun indexSdkSources() {
