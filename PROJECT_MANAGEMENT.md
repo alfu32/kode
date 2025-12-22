@@ -18,10 +18,11 @@ commits:
 00059 - Bug: after pressing enter and switching applications we should force a rerender. opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
 commits:
 
+## INPROGRESS
+
 00058 - Bug: changing workspace does not trigger a full scan, caused by missing DB on new projects ( whcih is created when the app starts). opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
 commits:
 
-## INPROGRESS
 00057 - No items. opened: 2025-12-20 done: 2025-12-20 closed: 2025-12-20
 commits:
 
@@ -382,4 +383,5 @@ commits:
  - 7f2d686 2025-12-05 feat(editors)
  - 995706b 2025-12-05 feat(editors): hex editor: generic byte buffer impl
  - cf2f43e 2025-12-05 feat(editors): hex editor
+
 
