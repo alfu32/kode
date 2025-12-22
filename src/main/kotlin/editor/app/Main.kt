@@ -765,7 +765,6 @@ private class SplitPanelsApp(
     private var activeDiff: GitDiff? = null
     init {
         dbManager.start(projectRoot)
-        resetCodeIntelStore()
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
             entry.copy(
@@ -1258,11 +1257,6 @@ private class SplitPanelsApp(
     private fun listFilesForIndex(): List<Path> {
         val ignorePatterns = gitService?.ignoredPatterns().orEmpty()
         return ProjectFileScanner.listFilesForIndex(projectRoot, ignorePatterns)
-    }
-
-    private fun resetCodeIntelStore() {
-        codeIntelIndexer.clear()
-        dbManager.clearIndex()
     }
 
     private fun indexSdkSources() {
