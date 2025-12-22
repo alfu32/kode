@@ -277,7 +277,10 @@ private fun printHelp() {
 
 private fun runUpdate() {
     val url = URL("https://github.com/alfu32/kode/releases/latest/download/kode.jar")
-    val target = Paths.get("kode.jar").toAbsolutePath().normalize()
+    val target = resolveSelfJarPath()
+        ?: kodeHome()?.resolve("kode.jar")
+        ?: Paths.get("kode.jar").toAbsolutePath().normalize()
+    runCatching { Files.createDirectories(target.parent) }
     val temp = target.resolveSibling("${target.fileName}.download")
     runCatching {
         url.openStream().use { input ->
