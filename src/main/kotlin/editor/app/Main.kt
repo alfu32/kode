@@ -206,6 +206,10 @@ fun main(args: Array<String>) {
             printHelp()
             return
         }
+        "version", "-v", "--version" -> {
+            println(resolveBuildVersion())
+            return
+        }
         "update" -> {
             runUpdate()
             return
@@ -265,6 +269,7 @@ private fun printHelp() {
           kode cat <file>        Print file with syntax highlighting
           kode install           Create launchers (cmd/bat/sh/ps1) in current folder
           kode update            Self-update from GitHub release
+          kode version           Print version
           kode help              Show this help
         """.trimIndent()
     )
