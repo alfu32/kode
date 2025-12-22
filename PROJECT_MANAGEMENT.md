@@ -19,14 +19,16 @@ commits:
 commits:
 
 ## INPROGRESS
-
-00058 - Bug: changing workspace does not trigger a full scan, caused by missing DB on new projects ( whcih is created when the app starts). opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
-commits:
+00063 - CLI: add commands `kode update` (self-update from https://github.com/alfu32/kode/releases/download/latest/kode.jar), `kode install` (create cmd/bat/sh/ps1 launchers in current folder), `kode cat <filename>` (print file with syntax highlighting), `kode <folder>` (open workspace from folder), `help` (print help). Launching without a folder prints help and does not open the current directory. opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
+commits:x
 
 00057 - No items. opened: 2025-12-20 done: 2025-12-20 closed: 2025-12-20
 commits:
 
 ## CLOSED
+00063 - CLI: add commands `kode update` (self-update from https://github.com/alfu32/kode/releases/download/latest/kode.jar), `kode install` (create cmd/bat/sh/ps1 launchers in current folder), `kode cat <filename>` (print file with syntax highlighting), `kode <folder>` (open workspace from folder), `help` (print help). Launching without a folder prints help and does not open the current directory. opened: 2025-12-20 done: 9999-12-31 closed: 9999-12-31
+commits:
+
 00056 - Feature: windows. opened: 2025-12-18 done: 2025-12-19 closed: 2025-12-19
 commits:
  - 3ab68f3 2025-12-18 feat(windows): adapt for windows terminals (conhost)
@@ -383,5 +385,6 @@ commits:
  - 7f2d686 2025-12-05 feat(editors)
  - 995706b 2025-12-05 feat(editors): hex editor: generic byte buffer impl
  - cf2f43e 2025-12-05 feat(editors): hex editor
+
 
 

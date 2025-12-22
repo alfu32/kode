@@ -37,6 +37,7 @@ import java.time.Instant
 import editor.lib.FileTree
 import editor.lib.JGitService
 import java.io.File
+import java.net.URL
 import java.lang.management.ManagementFactory
 import java.lang.ProcessBuilder
 import com.sun.management.OperatingSystemMXBean
@@ -44,6 +45,8 @@ import java.util.Locale
 import java.util.Comparator
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import java.nio.charset.StandardCharsets
+import java.nio.file.StandardCopyOption
 import kotlin.system.exitProcess
 import editor.app.ProjectFileScanner
 import editor.codeintel.CodeIntelService
@@ -194,6 +197,38 @@ fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idle
 }
 
 fun main(args: Array<String>) {
+    if (args.isEmpty()) {
+        printHelp()
+        return
+    }
+    when (args[0].lowercase()) {
+        "help", "-h", "--help" -> {
+            printHelp()
+            return
+        }
+        "update" -> {
+            runUpdate()
+            return
+        }
+        "install" -> {
+            runInstall()
+            return
+        }
+        "cat" -> {
+            if (args.size < 2) {
+                System.err.println("Missing file path for `kode cat`.")
+                printHelp()
+                return
+            }
+            runCat(args[1])
+            return
+        }
+    }
+    if (args.size > 1) {
+        System.err.println("Expected a single folder argument.")
+        printHelp()
+        return
+    }
     val styleFiles = mutableListOf("styles/app.css")
     val kodeHome = kodeHome()
     resolveResource("styles/app.css", kodeHome)?.let { styleFiles.add(0, it) }
@@ -221,6 +256,124 @@ fun main(args: Array<String>) {
 
     app.persistSession(force = true)
 }
+
+private fun printHelp() {
+    println(
+        """
+        Usage:
+          kode <folder>          Open project at folder
+          kode cat <file>        Print file with syntax highlighting
+          kode install           Create launchers (cmd/bat/sh/ps1) in current folder
+          kode update            Self-update from GitHub release
+          kode help              Show this help
+        """.trimIndent()
+    )
+}
+
+private fun runUpdate() {
+    val url = URL("https://github.com/alfu32/kode/releases/download/latest/kode.jar")
+    val target = resolveSelfJarPath() ?: Paths.get("kode.jar").toAbsolutePath().normalize()
+    val temp = target.resolveSibling("${target.fileName}.download")
+    runCatching {
+        url.openStream().use { input ->
+            Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING)
+        }
+        runCatching {
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        }.getOrElse {
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING)
+        }
+        println("Updated: $target")
+    }.onFailure { ex ->
+        runCatching { Files.deleteIfExists(temp) }
+        System.err.println("Update failed: ${ex.message}")
+    }
+}
+
+private fun runInstall() {
+    val root = Paths.get("").toAbsolutePath().normalize()
+    val jarName = "kode.jar"
+    val sh = """
+        #!/usr/bin/env sh
+        DIR="$${'$'}(cd "$${'$'}(dirname "$${'$'}0")" && pwd)"
+        exec java -jar "$${'$'}DIR/$jarName" "$${'$'}@"
+    """.trimIndent() + "\n"
+    val cmd = """
+        @echo off
+        set SCRIPT_DIR=%~dp0
+        java -jar "%SCRIPT_DIR%$jarName" %*
+    """.trimIndent() + "\r\n"
+    val ps1 = """
+        ${'$'}PSScriptRoot = Split-Path -Parent ${'$'}MyInvocation.MyCommand.Definition
+        & java -jar "${'$'}PSScriptRoot\\$jarName" @args
+    """.trimIndent() + "\r\n"
+    runCatching {
+        Files.writeString(root.resolve("kode.sh"), sh, StandardCharsets.UTF_8)
+        Files.writeString(root.resolve("kode.cmd"), cmd, StandardCharsets.UTF_8)
+        Files.writeString(root.resolve("kode.bat"), cmd, StandardCharsets.UTF_8)
+        Files.writeString(root.resolve("kode.ps1"), ps1, StandardCharsets.UTF_8)
+        println("Launchers created in $root")
+    }.onFailure { ex ->
+        System.err.println("Install failed: ${ex.message}")
+    }
+}
+
+private fun runCat(pathArg: String) {
+    val path = Paths.get(pathArg).toAbsolutePath().normalize()
+    if (!Files.exists(path)) {
+        System.err.println("File not found: $path")
+        return
+    }
+    val detector = DefaultMimeTypeDetector()
+    val detected = runCatching { detector.detectFile(path) }.getOrNull()
+    val language = detected?.language
+    val syntaxProvider = KeywordSyntaxProvider
+    val lines = runCatching { Files.readAllLines(path, StandardCharsets.UTF_8) }
+        .getOrElse {
+            System.err.println("Failed to read file: ${it.message}")
+            return
+        }
+    val normalizedLanguage = language?.lowercase(Locale.ROOT)
+    val tokensByLine = if (!normalizedLanguage.isNullOrBlank() && syntaxProvider.languages().contains(normalizedLanguage)) {
+        runCatching { syntaxProvider.tokensForLines(0, lines, normalizedLanguage).groupBy { it.line } }.getOrNull().orEmpty()
+    } else emptyMap()
+    lines.forEachIndexed { index, line ->
+        val tokens = tokensByLine[index].orEmpty().sortedBy { it.start }
+        if (tokens.isEmpty()) {
+            println(line)
+            return@forEachIndexed
+        }
+        val sb = StringBuilder()
+        var cursor = 0
+        tokens.forEach { token ->
+            val start = token.start.coerceIn(0, line.length)
+            val end = token.end.coerceIn(start, line.length)
+            if (start > cursor) sb.append(line.substring(cursor, start))
+            val color = token.fg
+            if (color != null) {
+                sb.append(ansiColor(color))
+                sb.append(line.substring(start, end))
+                sb.append(ANSI_RESET)
+            } else {
+                sb.append(line.substring(start, end))
+            }
+            cursor = end
+        }
+        if (cursor < line.length) sb.append(line.substring(cursor))
+        println(sb.toString())
+    }
+}
+
+private fun ansiColor(color: react.Color): String =
+    "\u001B[38;2;${color.r};${color.g};${color.b}m"
+
+private const val ANSI_RESET = "\u001B[0m"
+
+private fun resolveSelfJarPath(): Path? = runCatching {
+    val uri = SplitPanelsApp::class.java.protectionDomain.codeSource?.location?.toURI() ?: return null
+    val path = Paths.get(uri)
+    if (path.toString().lowercase(Locale.ROOT).endsWith(".jar")) path else null
+}.getOrNull()
 
 private fun resolveWorkingDirectory(args: Array<String>): Path {
     val defaultDir = Paths.get("").toAbsolutePath().normalize()
