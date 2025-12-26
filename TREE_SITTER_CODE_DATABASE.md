@@ -1,6 +1,6 @@
 Below is a **complete, minimal, and coherent base package** plus the **authoritative design document** you asked for.
 
-the base entities are in the file `src/main/kotlin/editor/lang/base.kt`
+the base entities and contracts are in the file `src/main/kotlin/editor/lang/base.kt`
 
 # Tree-Sitter Code Intelligence Database
 
