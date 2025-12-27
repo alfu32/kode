@@ -198,6 +198,19 @@ This architecture:
 - keeps storage minimal
 - keeps semantics explicit and auditable
 
+---
+
+## Notes / Annex
+
+### TypeScript Corpus (Tree-sitter Adapter Research)
+- Source: `https://github.com/microsoft/TypeScript`
+- Local path: `samples/.corpus/typescript`
+- Purpose: provide a large, real-world TypeScript codebase for deriving identifier path formulas.
+- Method:
+  1) `mkdir -p samples/.corpus`
+  2) `git clone https://github.com/microsoft/TypeScript samples/.corpus/typescript`
+  3) Scan files under `samples/.corpus/typescript` when generating path/occurrence reports.
+
 It is intentionally conservative, explicit, and correct.
 ```
 
@@ -219,4 +232,3 @@ Next logical steps (when you want them):
 * identifier canonicalization rules
 * import / using resolution strategy
 * query patterns over the flat list
-

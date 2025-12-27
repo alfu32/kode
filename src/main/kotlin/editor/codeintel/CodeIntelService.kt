@@ -4,6 +4,7 @@ import editor.grammars.KeywordSyntaxProvider
 import editor.grammars.Token
 import editor.lang.IdentifierOccurrence
 import editor.lang.kotlin.KotlinIdentifierExtractor
+import editor.lang.typescript.TypescriptIdentifierExtractor
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.treesitter.TSLanguage
@@ -623,11 +624,15 @@ private class OccurrenceDefinitionExtractor(
     private val fallback: DefinitionExtractor
 ) : DefinitionExtractor {
     private val kotlinExtractor = KotlinIdentifierExtractor()
+    private val typescriptExtractor = TypescriptIdentifierExtractor()
 
     override fun extract(path: String, text: String, language: String?): ExtractedSymbols {
         val langKey = language?.lowercase(Locale.ROOT) ?: return fallback.extract(path, text, language)
-        if (langKey != "kotlin" && langKey != "kt") return fallback.extract(path, text, language)
-        val occurrences = kotlinExtractor.extract(text, path, langKey)
+        val occurrences = when (langKey) {
+            "kotlin", "kt" -> kotlinExtractor.extract(text, path, langKey)
+            "typescript", "ts", "tsx" -> typescriptExtractor.extract(text, path, langKey)
+            else -> return fallback.extract(path, text, language)
+        }
         if (occurrences.isEmpty()) return fallback.extract(path, text, language)
         return convertOccurrences(occurrences, path, text, langKey)
     }
