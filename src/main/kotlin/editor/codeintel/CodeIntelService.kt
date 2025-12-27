@@ -234,7 +234,8 @@ class CodeIntelService(
             }
         }
         val tokens = synchronized(lock) { usagesIndex[request.symbol]?.toList().orEmpty() }
-        tokens.forEach { tok ->
+        val filteredTokens = filterTokensForScope(tokens, clickedDef)
+        filteredTokens.forEach { tok ->
             val file = tok.filePath
             if (file != null) {
                 results.add(
@@ -547,6 +548,20 @@ class CodeIntelService(
             }?.let { return it.kind }
         }
         return null
+    }
+
+    private fun filterTokensForScope(
+        tokens: List<IdentifierToken>,
+        clickedDef: SymbolDef?
+    ): List<IdentifierToken> {
+        if (clickedDef == null || clickedDef.kind != SymbolKind.VARIABLE) return tokens
+        val parentKey = clickedDef.parentKey
+        val container = clickedDef.container
+        if (parentKey == null && container == null) return tokens
+        val parentMatches = if (parentKey == null) emptyList() else tokens.filter { it.parentKey == parentKey }
+        val containerMatches = if (container == null) emptyList() else tokens.filter { it.container == container }
+        if (parentMatches.isEmpty() && containerMatches.isEmpty()) return emptyList()
+        return (parentMatches + containerMatches).distinct()
     }
 
     companion object {
