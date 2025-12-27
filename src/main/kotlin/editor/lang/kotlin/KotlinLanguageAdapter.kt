@@ -43,13 +43,13 @@ class KotlinLanguageAdapter : LanguageAdapter {
                     return ClassifiedNode(SymbolKind.TYPE, SymbolType.DECLARATION, opensScope = false)
                 }
                 "function_declaration" -> {
-                    val kind = if (isMember(context)) SymbolKind.METHOD else SymbolKind.FUNCTION
+                    val kind = if (isMemberFunction(context)) SymbolKind.METHOD else SymbolKind.FUNCTION
                     return ClassifiedNode(kind, SymbolType.DECLARATION, opensScope = true)
                 }
                 "property_declaration" -> {
                     val kind = when {
                         isConst(parent) -> SymbolKind.CONSTANT
-                        isMember(context) -> SymbolKind.FIELD
+                        isMemberDeclaration(context) -> SymbolKind.FIELD
                         else -> SymbolKind.VARIABLE
                     }
                     return ClassifiedNode(kind, SymbolType.DECLARATION, opensScope = false)
@@ -113,7 +113,7 @@ class KotlinLanguageAdapter : LanguageAdapter {
                     val propertyOwner = context.ancestors.firstOrNull { it.type == "property_declaration" }
                     val kind = when {
                         isConst(propertyOwner) -> SymbolKind.CONSTANT
-                        isMember(context) -> SymbolKind.FIELD
+                        isMemberDeclaration(context) -> SymbolKind.FIELD
                         else -> SymbolKind.VARIABLE
                     }
                     return ClassifiedNode(kind, SymbolType.DECLARATION, opensScope = false)
@@ -143,8 +143,13 @@ class KotlinLanguageAdapter : LanguageAdapter {
     private fun isIdentifierNode(node: TsNode): Boolean =
         node.type in setOf("simple_identifier", "identifier", "type_identifier")
 
-    private fun isMember(context: NodeContext): Boolean =
+    private fun isMemberFunction(context: NodeContext): Boolean =
         context.ancestors.any { it.type in memberContainers }
+
+    private fun isMemberDeclaration(context: NodeContext): Boolean {
+        if (context.ancestors.none { it.type in memberContainers }) return false
+        return context.ancestors.none { it.type in functionContainers }
+    }
 
     private fun isConst(parent: TsNode?): Boolean {
         parent ?: return false
@@ -173,6 +178,11 @@ class KotlinLanguageAdapter : LanguageAdapter {
             "interface_declaration",
             "enum_class_declaration",
             "enum_declaration"
+        )
+        private val functionContainers = setOf(
+            "function_declaration",
+            "lambda_literal",
+            "anonymous_function"
         )
         private val typeContexts = setOf(
             "type_identifier",
