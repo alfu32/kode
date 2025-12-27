@@ -87,7 +87,7 @@ class KotlinLanguageAdapter : LanguageAdapter {
             }
             "function_declaration" -> {
                 if (node.type == "simple_identifier") {
-                    val kind = if (isMember(context)) SymbolKind.METHOD else SymbolKind.FUNCTION
+                    val kind = if (isMemberFunction(context)) SymbolKind.METHOD else SymbolKind.FUNCTION
                     return ClassifiedNode(kind, SymbolType.DECLARATION, opensScope = true)
                 }
             }
