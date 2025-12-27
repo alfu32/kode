@@ -195,6 +195,6 @@ class KotlinIdentifierExtractor(
         adapter = adapter
     )
 
-    fun extract(text: String, fileName: String): List<editor.lang.IdentifierOccurrence> =
-        pipeline.extract(text, fileName)
+    fun extract(text: String, fileName: String, language: String? = "kotlin"): List<editor.lang.IdentifierOccurrence> =
+        pipeline.extract(text, fileName, language)
 }

@@ -82,10 +82,10 @@ class TreeSitterIdentifierPipeline(
     private val parser: TreeSitterParser,
     private val adapter: LanguageAdapter
 ) {
-    fun extract(text: String, fileName: String): List<IdentifierOccurrence> {
+    fun extract(text: String, fileName: String, language: String?): List<IdentifierOccurrence> {
         val root = parser.parse(text) ?: return emptyList()
         val linear = TreeSitterLinearizer.linearize(root)
-        return IdentifierCollector().collect(linear, adapter, fileName)
+        return IdentifierCollector().collect(linear, adapter, fileName, language)
     }
 }
 

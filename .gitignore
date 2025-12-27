@@ -50,6 +50,7 @@ bin/
 .kode.json
 .kode.log.json
 .kode/db
+.kode.old
 
 hs_err_pid*.log
 

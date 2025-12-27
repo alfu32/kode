@@ -30,6 +30,9 @@ IdentifierOccurrence {
     identifier: String
     kind: SymbolKind
     type: SymbolType
+    language: String?
+    parentIdentifier: String?
+    parentKey: String?
     fileName: String
     lineNumber: Int
     charPosition: Int
@@ -216,5 +219,4 @@ Next logical steps (when you want them):
 * identifier canonicalization rules
 * import / using resolution strategy
 * query patterns over the flat list
-
 

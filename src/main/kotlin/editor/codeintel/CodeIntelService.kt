@@ -2,6 +2,8 @@ package editor.codeintel
 
 import editor.grammars.KeywordSyntaxProvider
 import editor.grammars.Token
+import editor.lang.IdentifierOccurrence
+import editor.lang.kotlin.KotlinIdentifierExtractor
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.treesitter.TSLanguage
@@ -49,6 +51,7 @@ data class SymbolDef(
     val filePath: String,
     val range: IntRange,
     val container: String? = null,
+    val parentKey: String? = null,
     val line: Int? = null,
     val startColumn: Int? = null,
     val language: String? = null,
@@ -68,6 +71,7 @@ data class IdentifierToken(
     val name: String,
     val filePath: String? = null,
     val container: String? = null,
+    val parentKey: String? = null,
     val tsLanguage: String? = null,
     val tsParent: String? = null,
     val tsKind: String? = null,
@@ -86,6 +90,7 @@ data class LocalSymbol(
     val endColumn: Int,
     val filePath: String,
     val container: String? = null,
+    val parentKey: String? = null,
     val tsLanguage: String? = null,
     val tsParent: String? = null,
     val tsKind: String? = null,
@@ -110,7 +115,9 @@ interface DefinitionExtractor {
 }
 
 class CodeIntelService(
-    private val extractor: DefinitionExtractor = TreeSitterDefinitionExtractor(RegexDefinitionExtractor()),
+    private val extractor: DefinitionExtractor = OccurrenceDefinitionExtractor(
+        TreeSitterDefinitionExtractor(RegexDefinitionExtractor())
+    ),
     private val debounceMs: Long = 200L,
     private val store: DbCodeIntelStore? = null
 ) : EditorIntelligenceService {
@@ -434,6 +441,7 @@ class CodeIntelService(
                 filePath = path,
                 range = it.startOffset until it.endOffset,
                 container = it.container,
+                parentKey = it.parentKey,
                 line = it.line,
                 startColumn = it.startColumn,
                 language = language,
@@ -559,6 +567,116 @@ private class CompositeDefinitionExtractor(
         return runCatching { primary.extract(path, text, language) }.getOrNull()
             ?: fallback.extract(path, text, language)
     }
+}
+
+private class OccurrenceDefinitionExtractor(
+    private val fallback: DefinitionExtractor
+) : DefinitionExtractor {
+    private val kotlinExtractor = KotlinIdentifierExtractor()
+
+    override fun extract(path: String, text: String, language: String?): ExtractedSymbols {
+        val langKey = language?.lowercase(Locale.ROOT) ?: return fallback.extract(path, text, language)
+        if (langKey != "kotlin" && langKey != "kt") return fallback.extract(path, text, language)
+        val occurrences = kotlinExtractor.extract(text, path, langKey)
+        if (occurrences.isEmpty()) return fallback.extract(path, text, language)
+        return convertOccurrences(occurrences, path, text, langKey)
+    }
+
+    private fun convertOccurrences(
+        occurrences: List<IdentifierOccurrence>,
+        path: String,
+        text: String,
+        language: String
+    ): ExtractedSymbols {
+        val lines = text.split("\n")
+        val offsets = lineStartOffsets(lines)
+        val symbols = mutableListOf<LocalSymbol>()
+        val identifiers = mutableMapOf<Int, MutableList<IdentifierToken>>()
+
+        occurrences.forEach { occ ->
+            val line = occ.lineNumber
+            val startCol = occ.charPosition
+            if (line < 0 || line >= lines.size) return@forEach
+            val localName = occ.identifier.substringAfterLast('.')
+            val name = if (occ.kind == editor.lang.SymbolKind.PACKAGE) occ.identifier else localName
+            val tokenLength = if (occ.kind == editor.lang.SymbolKind.PACKAGE) occ.identifier.length else localName.length
+            if (tokenLength <= 0) return@forEach
+            val endCol = (startCol + tokenLength).coerceAtMost(lines[line].length)
+            if (endCol <= startCol) return@forEach
+            val startOffset = offsets[line] + startCol
+            val endOffset = startOffset + tokenLength
+            val kind = mapKind(occ.kind)
+            val container = occ.parentIdentifier
+            val parentKey = occ.parentKey
+
+            if (occ.type == editor.lang.SymbolType.DECLARATION) {
+                symbols.add(
+                    LocalSymbol(
+                        name = name,
+                        kind = kind,
+                        startOffset = startOffset,
+                        endOffset = endOffset,
+                        line = line,
+                        startColumn = startCol,
+                        endColumn = endCol,
+                        filePath = path,
+                        container = container,
+                        parentKey = parentKey,
+                        tsLanguage = language,
+                        tsParent = container,
+                        tsKind = occ.kind.name.lowercase(Locale.ROOT),
+                        tsIsNamed = true,
+                        tsFieldNames = null,
+                        tsHierarchyKind = null
+                    )
+                )
+            }
+
+            identifiers.getOrPut(line) { mutableListOf() }.add(
+                IdentifierToken(
+                    line = line,
+                    start = startCol,
+                    end = endCol,
+                    declaration = occ.type == editor.lang.SymbolType.DECLARATION,
+                    name = name,
+                    filePath = path,
+                    container = container,
+                    parentKey = parentKey,
+                    tsLanguage = language,
+                    tsParent = container,
+                    tsKind = occ.kind.name.lowercase(Locale.ROOT),
+                    tsIsNamed = true,
+                    tsFieldNames = null,
+                    tsHierarchyKind = null
+                )
+            )
+        }
+
+        return ExtractedSymbols(symbols, identifiers.mapValues { it.value.toList() })
+    }
+
+    private fun lineStartOffsets(lines: List<String>): IntArray {
+        val offsets = IntArray(lines.size)
+        var running = 0
+        lines.forEachIndexed { idx, line ->
+            offsets[idx] = running
+            running += line.length + 1
+        }
+        return offsets
+    }
+
+    private fun mapKind(kind: editor.lang.SymbolKind): SymbolKind =
+        when (kind) {
+            editor.lang.SymbolKind.PACKAGE -> SymbolKind.PACKAGE
+            editor.lang.SymbolKind.CLASS -> SymbolKind.CLASS
+            editor.lang.SymbolKind.TYPE -> SymbolKind.CLASS
+            editor.lang.SymbolKind.ANONYMOUS_OBJECT -> SymbolKind.OBJECT
+            editor.lang.SymbolKind.FUNCTION -> SymbolKind.FUNCTION
+            editor.lang.SymbolKind.METHOD -> SymbolKind.METHOD
+            editor.lang.SymbolKind.FIELD -> SymbolKind.FIELD
+            editor.lang.SymbolKind.CONSTANT -> SymbolKind.FIELD
+            editor.lang.SymbolKind.VARIABLE -> SymbolKind.VARIABLE
+        }
 }
 
 private class TreeSitterDefinitionExtractor(

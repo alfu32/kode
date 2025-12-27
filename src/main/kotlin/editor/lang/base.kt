@@ -119,6 +119,9 @@ data class IdentifierOccurrence(
     val identifier: String,   // fully-qualified, canonical
     val kind: SymbolKind,
     val type: SymbolType,
+    val language: String?,
+    val parentIdentifier: String?,
+    val parentKey: String?,
 
     val fileName: String,
     val lineNumber: Int,      // 0-based
@@ -134,10 +137,11 @@ class IdentifierCollector {
     fun collect(
         linearNodes: List<LinearNode>,
         adapter: LanguageAdapter,
-        fileName: String
+        fileName: String,
+        language: String?
     ): List<IdentifierOccurrence> {
 
-        data class ScopeEntry(val name: String, val depth: Int)
+        data class ScopeEntry(val name: String, val depth: Int, val key: String)
 
         val scopeStack = ArrayDeque<ScopeEntry>()
         val result = mutableListOf<IdentifierOccurrence>()
@@ -154,16 +158,21 @@ class IdentifierCollector {
             val localName = adapter.extractIdentifier(ln.node)
                 ?: continue
 
+            val parentIdentifier = scopeStack.joinToString(".") { it.name }.ifBlank { null }
+            val parentKey = scopeStack.lastOrNull()?.key
             val fqName =
-                if (scopeStack.isEmpty())
+                if (parentIdentifier == null)
                     localName
                 else
-                    scopeStack.joinToString(".") { it.name } + "." + localName
+                    parentIdentifier + "." + localName
 
             result += IdentifierOccurrence(
                 identifier = fqName,
                 kind = classification.kind,
                 type = classification.type,
+                language = language,
+                parentIdentifier = parentIdentifier,
+                parentKey = parentKey,
                 fileName = fileName,
                 lineNumber = ln.node.startPoint.row,
                 charPosition = ln.node.startPoint.column
@@ -173,10 +182,25 @@ class IdentifierCollector {
                 classification.opensScope
             ) {
                 val scopeDepth = if (classification.kind == SymbolKind.PACKAGE) 0 else (ln.depth - 1).coerceAtLeast(0)
-                scopeStack.addLast(ScopeEntry(localName, scopeDepth))
+                val scopeKey = makeKey(
+                    fileName,
+                    ln.node.startPoint.row,
+                    ln.node.startPoint.column,
+                    classification.kind,
+                    fqName
+                )
+                scopeStack.addLast(ScopeEntry(localName, scopeDepth, scopeKey))
             }
         }
 
         return result
     }
+
+    private fun makeKey(
+        fileName: String,
+        lineNumber: Int,
+        charPosition: Int,
+        kind: SymbolKind,
+        identifier: String
+    ): String = listOf(fileName, lineNumber, charPosition, kind.name, identifier).joinToString("$")
 }
