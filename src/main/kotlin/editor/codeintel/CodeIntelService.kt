@@ -234,26 +234,12 @@ class CodeIntelService(
             }
         }
         val tokens = synchronized(lock) { usagesIndex[request.symbol]?.toList().orEmpty() }
-        val filteredTokens = filterTokensForScope(tokens, clickedDef)
-        filteredTokens.forEach { tok ->
-            val file = tok.filePath
-            if (file != null) {
-                results.add(
-                    NavigationTarget(
-                        filePath = file,
-                        range = TextRange(
-                            start = TextPosition(tok.line, tok.start),
-                            end = TextPosition(tok.line, tok.end)
-                        ),
-                        name = tok.name,
-                        tsLanguage = tok.tsLanguage,
-                        tsParent = tok.tsParent,
-                        tsKind = tok.tsKind,
-                        tsIsNamed = tok.tsIsNamed,
-                        tsFieldNames = tok.tsFieldNames
-                    )
-                )
-            }
+        if (clickedDef?.kind == SymbolKind.VARIABLE) {
+            val buckets = bucketTokensForScope(tokens, clickedDef)
+            appendUsageTokens(results, buckets.exact, "exact matches")
+            appendUsageTokens(results, buckets.search, "search matches")
+        } else {
+            appendUsageTokens(results, tokens, null)
         }
         return results
     }
@@ -550,23 +536,72 @@ class CodeIntelService(
         return null
     }
 
-    private fun filterTokensForScope(
+    private fun bucketTokensForScope(
         tokens: List<IdentifierToken>,
         clickedDef: SymbolDef?
-    ): List<IdentifierToken> {
-        if (clickedDef == null || clickedDef.kind != SymbolKind.VARIABLE) return tokens
+    ): UsageBuckets {
+        if (clickedDef == null || clickedDef.kind != SymbolKind.VARIABLE) {
+            return UsageBuckets(tokens, emptyList())
+        }
         val parentKey = clickedDef.parentKey
         val container = clickedDef.container
-        if (parentKey == null && container == null) return tokens
+        if (parentKey == null && container == null) return UsageBuckets(tokens, emptyList())
         val parentMatches = if (parentKey == null) emptyList() else tokens.filter { it.parentKey == parentKey }
-        val containerMatches = if (container == null) {
-            emptyList()
+        val containerMatches = if (container == null) emptyList() else tokens.filter { it.container == container }
+        if (parentMatches.isEmpty() && containerMatches.isEmpty()) return UsageBuckets(emptyList(), emptyList())
+        val searchMatches = if (parentKey == null) {
+            containerMatches.distinct()
         } else {
-            tokens.filter { it.container == container && it.parentKey != parentKey }
+            (parentMatches + containerMatches).distinct().filter { it.parentKey != parentKey }
         }
-        if (parentMatches.isEmpty() && containerMatches.isEmpty()) return emptyList()
-        return parentMatches + containerMatches
+        return UsageBuckets(parentMatches, searchMatches)
     }
+
+    private fun appendUsageTokens(
+        results: MutableList<NavigationTarget>,
+        tokens: List<IdentifierToken>,
+        label: String?
+    ) {
+        if (tokens.isEmpty()) return
+        if (!label.isNullOrBlank()) {
+            results.add(separatorTarget(label))
+        }
+        tokens.forEach { tok ->
+            val file = tok.filePath
+            if (file != null) {
+                results.add(
+                    NavigationTarget(
+                        filePath = file,
+                        range = TextRange(
+                            start = TextPosition(tok.line, tok.start),
+                            end = TextPosition(tok.line, tok.end)
+                        ),
+                        name = tok.name,
+                        tsLanguage = tok.tsLanguage,
+                        tsParent = tok.tsParent,
+                        tsKind = tok.tsKind,
+                        tsIsNamed = tok.tsIsNamed,
+                        tsFieldNames = tok.tsFieldNames
+                    )
+                )
+            }
+        }
+    }
+
+    private fun separatorTarget(label: String): NavigationTarget =
+        NavigationTarget(
+            filePath = "",
+            range = TextRange(
+                start = TextPosition(0, 0),
+                end = TextPosition(0, 0)
+            ),
+            name = label
+        )
+
+    private data class UsageBuckets(
+        val exact: List<IdentifierToken>,
+        val search: List<IdentifierToken>
+    )
 
     companion object {
         private const val DECL_SCOPE = "codeintel.declaration"

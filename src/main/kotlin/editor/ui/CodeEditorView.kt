@@ -614,7 +614,9 @@ class CodeEditorView(
             val popup = usagePopup
             if (popup != null && idx in popup.entries.indices) {
                 val entry = popup.entries[idx]
-                navigationHandler?.invoke(entry.file, Position(entry.line, entry.column))
+                if (entry.file.isNotBlank()) {
+                    navigationHandler?.invoke(entry.file, Position(entry.line, entry.column))
+                }
                 usagePopup = null
                 renderedPopup = null
             }
@@ -648,13 +650,17 @@ class CodeEditorView(
                 )
             ).orEmpty()
             val usageEntries = refs.map {
-                val label = buildUsageLabel(
-                    filePath = it.filePath,
-                    line = it.range.start.line,
-                    column = it.range.start.column,
-                    identifier = name
-                )
-                UsageEntry(it.filePath, it.range.start.line, it.range.start.column, label)
+                if (it.filePath.isBlank()) {
+                    UsageEntry("", -1, -1, it.name ?: "")
+                } else {
+                    val label = buildUsageLabel(
+                        filePath = it.filePath,
+                        line = it.range.start.line,
+                        column = it.range.start.column,
+                        identifier = name
+                    )
+                    UsageEntry(it.filePath, it.range.start.line, it.range.start.column, label)
+                }
             }
             if (usageEntries.isNotEmpty()) {
                 usagePopup = UsagePopup(Position(line, col), usageEntries)
@@ -732,7 +738,9 @@ class CodeEditorView(
         val idx = ey - rp.y - 1
         if (idx !in popup.entries.indices) return true
         val entry = popup.entries[idx]
-        navigationHandler?.invoke(entry.file, Position(entry.line, entry.column))
+        if (entry.file.isNotBlank()) {
+            navigationHandler?.invoke(entry.file, Position(entry.line, entry.column))
+        }
         usagePopup = null
         renderedPopup = null
         return true
@@ -983,7 +991,9 @@ class CodeEditorView(
                     val popup = usagePopup
                     if (popup != null && hoveredUsageIndex in popup.entries.indices) {
                         val entry = popup.entries[hoveredUsageIndex]
-                        navigationHandler?.invoke(entry.file, Position(entry.line, entry.column))
+                        if (entry.file.isNotBlank()) {
+                            navigationHandler?.invoke(entry.file, Position(entry.line, entry.column))
+                        }
                         usagePopup = null
                         renderedPopup = null
                         return true
