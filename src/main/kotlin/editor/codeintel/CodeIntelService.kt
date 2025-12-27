@@ -559,9 +559,13 @@ class CodeIntelService(
         val container = clickedDef.container
         if (parentKey == null && container == null) return tokens
         val parentMatches = if (parentKey == null) emptyList() else tokens.filter { it.parentKey == parentKey }
-        val containerMatches = if (container == null) emptyList() else tokens.filter { it.container == container }
+        val containerMatches = if (container == null) {
+            emptyList()
+        } else {
+            tokens.filter { it.container == container && it.parentKey != parentKey }
+        }
         if (parentMatches.isEmpty() && containerMatches.isEmpty()) return emptyList()
-        return (parentMatches + containerMatches).distinct()
+        return parentMatches + containerMatches
     }
 
     companion object {
