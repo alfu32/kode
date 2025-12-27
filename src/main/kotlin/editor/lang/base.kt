@@ -137,10 +137,15 @@ class IdentifierCollector {
         fileName: String
     ): List<IdentifierOccurrence> {
 
-        val scopeStack = ArrayDeque<String>()
+        data class ScopeEntry(val name: String, val depth: Int)
+
+        val scopeStack = ArrayDeque<ScopeEntry>()
         val result = mutableListOf<IdentifierOccurrence>()
 
         for (ln in linearNodes) {
+            while (scopeStack.isNotEmpty() && ln.depth <= scopeStack.last().depth) {
+                scopeStack.removeLast()
+            }
             val classification = adapter.classify(
                 ln.node,
                 NodeContext.from(ln)
@@ -153,7 +158,7 @@ class IdentifierCollector {
                 if (scopeStack.isEmpty())
                     localName
                 else
-                    scopeStack.joinToString(".") + "." + localName
+                    scopeStack.joinToString(".") { it.name } + "." + localName
 
             result += IdentifierOccurrence(
                 identifier = fqName,
@@ -167,7 +172,8 @@ class IdentifierCollector {
             if (classification.type == SymbolType.DECLARATION &&
                 classification.opensScope
             ) {
-                scopeStack.addLast(localName)
+                val scopeDepth = if (classification.kind == SymbolKind.PACKAGE) 0 else (ln.depth - 1).coerceAtLeast(0)
+                scopeStack.addLast(ScopeEntry(localName, scopeDepth))
             }
         }
 
