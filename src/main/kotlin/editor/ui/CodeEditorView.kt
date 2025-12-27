@@ -26,6 +26,8 @@ import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Paths
 import editor.ui.SearchReplaceBar.SearchCommand
 
 class CodeEditorView(
@@ -646,7 +648,12 @@ class CodeEditorView(
                 )
             ).orEmpty()
             val usageEntries = refs.map {
-                val label = "${java.io.File(it.filePath).name}:${it.range.start.line + 1}:${it.range.start.column + 1}"
+                val label = buildUsageLabel(
+                    filePath = it.filePath,
+                    line = it.range.start.line,
+                    column = it.range.start.column,
+                    identifier = name
+                )
                 UsageEntry(it.filePath, it.range.start.line, it.range.start.column, label)
             }
             if (usageEntries.isNotEmpty()) {
@@ -1632,6 +1639,48 @@ class CodeEditorView(
             }
         }
         renderedInfo = RenderedPopup(x, finalY, width, height)
+    }
+
+    private fun buildUsageLabel(filePath: String, line: Int, column: Int, identifier: String): String {
+        val relPath = relativePath(filePath)
+        val lineText = readLineText(filePath, line)
+        val snippet = snippetAround(lineText, column, identifier.length)
+        return "$relPath:${line + 1}:${column + 1} | $snippet"
+    }
+
+    private fun relativePath(filePath: String): String {
+        val root = Paths.get("").toAbsolutePath().normalize()
+        val abs = Paths.get(filePath).toAbsolutePath().normalize()
+        return if (abs.startsWith(root)) {
+            root.relativize(abs).toString()
+        } else {
+            filePath
+        }
+    }
+
+    private fun readLineText(filePath: String, line: Int): String {
+        return runCatching {
+            Files.newBufferedReader(Paths.get(filePath)).use { reader ->
+                var current = 0
+                var text: String? = reader.readLine()
+                while (text != null) {
+                    if (current == line) return text
+                    current++
+                    text = reader.readLine()
+                }
+                ""
+            }
+        }.getOrDefault("")
+    }
+
+    private fun snippetAround(lineText: String, column: Int, length: Int): String {
+        if (lineText.isBlank()) return ""
+        val safeLength = length.coerceAtLeast(1)
+        val start = (column - 30).coerceAtLeast(0)
+        val end = (column + safeLength + 30).coerceAtMost(lineText.length)
+        val prefix = if (start > 0) "..." else ""
+        val suffix = if (end < lineText.length) "..." else ""
+        return prefix + lineText.substring(start, end).trim() + suffix
     }
 
     private data class WrappedLine(val lineIndex: Int, val startColumn: Int, val endColumn: Int)

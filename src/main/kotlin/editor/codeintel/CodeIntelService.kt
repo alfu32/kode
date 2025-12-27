@@ -158,7 +158,6 @@ class CodeIntelService(
 
     override fun definitions(request: DefinitionRequest): List<NavigationTarget> {
         if (request.symbol.isBlank()) return emptyList()
-        val lower = request.symbol.lowercase(Locale.ROOT)
         val doc = synchronized(lock) { documents[request.filePath] }
         val defAtCursor = definitionAt(doc, request.position)
         if (defAtCursor != null) {
@@ -182,7 +181,7 @@ class CodeIntelService(
                 )
             )
         }
-        val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
+        val defs = synchronized(lock) { workspaceIndex[request.symbol]?.toList().orEmpty() }
             .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
 
         val (_, _) = identifierContext(doc, request.position)
@@ -210,11 +209,10 @@ class CodeIntelService(
 
     override fun references(request: ReferenceRequest): List<NavigationTarget> {
         if (request.symbol.isBlank()) return emptyList()
-        val lower = request.symbol.lowercase(Locale.ROOT)
         val results = mutableListOf<NavigationTarget>()
         val doc = synchronized(lock) { documents[request.filePath] }
         val clickedDef = definitionAt(doc, request.position)
-        val defs = synchronized(lock) { workspaceIndex[lower]?.toList().orEmpty() }
+        val defs = synchronized(lock) { workspaceIndex[request.symbol]?.toList().orEmpty() }
             .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
         if (clickedDef == null) {
             defs.forEach { def ->
@@ -235,7 +233,7 @@ class CodeIntelService(
                 }
             }
         }
-        val tokens = synchronized(lock) { usagesIndex[lower]?.toList().orEmpty() }
+        val tokens = synchronized(lock) { usagesIndex[request.symbol]?.toList().orEmpty() }
         tokens.forEach { tok ->
             val file = tok.filePath
             if (file != null) {
@@ -264,13 +262,12 @@ class CodeIntelService(
         val items = linkedSetOf<CompletionItem>()
 
         synchronized(lock) {
-            val source = if (trimmed.isEmpty()) {
-                workspaceIndex.values.flatten()
-            } else {
-                val lower = trimmed.lowercase(Locale.ROOT)
-                workspaceIndex.entries
-                    .filter { (name, _) -> name.startsWith(lower) }
-                    .flatMap { it.value }
+            val source = workspaceIndex.values.flatten().let { defs ->
+                if (trimmed.isEmpty()) defs
+                else {
+                    val lower = trimmed.lowercase(Locale.ROOT)
+                    defs.filter { it.name.lowercase(Locale.ROOT).startsWith(lower) }
+                }
             }
             source
                 .filter { request.language == null || it.language == null || it.language.equals(request.language, ignoreCase = true) }
@@ -342,7 +339,7 @@ class CodeIntelService(
         synchronized(lock) {
             workspaceIndex.forEach { (name, defs) ->
                 if (matches.size >= limit) return@forEach
-                if (name.contains(lower)) {
+                if (name.lowercase(Locale.ROOT).contains(lower)) {
                     matches.addAll(defs.mapNotNull { it.toSymbol() })
                 }
             }
@@ -402,13 +399,13 @@ class CodeIntelService(
             loaded.defs.groupBy { it.filePath }.forEach { (path, defs) ->
                 defsByPath[path] = defs
                 defs.forEach { def ->
-                    val key = def.name.lowercase(Locale.ROOT)
+                    val key = def.name
                     val bucket = workspaceIndex.getOrPut(key) { mutableListOf() }
                     bucket.add(def)
                 }
             }
             loaded.usages.forEach { tok ->
-                val key = tok.name.lowercase(Locale.ROOT)
+                val key = tok.name
                 val bucket = usagesIndex.getOrPut(key) { mutableListOf() }
                 bucket.add(tok)
             }
@@ -452,9 +449,9 @@ class CodeIntelService(
                 tsFieldNames = it.tsFieldNames
             )
         }
-        val allowedNames = (knownNames + defs.map { it.name.lowercase(Locale.ROOT) }).toSet()
+        val allowedNames = (knownNames + defs.map { it.name }).toSet()
         val filteredIdents = extracted.identifiersByLine.mapValues { (_, list) ->
-            list.filter { it.name.lowercase(Locale.ROOT) in allowedNames }.map { tok ->
+            list.filter { it.name in allowedNames }.map { tok ->
                 tok.copy(
                     tsLanguage = tok.tsLanguage ?: language,
                     tsParent = tok.tsParent ?: tok.container,
@@ -482,14 +479,14 @@ class CodeIntelService(
         val previous = defsByPath[path].orEmpty()
         if (previous.isNotEmpty()) {
             previous.forEach { def ->
-                val key = def.name.lowercase(Locale.ROOT)
+                val key = def.name
                 workspaceIndex[key]?.removeIf { it.filePath == path && it.range == def.range }
                 if (workspaceIndex[key].isNullOrEmpty()) workspaceIndex.remove(key)
             }
         }
         defsByPath[path] = newDefs
         newDefs.forEach { def ->
-            val key = def.name.lowercase(Locale.ROOT)
+            val key = def.name
             val bucket = workspaceIndex.getOrPut(key) { mutableListOf() }
             bucket.add(def)
         }
@@ -501,7 +498,7 @@ class CodeIntelService(
             list.removeIf { it.filePath == path }
         }
         identifiersByLine.values.flatten().filter { !it.declaration }.forEach { tok ->
-            val key = tok.name.lowercase(Locale.ROOT)
+            val key = tok.name
             val bucket = usagesIndex.getOrPut(key) { mutableListOf() }
             bucket.add(tok)
         }
@@ -543,11 +540,10 @@ class CodeIntelService(
     }
 
     private fun resolveKind(name: String, filePath: String?, doc: DocumentIndex): SymbolKind? {
-        val lower = name.lowercase(Locale.ROOT)
-        doc.definitions.firstOrNull { it.name.equals(name, ignoreCase = true) }?.let { return it.kind }
+        doc.definitions.firstOrNull { it.name == name }?.let { return it.kind }
         synchronized(lock) {
-            workspaceIndex[lower]?.firstOrNull { def ->
-                filePath == null || def.filePath == filePath || def.name.equals(name, ignoreCase = true)
+            workspaceIndex[name]?.firstOrNull { def ->
+                filePath == null || def.filePath == filePath || def.name == name
             }?.let { return it.kind }
         }
         return null
