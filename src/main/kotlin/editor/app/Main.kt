@@ -277,12 +277,8 @@ private fun printHelp() {
     )
 }
 
-private fun runUpdate() {
-    val url = URL("https://github.com/alfu32/kode/releases/latest/download/kode.jar")
-    val target = resolveSelfJarPath()
-        ?: kodeHome()?.resolve("kode.jar")
-        ?: Paths.get("kode.jar").toAbsolutePath().normalize()
-    runCatching { Files.createDirectories(target.parent) }
+private fun downloadUpdate(target:Path,filename:String) {
+    val url = URL("https://github.com/alfu32/kode/releases/latest/download/$filename")
     val temp = target.resolveSibling("${target.fileName}.download")
     runCatching {
         url.openStream().use { input ->
@@ -293,11 +289,22 @@ private fun runUpdate() {
         }.getOrElse {
             Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING)
         }
-        println("Updated: $target")
+        println("Updated: $target/$filename")
     }.onFailure { ex ->
         runCatching { Files.deleteIfExists(temp) }
-        System.err.println("Update failed: ${ex.message}")
+        System.err.println("Update failed:$filename ${ex.message}")
     }
+}
+
+private fun runUpdate() {
+    val target = resolveSelfJarPath()
+        ?: kodeHome()?.resolve("kode.jar")
+        ?: Paths.get("kode.jar").toAbsolutePath().normalize()
+
+    runCatching { Files.createDirectories(target.parent) }
+    downloadUpdate(target.parent,"kode.jar")
+    downloadUpdate(target.parent,"h2.jar")
+    downloadUpdate(target.parent,"keyword-patterns.txt")
 }
 
 private fun runInstall() {
@@ -1784,3 +1791,4 @@ private fun drawStatusLine(
         drawText(1, row, padded.take(textWidth))
     }
 }
+
