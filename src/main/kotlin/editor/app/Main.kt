@@ -27,6 +27,8 @@ import editor.ui.AboutView
 import editor.ui.WorkspacePickerDialog
 import editor.ui.SettingsView
 import editor.ui.HelpView
+import editor.ui.ProjectSettingsView
+import editor.ui.SourceFolderPickerDialog
 import editor.db.DbServerManager
 import editor.db.DbStatus
 import editor.codeintel.DbCodeIntelStore
@@ -689,6 +691,7 @@ private class SplitPanelsApp(
     private var sessionManager = ProjectSessionManager(projectRoot)
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
     private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
+    private var sourceRoots: MutableList<String> = mutableListOf()
     private var lastPersistMs: Long = 0L
     private var pendingPersist: Boolean = false
     private val persistDebounceMs: Long = 3000L
@@ -769,11 +772,20 @@ private class SplitPanelsApp(
         dbManager,
         codeIntelIndexer
     ) { projectRoot }
+    private val projectSettingsView = ProjectSettingsView(
+        styleSheet,
+        projectRootProvider = { projectRoot },
+        sourceRootsProvider = { sourceRoots.toList() },
+        onRequestAdd = { showSourcePicker() },
+        onRemoveSource = { root -> removeSourceRoot(root) }
+    )
     private val helpView = HelpView(styleSheet)
     private var currentOpenPath: String = ""
     private var projectSearchVisible = false
     private var workspacePickerVisible = false
     private var workspacePicker: WorkspacePickerDialog? = null
+    private var sourcePickerVisible = false
+    private var sourcePicker: SourceFolderPickerDialog? = null
     private var activeDiff: GitDiff? = null
     init {
         dbManager.start(projectRoot)
@@ -787,6 +799,7 @@ private class SplitPanelsApp(
         savedEditors = loaded.openEditors.associateBy { sessionManager.toAbsolute(it.path) }
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
+        sourceRoots = loadSourceRoots(loaded.sourceRoots)
         restoreLastSession()
         if (runInitialScan) {
             if (hasPersistentIndex()) {
@@ -798,9 +811,10 @@ private class SplitPanelsApp(
     }
     private val leftTabs = TabView(
         styleSheet = styleSheet,
-        titles = listOf("Files", "Git", "About", "Settings", "Help"),
+        titles = listOf("Files", "Project", "Git", "About", "Settings", "Help"),
         tabComponents = listOf(
             filesTabView,
+            projectSettingsView,
             gitPanel,
             aboutView,
             settingsView,
@@ -859,6 +873,9 @@ private class SplitPanelsApp(
         if (workspacePickerVisible) {
             workspacePicker?.render(canvas)
         }
+        if (sourcePickerVisible) {
+            sourcePicker?.render(canvas)
+        }
 
         lastCols = cols
         leftRatio = splitterX.toDouble() / cols.toDouble().coerceAtLeast(1.0)
@@ -874,6 +891,9 @@ private class SplitPanelsApp(
             if (workspacePickerVisible) {
                 handled = (workspacePicker?.dispatch(event) ?: false) || handled
             }
+            if (sourcePickerVisible) {
+                handled = (sourcePicker?.dispatch(event) ?: false) || handled
+            }
             if (projectSearchVisible) {
                 handled = projectSearchDialog.dispatch(event) || handled
             }
@@ -887,6 +907,10 @@ private class SplitPanelsApp(
 
         if (workspacePickerVisible) {
             val handled = workspacePicker?.dispatch(event) ?: false
+            return handled
+        }
+        if (sourcePickerVisible) {
+            val handled = sourcePicker?.dispatch(event) ?: false
             return handled
         }
         if (event.kind == "key_down") {
@@ -1094,8 +1118,8 @@ private class SplitPanelsApp(
     }
 
     private fun handleLeftTabChanged(selectedIndex: Int) {
-        // Index 1 corresponds to Git tab in leftTabs.
-        if (selectedIndex != 1 && activeDiff != null) {
+        // Index 2 corresponds to Git tab in leftTabs.
+        if (selectedIndex != 2 && activeDiff != null) {
             clearDiffViewer()
         }
     }
@@ -1150,6 +1174,22 @@ private class SplitPanelsApp(
         workspacePickerVisible = true
     }
 
+    private fun showSourcePicker() {
+        sourcePicker = SourceFolderPickerDialog(
+            styleSheet,
+            projectRoot,
+            onConfirm = { selected ->
+                val msg = addSourceRoot(selected)
+                projectSettingsView.setMessage(msg)
+            },
+            onDismiss = {
+                sourcePickerVisible = false
+                sourcePicker = null
+            }
+        )
+        sourcePickerVisible = true
+    }
+
     private fun changeWorkspace(newRoot: Path) {
         val normalized = newRoot.toAbsolutePath().normalize()
         if (normalized == projectRoot) {
@@ -1179,6 +1219,7 @@ private class SplitPanelsApp(
         savedEditors = loaded.openEditors.associateBy { sessionManager.toAbsolute(it.path) }
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
+        sourceRoots = loadSourceRoots(loaded.sourceRoots)
         codeIntelIndexer.loadFromStore()
 
         codeEditor = CodeEditorView(
@@ -1200,6 +1241,79 @@ private class SplitPanelsApp(
         triggerFreshScan()
         persistSession(force = true)
     }
+
+    private fun loadSourceRoots(roots: List<String>): MutableList<String> {
+        val normalized = roots.mapNotNull { normalizeSourceRoot(it) }.distinct().toMutableList()
+        return if (normalized.isEmpty()) mutableListOf(".") else normalized
+    }
+
+    private fun addSourceRoot(path: Path): String {
+        val abs = path.toAbsolutePath().normalize()
+        if (!Files.isDirectory(abs)) {
+            return "Select a folder to add."
+        }
+        if (!abs.startsWith(projectRoot)) {
+            return "Source roots must be inside the project root."
+        }
+        val rel = projectRoot.relativize(abs).toString()
+        val normalized = normalizeSourceRoot(rel) ?: return "Invalid source folder."
+        if (sourceRoots.any { normalizeSourceRoot(it) == normalized }) {
+            return "Source root already added: ${formatSourceRoot(normalized)}"
+        }
+        sourceRoots.add(normalized)
+        val reindexed = applySourceRootsChanged()
+        return if (reindexed) {
+            "Added source root: ${formatSourceRoot(normalized)}"
+        } else {
+            "Added source root, but failed to clear index."
+        }
+    }
+
+    private fun removeSourceRoot(root: String): String? {
+        val normalized = normalizeSourceRoot(root) ?: return "Invalid source root."
+        val removed = sourceRoots.removeIf { normalizeSourceRoot(it) == normalized }
+        if (!removed) return "Source root not found."
+        val reindexed = applySourceRootsChanged()
+        return if (reindexed) {
+            "Removed source root: ${formatSourceRoot(normalized)}"
+        } else {
+            "Removed source root, but failed to clear index."
+        }
+    }
+
+    private fun applySourceRootsChanged(): Boolean {
+        val cleared = dbManager.clearIndex()
+        codeIntelIndexer.clear()
+        if (!cleared) {
+            persistSession(force = true)
+            return false
+        }
+        triggerFreshScan()
+        persistSession(force = true)
+        return true
+    }
+
+    private fun resolveSourceRoots(): List<Path> {
+        if (sourceRoots.isEmpty()) return emptyList()
+        return sourceRoots.mapNotNull { root ->
+            val normalized = normalizeSourceRoot(root) ?: return@mapNotNull null
+            if (normalized == ".") projectRoot else projectRoot.resolve(normalized).normalize()
+        }.distinct()
+    }
+
+    private fun normalizeSourceRoot(value: String?): String? {
+        val trimmed = value?.trim() ?: return null
+        if (trimmed.isEmpty()) return "."
+        val normalized = trimmed.removePrefix("./").trimEnd(File.separatorChar)
+        return if (normalized.isEmpty()) "." else normalized
+    }
+
+    private fun formatSourceRoot(root: String): String =
+        when {
+            root.isBlank() || root == "." -> "(project root)"
+            root.startsWith("./") -> root.removePrefix("./")
+            else -> root
+        }
 
     private fun clearProjectDb(root: Path) {
         val dbDir = root.resolve(".kode/db")
@@ -1272,7 +1386,8 @@ private class SplitPanelsApp(
 
     private fun listFilesForIndex(): List<Path> {
         val ignorePatterns = gitService?.ignoredPatterns().orEmpty()
-        return ProjectFileScanner.listFilesForIndex(projectRoot, ignorePatterns)
+        val roots = resolveSourceRoots()
+        return ProjectFileScanner.listFilesForIndex(projectRoot, roots, ignorePatterns)
     }
 
     fun hasPersistentIndex(): Boolean {
@@ -1429,7 +1544,13 @@ private class SplitPanelsApp(
                 editor = entry.editor?.copy(path = sessionManager.toRelative(entry.editor.path))
             )
         }
-        sessionManager.save(ProjectSession(recentFiles = recentsForSave, openEditors = editorsForSave))
+        sessionManager.save(
+            ProjectSession(
+                recentFiles = recentsForSave,
+                openEditors = editorsForSave,
+                sourceRoots = sourceRoots.toList()
+            )
+        )
         lastPersistMs = System.currentTimeMillis()
         pendingPersist = false
     }

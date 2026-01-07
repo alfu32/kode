@@ -8,10 +8,20 @@ import java.util.ArrayDeque
 
 object ProjectFileScanner {
     fun listFilesForIndex(root: Path, ignoreGlobs: List<String>): List<Path> {
-        val baseMatcher = GitIgnoreMatcher.fromGlobs(ignoreGlobs)
-        val matcherStack = ArrayDeque<GitIgnoreMatcher>()
-        val files = mutableListOf<Path>()
-        Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
+        return listFilesForIndex(root, listOf(root), ignoreGlobs)
+    }
+
+    fun listFilesForIndex(root: Path, sourceRoots: List<Path>, ignoreGlobs: List<String>): List<Path> {
+        if (sourceRoots.isEmpty()) return emptyList()
+        val baseRules = ignoreGlobs + loadIgnoreFile(root)
+        val baseMatcher = GitIgnoreMatcher.fromGlobs(baseRules)
+        val files = LinkedHashSet<Path>()
+        sourceRoots.forEach { sourceRoot ->
+            if (!Files.exists(sourceRoot)) return@forEach
+            val normalizedRoot = sourceRoot.toAbsolutePath().normalize()
+            if (!normalizedRoot.startsWith(root.toAbsolutePath().normalize())) return@forEach
+            val matcherStack = ArrayDeque<GitIgnoreMatcher>()
+            Files.walkFileTree(normalizedRoot, object : SimpleFileVisitor<Path>() {
             override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
                 val parentMatcher = matcherStack.peek() ?: baseMatcher
                 val mergedMatcher = parentMatcher.withAdditionalRules(loadIgnoreFile(dir))
@@ -52,8 +62,9 @@ object ProjectFileScanner {
                 matcherStack.pop()
                 return FileVisitResult.CONTINUE
             }
-        })
-        return files
+            })
+        }
+        return files.toList()
     }
 
     private fun loadIgnoreFile(dir: Path): List<String> {
