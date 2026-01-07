@@ -277,9 +277,10 @@ private fun printHelp() {
     )
 }
 
-private fun downloadUpdate(target:Path,filename:String) {
+private fun downloadUpdate(parent:Path,filename:String) {
+    val target = parent.resolve(filename)
     val url = URL("https://github.com/alfu32/kode/releases/latest/download/$filename")
-    val temp = target.resolveSibling("${target.fileName}.download")
+    val temp = parent.resolve("$filename.download")
     runCatching {
         url.openStream().use { input ->
             Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING)
@@ -289,10 +290,10 @@ private fun downloadUpdate(target:Path,filename:String) {
         }.getOrElse {
             Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING)
         }
-        println("Updated: $target/$filename")
+        println("Updated: $parent/$filename")
     }.onFailure { ex ->
         runCatching { Files.deleteIfExists(temp) }
-        System.err.println("Update failed:$filename ${ex.message}")
+        System.err.println("Update failed:$parent / $filename ${ex.message}")
     }
 }
 
