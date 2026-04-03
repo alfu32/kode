@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (must already exist in git history, e.g. 1.2.3)"
+        required: true
+      draft:
+        description: "Create release as draft"
+        required: false
+        default: "true"
+      prerelease:
+        description: "Mark release as prerelease"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --force --tags
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Verify requested tag exists
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git rev-parse "refs/tags/$TAG" >/dev/null 2>&1 || {
+            echo "Tag '$TAG' does not exist in this repository."
+            exit 1
+          }
+
+      - name: Build release zip
+        run: ./gradlew releaseZip
+
+      - name: Verify expected artifact exists
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          test -f "kode-rel-$TAG.zip" || {
+            echo "Expected artifact kode-rel-$TAG.zip was not produced."
+            echo "Produced zip files:"
+            ls -la *.zip || true
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kode-release
+          path: kode-rel-${{ inputs.tag }}.zip
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: kode-release
+          path: artifacts
+
+      - name: Create or update GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          DRAFT: ${{ inputs.draft }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft="$DRAFT" --prerelease="$PRERELEASE"
+          else
+            gh release edit "$TAG" --draft="$DRAFT" --prerelease="$PRERELEASE"
+          fi
+
+          files=$(find artifacts -type f -name "*.zip")
+          if [ -z "$files" ]; then
+            echo "No release artifacts found."
+            exit 1
+          fi
+
+          gh release upload "$TAG" $files --clobber
