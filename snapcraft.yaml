@@ -1,0 +1,61 @@
+name: kode
+base: core24
+adopt-info: kode
+summary: TUI code editor
+description: |
+  Kode is a terminal-first code editor packaged from the repository's
+  Gradle distBundle task. The snap ships the unzipped distribution bundle
+  plus a bundled JRE 21.
+
+grade: devel
+confinement: devmode
+
+platforms:
+  amd64:
+  arm64:
+
+apps:
+  kode:
+    command: bin/kode
+    plugs:
+      - home
+      - removable-media
+      - network
+      - network-bind
+
+parts:
+  kode:
+    plugin: nil
+    source: .
+    build-packages:
+      - openjdk-21-jdk-headless
+    stage-packages:
+      - openjdk-21-jre-headless
+    override-build: |
+      set -eux
+
+      export GRADLE_USER_HOME="$CRAFT_PART_BUILD/.gradle"
+      chmod +x ./gradlew
+
+      ./gradlew --no-daemon distBundle
+
+      install -d "$CRAFT_PART_INSTALL/opt/kode"
+      cp -a dist/. "$CRAFT_PART_INSTALL/opt/kode/"
+
+      rm -f "$CRAFT_PART_INSTALL/opt/kode/kode" \
+            "$CRAFT_PART_INSTALL/opt/kode/kode.sh" \
+            "$CRAFT_PART_INSTALL/opt/kode/kode.bat" \
+            "$CRAFT_PART_INSTALL/opt/kode/kode.cmd" \
+            "$CRAFT_PART_INSTALL/opt/kode/kode.ps1"
+
+      install -d "$CRAFT_PART_INSTALL/bin"
+      cat > "$CRAFT_PART_INSTALL/bin/kode" <<'EOF'
+      #!/bin/sh
+      exec "$SNAP/usr/bin/java" \
+        -Dkode.home="$SNAP/opt/kode" \
+        -jar "$SNAP/opt/kode/kode.jar" \
+        "$@"
+      EOF
+      chmod 755 "$CRAFT_PART_INSTALL/bin/kode"
+
+      craftctl set version="$(git describe --tags --abbrev=0 2>/dev/null || echo 1.0-SNAPSHOT)"
