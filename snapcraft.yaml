@@ -85,4 +85,4 @@ parts:
       EOF
       chmod 755 "$CRAFT_PART_INSTALL/bin/kode"
 
-      craftctl set version="$(git describe --tags --abbrev=0 2>/dev/null || echo 1.0-SNAPSHOT)"
+      craftctl set version="$(git describe --tags --abbrev=0 2>/dev/null || echo 3.3.3)"
