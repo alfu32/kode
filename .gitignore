@@ -53,5 +53,4 @@ bin/
 .kode.old
 
 hs_err_pid*.log
-.snap
-
+*.snap
