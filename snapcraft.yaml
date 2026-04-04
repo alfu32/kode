@@ -16,7 +16,7 @@ issues:
   - https://github.com/alfu32/kode/issues
 icon: icon.svg
 
-grade: devel
+grade: stable
 confinement: devmode
 
 platforms:
