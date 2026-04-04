@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "org.github.alfu32.kte"
-version = "3.3.2"
+version = "3.3.4"
 
 val h2Version = "2.2.224"
 configurations.register("h2Dist")

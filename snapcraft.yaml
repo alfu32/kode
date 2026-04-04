@@ -18,7 +18,7 @@ issues:
 icon: icon.svg
 
 grade: stable
-confinement: devmode
+confinement: classic
 
 platforms:
   amd64:
@@ -94,4 +94,4 @@ parts:
       EOF
       chmod 755 "$CRAFT_PART_INSTALL/bin/kode"
 
-      craftctl set version="$(git describe --tags --abbrev=0 2>/dev/null || echo 3.3.3)"
+      craftctl set version="$(git describe --tags --abbrev=0 2>/dev/null || echo 3.3.4)"
