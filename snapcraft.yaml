@@ -1,11 +1,20 @@
 name: kode
+title: kode
 base: core24
 adopt-info: kode
+license: MIT
 summary: TUI code editor
 description: |
   Kode is a terminal-first code editor packaged from the repository's
   Gradle distBundle task. The snap ships the unzipped distribution bundle
   plus a bundled JRE 21.
+website:
+  - https://github.com/alfu32/kode
+source-code:
+  - https://github.com/alfu32/kode
+issues:
+  - https://github.com/alfu32/kode/issues
+icon: icon.svg
 
 grade: devel
 confinement: devmode
@@ -30,16 +39,34 @@ parts:
     build-packages:
       - openjdk-21-jdk-headless
     stage-packages:
-      - openjdk-21-jre-headless
+      - libharfbuzz0b
+      - libasound2t64
+    build-snaps:
+      - gradle/latest/stable
     override-build: |
       set -eux
 
+      export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
       export GRADLE_USER_HOME="$CRAFT_PART_BUILD/.gradle"
-      chmod +x ./gradlew
+      export PATH="$JAVA_HOME/bin:/snap/bin:$PATH"
 
-      ./gradlew --no-daemon distBundle
+      gradle --no-daemon distBundle
+
+      MODULES="$("$JAVA_HOME/bin/jdeps" \
+        --ignore-missing-deps \
+        --multi-release 21 \
+        --print-module-deps \
+        dist/kode.jar),jdk.crypto.ec"
 
       install -d "$CRAFT_PART_INSTALL/opt/kode"
+      "$JAVA_HOME/bin/jlink" \
+        --add-modules "$MODULES" \
+        --strip-debug \
+        --no-header-files \
+        --no-man-pages \
+        --compress=2 \
+        --output "$CRAFT_PART_INSTALL/opt/kode/runtime"
+
       cp -a dist/. "$CRAFT_PART_INSTALL/opt/kode/"
 
       rm -f "$CRAFT_PART_INSTALL/opt/kode/kode" \
@@ -51,7 +78,7 @@ parts:
       install -d "$CRAFT_PART_INSTALL/bin"
       cat > "$CRAFT_PART_INSTALL/bin/kode" <<'EOF'
       #!/bin/sh
-      exec "$SNAP/usr/bin/java" \
+      exec "$SNAP/opt/kode/runtime/bin/java" \
         -Dkode.home="$SNAP/opt/kode" \
         -jar "$SNAP/opt/kode/kode.jar" \
         "$@"
