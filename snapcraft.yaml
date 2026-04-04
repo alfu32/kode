@@ -87,8 +87,10 @@ parts:
       install -d "$CRAFT_PART_INSTALL/bin"
       cat > "$CRAFT_PART_INSTALL/bin/kode" <<'EOF'
       #!/bin/sh
+      mkdir -p "$SNAP_USER_COMMON/.tree-sitter"
       exec "$SNAP/opt/kode/runtime/bin/java" \
         -Dkode.home="$SNAP/opt/kode" \
+        -Dtree-sitter-lib="$SNAP_USER_COMMON/.tree-sitter/lib" \
         -jar "$SNAP/opt/kode/kode.jar" \
         "$@"
       EOF
