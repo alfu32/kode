@@ -8,6 +8,7 @@ description: |
   Kode is a terminal-first code editor packaged from the repository's
   Gradle distBundle task. The snap ships the unzipped distribution bundle
   plus a bundled JRE 21.
+contact: https://github.com/alfu32/kode/issues
 website:
   - https://github.com/alfu32/kode
 source-code:
@@ -39,6 +40,14 @@ parts:
     build-packages:
       - openjdk-21-jdk-headless
     stage-packages:
+      - libx11-6
+      - libxext6
+      - libxi6
+      - libxrender1
+      - libxtst6
+      - libjpeg-turbo8
+      - liblcms2-2
+      - libgif7
       - libharfbuzz0b
       - libasound2t64
     build-snaps:
