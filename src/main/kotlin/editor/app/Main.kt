@@ -1335,8 +1335,6 @@ private class SplitPanelsApp(
     }
 
     private fun createGitService(root: Path): editor.lib.IGitService? {
-        val gitDir = File(root.toFile(), ".git")
-        if (!gitDir.isDirectory) return null
         return runCatching { JGitService(root.toFile()) }.getOrNull()
     }
 
@@ -1792,4 +1790,3 @@ private fun drawStatusLine(
         drawText(1, row, padded.take(textWidth))
     }
 }
-

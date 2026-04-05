@@ -101,9 +101,9 @@ class JGitService(root: File) : IGitService {
 
     private lateinit var objectId: ObjectId
     private val repo = FileRepositoryBuilder()
-        .setWorkTree(root)
-        .setGitDir(File(root, ".git"))
         .readEnvironment()
+        .findGitDir(root)
+        .setMustExist(true)
         .build()
 
     private val git = Git(repo)
