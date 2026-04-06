@@ -170,14 +170,23 @@ jobs:
           Write-Host "Using MSIX executable path: $relativeExe"
           $manifest = $manifest.Replace("__APP_EXECUTABLE__", $relativeExe)
           $manifest | Out-File -Encoding utf8 (Join-Path $msixRoot "AppxManifest.xml")
+      - uses: ilammy/msvc-dev-cmd@v1
       - name: Build MSIX (Windows)
-        id: msix-build
-        uses: BHznJNs/msix-build@v0.9
-        with:
-          app-build-path: dist/msix/.
-          appx-manifest-path: dist/msix/AppxManifest.xml
-          icon-path: icon.png
-          priconfig-path: scripts/priconfig.xml
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.tag }}"
+          $msixRoot = "dist\msix"
+          $installerDir = "dist\installer"
+          New-Item $installerDir -ItemType Directory -Force | Out-Null
+          Push-Location $msixRoot
+          try {
+            makepri new /pr . /cf "..\..\scripts\priconfig.xml" /mn AppxManifest.xml
+            makeappx pack /d . /p "..\installer\kode-$version.msix" /o
+          }
+          finally {
+            Pop-Location
+          }
       - name: Sign MSI and MSIX (Windows)
         shell: powershell
         env:
@@ -195,7 +204,7 @@ jobs:
             Sort-Object FullName -Descending | Select-Object -First 1
           if ($null -eq $signtool) { throw "signtool.exe not found" }
 
-          $msixPath = "${{ steps.msix-build.outputs.msix-path }}"
+          $msixPath = Join-Path "dist\installer" ("kode-${{ inputs.tag }}.msix")
           if ([string]::IsNullOrWhiteSpace($msixPath) -or !(Test-Path $msixPath)) {
             throw "MSIX not found: $msixPath"
           }
@@ -209,10 +218,10 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          $outputPath = "${{ steps.msix-build.outputs.msix-path }}"
-          if ([string]::IsNullOrWhiteSpace($outputPath)) { throw "MSIX output path missing" }
-          New-Item "dist\installer" -ItemType Directory -Force | Out-Null
-          Copy-Item $outputPath "dist\installer\kode-${{ inputs.tag }}.msix" -Force
+          $outputPath = Join-Path "dist\installer" ("kode-${{ inputs.tag }}.msix")
+          if ([string]::IsNullOrWhiteSpace($outputPath) -or !(Test-Path $outputPath)) {
+            throw "MSIX output path missing: $outputPath"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: kode-windows
