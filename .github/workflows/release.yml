@@ -96,12 +96,11 @@ jobs:
 
           $appImage = "dist\jpackage\$appName"
           $msixRoot = "dist\msix"
-          $sourceDir = Join-Path $msixRoot "Source"
           if (Test-Path $msixRoot) { Remove-Item $msixRoot -Recurse -Force }
-          New-Item $sourceDir -ItemType Directory -Force | Out-Null
-          Copy-Item -Path (Join-Path $appImage "*") -Destination $sourceDir -Recurse -Force
+          New-Item $msixRoot -ItemType Directory -Force | Out-Null
+          Copy-Item -Path (Join-Path $appImage "*") -Destination $msixRoot -Recurse -Force
 
-          $assetsDir = Join-Path $sourceDir "Assets"
+          $assetsDir = Join-Path $msixRoot "Assets"
           New-Item $assetsDir -ItemType Directory -Force | Out-Null
           Copy-Item "icon.png" (Join-Path $assetsDir "Square150x150Logo.png")
           Copy-Item "icon.png" (Join-Path $assetsDir "Square44x44Logo.png")
@@ -128,7 +127,7 @@ jobs:
             '  <Properties>',
             '    <DisplayName>__DISPLAY_NAME__</DisplayName>',
             '    <PublisherDisplayName>__PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>',
-            '    <Logo>Source\Assets\StoreLogo.png</Logo>',
+            '    <Logo>Assets\StoreLogo.png</Logo>',
             '  </Properties>',
             '  <Resources>',
             '    <Resource Language="en-us" />',
@@ -137,13 +136,13 @@ jobs:
             '    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />',
             '  </Dependencies>',
             '  <Applications>',
-            '    <Application Id="kode" Executable="Source\__APP_NAME__.exe" EntryPoint="Windows.FullTrustApplication">',
+            '    <Application Id="kode" Executable="__APP_EXECUTABLE__" EntryPoint="Windows.FullTrustApplication">',
             '      <uap:VisualElements DisplayName="__DISPLAY_NAME__" Description="__DISPLAY_NAME__"',
-            '        Square150x150Logo="Source\Assets\Square150x150Logo.png"',
-            '        Square44x44Logo="Source\Assets\Square44x44Logo.png"',
+            '        Square150x150Logo="Assets\Square150x150Logo.png"',
+            '        Square44x44Logo="Assets\Square44x44Logo.png"',
             '        BackgroundColor="transparent" />',
             '      <Extensions>',
-            '        <uap3:Extension Category="windows.appExecutionAlias" Executable="Source\__APP_NAME__.exe" EntryPoint="Windows.FullTrustApplication">',
+            '        <uap3:Extension Category="windows.appExecutionAlias" Executable="__APP_EXECUTABLE__" EntryPoint="Windows.FullTrustApplication">',
             '          <uap3:AppExecutionAlias>',
             '            <desktop:ExecutionAlias Alias="kode.exe" />',
             '          </uap3:AppExecutionAlias>',
@@ -162,9 +161,14 @@ jobs:
           $manifest = $manifest.Replace("__PUBLISHER_DISPLAY_NAME__", $publisherDisplayName)
           $manifest = $manifest.Replace("__VERSION__", $version)
           $manifest = $manifest.Replace("__DISPLAY_NAME__", $displayName)
-          $exe = Get-ChildItem $sourceDir -Filter *.exe | Select-Object -First 1
-          if ($null -eq $exe) { throw "No executable found in $sourceDir" }
-          $manifest = $manifest.Replace("__APP_NAME__", $exe.BaseName)
+          $rootExe = Get-ChildItem $msixRoot -Filter *.exe -File | Select-Object -First 1
+          $exe = if ($null -ne $rootExe) { $rootExe } else { Get-ChildItem $msixRoot -Filter *.exe -File -Recurse | Select-Object -First 1 }
+          if ($null -eq $exe) { throw "No executable found in $msixRoot" }
+          $msixRootPath = (Resolve-Path $msixRoot).Path
+          $exePath = (Resolve-Path $exe.FullName).Path
+          $relativeExe = $exePath.Substring($msixRootPath.Length + 1).Replace('/', '\')
+          Write-Host "Using MSIX executable path: $relativeExe"
+          $manifest = $manifest.Replace("__APP_EXECUTABLE__", $relativeExe)
           $manifest | Out-File -Encoding utf8 (Join-Path $msixRoot "AppxManifest.xml")
       - name: Build MSIX (Windows)
         id: msix-build
