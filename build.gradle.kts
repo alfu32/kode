@@ -9,6 +9,8 @@ plugins {
 group = "org.github.alfu32.kte"
 version = "3.3.4"
 
+val baseVersion = version.toString()
+
 val h2Version = "2.2.224"
 configurations.register("h2Dist")
 
@@ -75,7 +77,7 @@ kotlin {
 
 val externalColorMap = layout.projectDirectory.file("token-colors.txt")
 
-fun Project.latestTagOrVersion(): String {
+fun Project.latestTagOrVersion(defaultVersion: String = baseVersion): String {
     return try {
         val stdout = ByteArrayOutputStream()
         exec {
@@ -83,11 +85,20 @@ fun Project.latestTagOrVersion(): String {
             standardOutput = stdout
             isIgnoreExitValue = true
         }
-        stdout.toString().trim().ifEmpty { version.toString() }
+        stdout.toString().trim().ifEmpty { defaultVersion }
     } catch (_: Exception) {
-        version.toString()
+        defaultVersion
     }
 }
+
+val bundleVersion = (findProperty("releaseNumber") as String?)
+    ?.takeUnless { it.isBlank() }
+    ?: latestTagOrVersion(baseVersion)
+val includeBundledRuntime = (findProperty("bundleRuntime") as String?)
+    ?.toBooleanStrictOrNull()
+    ?: false
+
+version = bundleVersion
 
 /**
  * Build a self-contained executable JAR (fat / uber JAR).
@@ -106,7 +117,7 @@ tasks.register<Jar>("fatJar") {
 
     manifest {
         attributes["Main-Class"] = "editor.app.MainKt"
-        attributes["Implementation-Version"] = project.latestTagOrVersion()
+        attributes["Implementation-Version"] = project.version.toString()
     }
 
     // include compiled classes/resources of this project
@@ -165,8 +176,19 @@ tasks.register<Copy>("distBundle") {
             unix("755")
         }
     }
+    if (includeBundledRuntime) {
+        dependsOn("createRuntimeImage")
+        from(runtimeImageDir) {
+            into("runtime")
+        }
+    }
     into(distDir)
     doFirst { distDir.asFile.mkdirs() }
+    doLast {
+        if (includeBundledRuntime) {
+            ensureUnixRuntimeExecutables(distDir.asFile)
+        }
+    }
 }
 
 tasks.register<Copy>("releaseBundle") {
@@ -176,7 +198,7 @@ tasks.register<Copy>("releaseBundle") {
     val fat = tasks.named<Jar>("fatJar")
     val launchers = tasks.named("generateLaunchers")
     dependsOn(fat, launchers, configurations.named("h2Dist"))
-    val tag = latestTagOrVersion()
+    val tag = project.version.toString()
     val relDir = layout.projectDirectory.dir("kode-rel-$tag")
     from(fat.map { it.archiveFile }) { rename { "kode.jar" } }
     val h2Jar = configurations.named("h2Dist").map { it.singleFile }
@@ -207,17 +229,28 @@ tasks.register<Copy>("releaseBundle") {
             unix("755")
         }
     }
+    if (includeBundledRuntime) {
+        dependsOn("createRuntimeImage")
+        from(runtimeImageDir) {
+            into("runtime")
+        }
+    }
     into(relDir)
     doFirst {
         relDir.asFile.deleteRecursively()
         relDir.asFile.mkdirs()
+    }
+    doLast {
+        if (includeBundledRuntime) {
+            ensureUnixRuntimeExecutables(relDir.asFile)
+        }
     }
 }
 
 tasks.register<Zip>("releaseZip") {
     group = "distribution"
     description = "Zip the kode-rel-<latest-tag> folder"
-    val tag = latestTagOrVersion()
+    val tag = project.version.toString()
     val relDir = layout.projectDirectory.dir("kode-rel-$tag")
     dependsOn("releaseBundle")
     from(relDir)
@@ -241,6 +274,73 @@ tasks.register<Zip>("releaseZip") {
 
 
 
+val runtimeImageDir = layout.buildDirectory.dir("runtime-image")
+
+fun ensureUnixRuntimeExecutables(installDir: File) {
+    if (System.getProperty("os.name").lowercase().contains("windows")) {
+        return
+    }
+    listOf("kode", "kode.sh").forEach { name ->
+        installDir.resolve(name).takeIf { it.exists() }?.let {
+            it.setExecutable(true, false)
+            it.setReadable(true, false)
+        }
+    }
+    val javaBinDir = installDir.resolve("runtime/bin")
+    if (javaBinDir.exists()) {
+        javaBinDir.walkTopDown()
+            .filter { it.isFile }
+            .forEach {
+                it.setExecutable(true, false)
+                it.setReadable(true, false)
+            }
+    }
+    listOf("runtime/lib/jspawnhelper", "runtime/lib/jexec").forEach { relPath ->
+        installDir.resolve(relPath).takeIf { it.exists() }?.let {
+            it.setExecutable(true, false)
+            it.setReadable(true, false)
+        }
+    }
+}
+
+tasks.register("createRuntimeImage") {
+    group = "distribution"
+    description = "Build a self-contained Java runtime image with jlink"
+    outputs.dir(runtimeImageDir)
+    doLast {
+        val runtimeDir = runtimeImageDir.get().asFile
+        runtimeDir.deleteRecursively()
+        runtimeDir.mkdirs()
+
+        val javaHome = file(System.getProperty("java.home"))
+        val jmodsDir = javaHome.resolve("jmods")
+        if (!jmodsDir.isDirectory) {
+            throw GradleException("JDK jmods directory not found at ${jmodsDir.absolutePath}")
+        }
+
+        val jlinkName = if (System.getProperty("os.name").lowercase().contains("windows")) "jlink.exe" else "jlink"
+        val jlinkExecutable = javaHome.resolve("bin/$jlinkName")
+        if (!jlinkExecutable.isFile) {
+            throw GradleException("jlink executable not found at ${jlinkExecutable.absolutePath}")
+        }
+
+        exec {
+            commandLine(
+                jlinkExecutable.absolutePath,
+                "--module-path", jmodsDir.absolutePath,
+                "--add-modules", "ALL-MODULE-PATH",
+                "--compress=2",
+                "--strip-debug",
+                "--no-header-files",
+                "--no-man-pages",
+                "--output", runtimeDir.absolutePath,
+            )
+        }
+
+        ensureUnixRuntimeExecutables(runtimeDir)
+    }
+}
+
 val launcherDir = layout.buildDirectory.dir("launchers")
 
 tasks.register("generateLaunchers") {
@@ -251,7 +351,14 @@ tasks.register("generateLaunchers") {
         val shText = """
             |#!/usr/bin/env sh
             |DIR="$(CDPATH= cd -- "$(dirname -- "${'$'}0")" && pwd)"
-            |exec java -Dkode.home="${'$'}DIR" -jar "${'$'}DIR/kode.jar" "${'$'}@"
+            |JAVA_BIN="${'$'}DIR/runtime/bin/java"
+            |if [ ! -x "${'$'}JAVA_BIN" ] && [ -x "${'$'}DIR/runtime/Contents/Home/bin/java" ]; then
+            |  JAVA_BIN="${'$'}DIR/runtime/Contents/Home/bin/java"
+            |fi
+            |if [ ! -x "${'$'}JAVA_BIN" ]; then
+            |  JAVA_BIN="java"
+            |fi
+            |exec "${'$'}JAVA_BIN" -Dkode.home="${'$'}DIR" -jar "${'$'}DIR/kode.jar" "${'$'}@"
             |""".trimMargin()
         val sh = outDir.resolve("kode.sh")
         sh.writeText(shText)
@@ -262,7 +369,12 @@ tasks.register("generateLaunchers") {
         val batText = """
             |@echo off
             |set DIR=%~dp0
-            |java -Dkode.home="%DIR%" -jar "%DIR%\\kode.jar" %*
+            |set JAVA_EXE=%DIR%runtime\bin\java.exe
+            |if exist "%JAVA_EXE%" (
+            |  "%JAVA_EXE%" -Dkode.home="%DIR%" -jar "%DIR%\\kode.jar" %*
+            |) else (
+            |  java -Dkode.home="%DIR%" -jar "%DIR%\\kode.jar" %*
+            |)
             |""".trimMargin()
         outDir.resolve("kode.bat").writeText(batText)
         outDir.resolve("kode.cmd").writeText(batText)
@@ -284,7 +396,11 @@ tasks.register("generateLaunchers") {
             |    [VT.Native]::SetConsoleMode(###h, ###m -bor 0x4 -bor 0x8) | Out-Null
             |  }
             |}
-            |& java -D"kode.home=###dir" -jar (Join-Path ###dir "kode.jar") @args
+            |###javaBin = Join-Path ###dir "runtime\bin\java.exe"
+            |if (!(Test-Path ###javaBin)) {
+            |  ###javaBin = "java"
+            |}
+            |& ###javaBin -D"kode.home=###dir" -jar (Join-Path ###dir "kode.jar") @args
             |""".trimMargin()
         val psText = psTemplate.replace("###", "$")
         outDir.resolve("kode.ps1").writeText(psText)

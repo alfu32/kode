@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish (must already exist in git history, e.g. 1.2.3)"
+        description: "Release tag (e.g., 3.3.4)"
         required: true
       draft:
         description: "Create release as draft"
@@ -19,62 +19,234 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-linux:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Fetch tags
-        run: git fetch --force --tags
-
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
-
-      - name: Verify requested tag exists
-        env:
-          TAG: ${{ inputs.tag }}
+          java-version: "21"
+      - name: Build Linux bundle
+        run: ./gradlew --no-daemon releaseBundle -PreleaseNumber="${{ inputs.tag }}" -PbundleRuntime=true
+      - name: Archive Linux bundle
         run: |
           set -euo pipefail
-          git rev-parse "refs/tags/$TAG" >/dev/null 2>&1 || {
-            echo "Tag '$TAG' does not exist in this repository."
-            exit 1
-          }
-
-      - name: Build release zip
-        run: ./gradlew releaseZip
-
-      - name: Verify expected artifact exists
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          test -f "kode-rel-$TAG.zip" || {
-            echo "Expected artifact kode-rel-$TAG.zip was not produced."
-            echo "Produced zip files:"
-            ls -la *.zip || true
-            exit 1
-          }
-
+          TAG="${{ inputs.tag }}"
+          mkdir -p dist
+          tar -C . -czf "dist/kode-dist-${TAG}-linux.tar.gz" "kode-rel-$TAG"
+          zip -qry "dist/kode-dist-${TAG}-linux.zip" "kode-rel-$TAG"
       - uses: actions/upload-artifact@v4
         with:
-          name: kode-release
-          path: kode-rel-${{ inputs.tag }}.zip
+          name: kode-linux
+          path: |
+            dist/kode-dist-${{ inputs.tag }}-linux.tar.gz
+            dist/kode-dist-${{ inputs.tag }}-linux.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Build Windows bundle
+        run: .\gradlew.bat --no-daemon releaseBundle -PreleaseNumber="${{ inputs.tag }}"
+      - name: Archive Windows bundle
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.tag }}"
+          New-Item dist -ItemType Directory -Force | Out-Null
+          if (Test-Path "dist\kode-dist-$version-windows.zip") {
+            Remove-Item "dist\kode-dist-$version-windows.zip" -Force
+          }
+          Compress-Archive -Path "kode-rel-$version" -DestinationPath "dist\kode-dist-$version-windows.zip"
+      - name: Build MSI (Windows)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.tag }}"
+          $appName = "kode"
+          $bundleDir = "kode-rel-$version"
+          $jpackage = Join-Path $env:JAVA_HOME "bin\jpackage.exe"
+          if (!(Test-Path (Join-Path $bundleDir "kode.jar"))) { throw "Bundle not found: $bundleDir" }
+          & $jpackage --type app-image --name $appName --app-version $version --vendor "K3D0" --win-console `
+            --input $bundleDir --main-jar "kode.jar" --dest "dist\jpackage" `
+            --java-options '-Dkode.home=$APPDIR\app'
+          $appImage = "dist\jpackage\$appName"
+          & $jpackage --type msi --name $appName --app-version $version --vendor "K3D0" `
+            --app-image $appImage --dest "dist\installer" `
+            --win-per-user-install --win-menu --win-shortcut
+          $msiOut = Join-Path "dist\installer" "$appName-$version.msi"
+          $producedMsi = Get-ChildItem "dist\installer" -Filter *.msi | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($null -eq $producedMsi) { throw "MSI not produced" }
+          Move-Item $producedMsi.FullName $msiOut -Force
+      - name: Prepare MSIX layout
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ inputs.tag }}"
+          $appName = "kode"
+          $displayName = "kode"
+          $publisher = "CN=7F0CBC95-8035-4AF2-9B17-C38D58351CE5"
+          $publisherDisplayName = "K3D0"
+          $packageName = "K3D0.k3d"
+
+          $appImage = "dist\jpackage\$appName"
+          $msixRoot = "dist\msix"
+          $sourceDir = Join-Path $msixRoot "Source"
+          if (Test-Path $msixRoot) { Remove-Item $msixRoot -Recurse -Force }
+          New-Item $sourceDir -ItemType Directory -Force | Out-Null
+          Copy-Item -Path (Join-Path $appImage "*") -Destination $sourceDir -Recurse -Force
+
+          $assetsDir = Join-Path $sourceDir "Assets"
+          New-Item $assetsDir -ItemType Directory -Force | Out-Null
+          Copy-Item "icon.png" (Join-Path $assetsDir "Square150x150Logo.png")
+          Copy-Item "icon.png" (Join-Path $assetsDir "Square44x44Logo.png")
+          Copy-Item "icon.png" (Join-Path $assetsDir "StoreLogo.png")
+          $baseNames = @("Square150x150Logo", "Square44x44Logo", "StoreLogo")
+          foreach ($name in $baseNames) {
+            $scaled = Join-Path $assetsDir ("{0}.scale-100.png" -f $name)
+            $base = Join-Path $assetsDir ("{0}.png" -f $name)
+            if ((Test-Path $scaled) -and !(Test-Path $base)) {
+              Copy-Item $scaled $base -Force
+            }
+          }
+
+          $manifest = @(
+            '<?xml version="1.0" encoding="utf-8"?>',
+            '<Package',
+            '  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"',
+            '  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"',
+            '  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"',
+            '  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"',
+            '  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"',
+            '  IgnorableNamespaces="uap uap3 desktop rescap">',
+            '  <Identity Name="__PACKAGE_NAME__" Publisher="__PUBLISHER__" Version="__VERSION__.0" />',
+            '  <Properties>',
+            '    <DisplayName>__DISPLAY_NAME__</DisplayName>',
+            '    <PublisherDisplayName>__PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>',
+            '    <Logo>Source\Assets\StoreLogo.png</Logo>',
+            '  </Properties>',
+            '  <Resources>',
+            '    <Resource Language="en-us" />',
+            '  </Resources>',
+            '  <Dependencies>',
+            '    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />',
+            '  </Dependencies>',
+            '  <Applications>',
+            '    <Application Id="kode" Executable="Source\__APP_NAME__.exe" EntryPoint="Windows.FullTrustApplication">',
+            '      <uap:VisualElements DisplayName="__DISPLAY_NAME__" Description="__DISPLAY_NAME__"',
+            '        Square150x150Logo="Source\Assets\Square150x150Logo.png"',
+            '        Square44x44Logo="Source\Assets\Square44x44Logo.png"',
+            '        BackgroundColor="transparent" />',
+            '      <Extensions>',
+            '        <uap3:Extension Category="windows.appExecutionAlias" Executable="Source\__APP_NAME__.exe" EntryPoint="Windows.FullTrustApplication">',
+            '          <uap3:AppExecutionAlias>',
+            '            <desktop:ExecutionAlias Alias="kode.exe" />',
+            '          </uap3:AppExecutionAlias>',
+            '        </uap3:Extension>',
+            '      </Extensions>',
+            '    </Application>',
+            '  </Applications>',
+            '  <Capabilities>',
+            '    <rescap:Capability Name="runFullTrust" />',
+            '  </Capabilities>',
+            '</Package>'
+          ) -join "`n"
+
+          $manifest = $manifest.Replace("__PACKAGE_NAME__", $packageName)
+          $manifest = $manifest.Replace("__PUBLISHER__", $publisher)
+          $manifest = $manifest.Replace("__PUBLISHER_DISPLAY_NAME__", $publisherDisplayName)
+          $manifest = $manifest.Replace("__VERSION__", $version)
+          $manifest = $manifest.Replace("__DISPLAY_NAME__", $displayName)
+          $exe = Get-ChildItem $sourceDir -Filter *.exe | Select-Object -First 1
+          if ($null -eq $exe) { throw "No executable found in $sourceDir" }
+          $manifest = $manifest.Replace("__APP_NAME__", $exe.BaseName)
+          $manifest | Out-File -Encoding utf8 (Join-Path $msixRoot "AppxManifest.xml")
+      - name: Build MSIX (Windows)
+        id: msix-build
+        uses: BHznJNs/msix-build@v0.9
+        with:
+          app-build-path: dist/msix/.
+          appx-manifest-path: dist/msix/AppxManifest.xml
+          icon-path: icon.png
+          priconfig-path: scripts/priconfig.xml
+      - name: Sign MSI and MSIX (Windows)
+        if: ${{ secrets.K3D_PFX_B64 != '' && secrets.K3D_PFX_PASSWORD != '' }}
+        shell: powershell
+        env:
+          K3D_PFX_B64: ${{ secrets.K3D_PFX_B64 }}
+          K3D_PFX_PASSWORD: ${{ secrets.K3D_PFX_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pfxPath = Join-Path $env:RUNNER_TEMP "k3d-sign.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:K3D_PFX_B64))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if ($null -eq $signtool) { throw "signtool.exe not found" }
+
+          $msixPath = "${{ steps.msix-build.outputs.msix-path }}"
+          if ([string]::IsNullOrWhiteSpace($msixPath) -or !(Test-Path $msixPath)) {
+            throw "MSIX not found: $msixPath"
+          }
+          & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $env:K3D_PFX_PASSWORD /tr http://timestamp.digicert.com /td SHA256 $msixPath
+
+          $msiPath = Join-Path "dist\installer" ("kode-${{ inputs.tag }}.msi")
+          if (Test-Path $msiPath) {
+            & $signtool.FullName sign /fd SHA256 /f $pfxPath /p $env:K3D_PFX_PASSWORD /tr http://timestamp.digicert.com /td SHA256 $msiPath
+          }
+      - name: Collect MSIX (Windows)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $outputPath = "${{ steps.msix-build.outputs.msix-path }}"
+          if ([string]::IsNullOrWhiteSpace($outputPath)) { throw "MSIX output path missing" }
+          New-Item "dist\installer" -ItemType Directory -Force | Out-Null
+          Copy-Item $outputPath "dist\installer\kode-${{ inputs.tag }}.msix" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kode-windows
+          path: |
+            dist/kode-dist-${{ inputs.tag }}-windows.zip
+            dist/installer/*.msi
+            dist/installer/*.msix
+
+  build-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Build macOS bundle
+        run: ./gradlew --no-daemon releaseBundle -PreleaseNumber="${{ inputs.tag }}" -PbundleRuntime=true
+      - name: Archive macOS bundle
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          mkdir -p dist
+          tar -C . -czf "dist/kode-dist-${TAG}-mac.tar.gz" "kode-rel-$TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kode-mac
+          path: dist/kode-dist-${{ inputs.tag }}-mac.tar.gz
 
   release:
     runs-on: ubuntu-latest
-    needs: build
-
+    needs:
+      - build-linux
+      - build-windows
+      - build-mac
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: kode-release
+          pattern: kode-*
           path: artifacts
-
+          merge-multiple: true
       - name: Create or update GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -91,7 +263,7 @@ jobs:
             gh release edit "$TAG" --draft="$DRAFT" --prerelease="$PRERELEASE"
           fi
 
-          files=$(find artifacts -type f -name "*.zip")
+          files=$(find artifacts -type f)
           if [ -z "$files" ]; then
             echo "No release artifacts found."
             exit 1
