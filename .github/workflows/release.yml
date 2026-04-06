@@ -175,13 +175,16 @@ jobs:
           icon-path: icon.png
           priconfig-path: scripts/priconfig.xml
       - name: Sign MSI and MSIX (Windows)
-        if: ${{ secrets.K3D_PFX_B64 != '' && secrets.K3D_PFX_PASSWORD != '' }}
         shell: powershell
         env:
           K3D_PFX_B64: ${{ secrets.K3D_PFX_B64 }}
           K3D_PFX_PASSWORD: ${{ secrets.K3D_PFX_PASSWORD }}
         run: |
           $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:K3D_PFX_B64) -or [string]::IsNullOrWhiteSpace($env:K3D_PFX_PASSWORD)) {
+            Write-Host "Signing secrets not configured; skipping MSI/MSIX signing."
+            exit 0
+          }
           $pfxPath = Join-Path $env:RUNNER_TEMP "k3d-sign.pfx"
           [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:K3D_PFX_B64))
           $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
