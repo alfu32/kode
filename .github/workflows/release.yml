@@ -89,7 +89,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           $version = "${{ inputs.tag }}"
           $appName = "kode"
-          $displayName = "kode"
+          $msixAppId = "kodium"
+          $displayName = "kodium"
           $publisher = "CN=7F0CBC95-8035-4AF2-9B17-C38D58351CE5"
           $publisherDisplayName = "K3D0"
           $packageName = "K3D0.k3d"
@@ -136,7 +137,7 @@ jobs:
             '    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />',
             '  </Dependencies>',
             '  <Applications>',
-            '    <Application Id="kode" Executable="__APP_EXECUTABLE__" EntryPoint="Windows.FullTrustApplication">',
+            '    <Application Id="__APP_ID__" Executable="__APP_EXECUTABLE__" EntryPoint="Windows.FullTrustApplication">',
             '      <uap:VisualElements DisplayName="__DISPLAY_NAME__" Description="__DISPLAY_NAME__"',
             '        Square150x150Logo="Assets\Square150x150Logo.png"',
             '        Square44x44Logo="Assets\Square44x44Logo.png"',
@@ -144,7 +145,7 @@ jobs:
             '      <Extensions>',
             '        <uap3:Extension Category="windows.appExecutionAlias" Executable="__APP_EXECUTABLE__" EntryPoint="Windows.FullTrustApplication">',
             '          <uap3:AppExecutionAlias>',
-            '            <desktop:ExecutionAlias Alias="kode.exe" />',
+            '            <desktop:ExecutionAlias Alias="kodium.exe" />',
             '          </uap3:AppExecutionAlias>',
             '        </uap3:Extension>',
             '      </Extensions>',
@@ -160,6 +161,7 @@ jobs:
           $manifest = $manifest.Replace("__PUBLISHER__", $publisher)
           $manifest = $manifest.Replace("__PUBLISHER_DISPLAY_NAME__", $publisherDisplayName)
           $manifest = $manifest.Replace("__VERSION__", $version)
+          $manifest = $manifest.Replace("__APP_ID__", $msixAppId)
           $manifest = $manifest.Replace("__DISPLAY_NAME__", $displayName)
           $rootExe = Get-ChildItem $msixRoot -Filter *.exe -File | Select-Object -First 1
           $exe = if ($null -ne $rootExe) { $rootExe } else { Get-ChildItem $msixRoot -Filter *.exe -File -Recurse | Select-Object -First 1 }
