@@ -310,7 +310,7 @@ tasks.register("createRuntimeImage") {
     doLast {
         val runtimeDir = runtimeImageDir.get().asFile
         runtimeDir.deleteRecursively()
-        runtimeDir.mkdirs()
+        runtimeDir.parentFile?.mkdirs()
 
         val javaHome = file(System.getProperty("java.home"))
         val jmodsDir = javaHome.resolve("jmods")
