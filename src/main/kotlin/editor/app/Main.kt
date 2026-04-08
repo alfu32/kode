@@ -477,16 +477,21 @@ private class SplashApp(
             return
         }
         Thread({
-            app.fullReindex(
-                progress = { msg ->
-                    scanStatus.set(msg)
-                    renderDirty.set(true)
-                },
-                progressFile = { file ->
-                    scanFile.set(file)
-                    renderDirty.set(true)
-                },
-            )
+            runCatching {
+                app.fullReindex(
+                    progress = { msg ->
+                        scanStatus.set(msg)
+                        renderDirty.set(true)
+                    },
+                    progressFile = { file ->
+                        scanFile.set(file)
+                        renderDirty.set(true)
+                    },
+                )
+            }.onFailure { err ->
+                scanStatus.set("Indexing: failed")
+                scanFile.set(err.message ?: err::class.java.simpleName)
+            }
             scanDone.set(true)
             renderDirty.set(true)
         }, "codeintel-startup-scan").apply { isDaemon = true }.start()
@@ -1386,7 +1391,8 @@ private class SplitPanelsApp(
 
     private fun triggerFreshScan() {
         Thread({
-            fullReindex()
+            runCatching { fullReindex() }
+                .onFailure { System.err.println("Background reindex failed: ${it.message}") }
         }, "codeintel-freshscan").apply { isDaemon = true }.start()
     }
 

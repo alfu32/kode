@@ -2,6 +2,10 @@ package editor.lib
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.FileVisitResult
+import java.nio.file.attribute.BasicFileAttributes
+import java.io.IOException
 import kotlin.io.path.isRegularFile
 
 data class ProjectSearchMatch(
@@ -31,15 +35,16 @@ class ProjectSearcher {
         }
 
         val matches = mutableListOf<ProjectSearchMatch>()
-        Files.walk(root).use { paths ->
-            paths.filter { it.isRegularFile() }.forEach { path ->
+        Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(path: Path, attrs: BasicFileAttributes): FileVisitResult {
+                if (!path.isRegularFile()) return FileVisitResult.CONTINUE
                 val relative = try {
                     root.relativize(path).toString()
                 } catch (_: Exception) {
                     path.fileName?.toString() ?: path.toString()
                 }
-                if (filterRegex != null && !filterRegex.containsMatchIn(relative)) return@forEach
-                val lines = runCatching { Files.readAllLines(path) }.getOrNull() ?: return@forEach
+                if (filterRegex != null && !filterRegex.containsMatchIn(relative)) return FileVisitResult.CONTINUE
+                val lines = runCatching { Files.readAllLines(path) }.getOrNull() ?: return FileVisitResult.CONTINUE
                 lines.forEachIndexed { idx, line ->
                     regex.findAll(line).forEach { mr ->
                         matches.add(
@@ -52,8 +57,13 @@ class ProjectSearcher {
                         )
                     }
                 }
+                return FileVisitResult.CONTINUE
             }
-        }
+
+            override fun visitFileFailed(path: Path, exc: IOException): FileVisitResult {
+                return FileVisitResult.CONTINUE
+            }
+        })
         return ProjectSearchResult(matches = matches, patternError = null)
     }
 }

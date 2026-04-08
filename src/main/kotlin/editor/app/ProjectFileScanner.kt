@@ -3,6 +3,7 @@ package editor.app
 import java.io.File
 import java.io.IOException
 import java.nio.file.*
+import java.nio.file.AccessDeniedException
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.ArrayDeque
 
@@ -21,50 +22,67 @@ object ProjectFileScanner {
             val normalizedRoot = sourceRoot.toAbsolutePath().normalize()
             if (!normalizedRoot.startsWith(root.toAbsolutePath().normalize())) return@forEach
             val matcherStack = ArrayDeque<GitIgnoreMatcher>()
-            Files.walkFileTree(normalizedRoot, object : SimpleFileVisitor<Path>() {
-            override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
-                val parentMatcher = matcherStack.peek() ?: baseMatcher
-                val mergedMatcher = parentMatcher.withAdditionalRules(loadIgnoreFile(dir))
-                matcherStack.push(mergedMatcher)
-                val rel = root.relativize(dir).toString().replace(File.separatorChar, '/')
-                // Always skip git metadata and build outputs early.
-                if (rel.startsWith(".git") || rel.startsWith("build")) {
-                    matcherStack.pop()
-                    return FileVisitResult.SKIP_SUBTREE
-                }
-                if (rel.isNotEmpty() && mergedMatcher.isIgnored(rel, isDirectory = true)) {
-                    matcherStack.pop()
-                    return FileVisitResult.SKIP_SUBTREE
-                }
-                // Skip hidden directories unless explicitly un-ignored.
-                val name = dir.fileName?.toString().orEmpty()
-                if (name.startsWith(".") && rel.isNotEmpty() && !mergedMatcher.isExplicitlyIncluded(rel, true)) {
-                    matcherStack.pop()
-                    return FileVisitResult.SKIP_SUBTREE
-                }
-                return FileVisitResult.CONTINUE
-            }
+            runCatching {
+                Files.walkFileTree(normalizedRoot, object : SimpleFileVisitor<Path>() {
+                    override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+                        val parentMatcher = matcherStack.peek() ?: baseMatcher
+                        val mergedMatcher = parentMatcher.withAdditionalRules(loadIgnoreFile(dir))
+                        matcherStack.push(mergedMatcher)
+                        val rel = root.relativize(dir).toString().replace(File.separatorChar, '/')
+                        // Always skip git metadata and build outputs early.
+                        if (rel.startsWith(".git") || rel.startsWith("build")) {
+                            matcherStack.pop()
+                            return FileVisitResult.SKIP_SUBTREE
+                        }
+                        if (rel.isNotEmpty() && mergedMatcher.isIgnored(rel, isDirectory = true)) {
+                            matcherStack.pop()
+                            return FileVisitResult.SKIP_SUBTREE
+                        }
+                        // Skip hidden directories unless explicitly un-ignored.
+                        if (rel.isNotEmpty() && isHiddenPath(dir) && !mergedMatcher.isExplicitlyIncluded(rel, true)) {
+                            matcherStack.pop()
+                            return FileVisitResult.SKIP_SUBTREE
+                        }
+                        if (!Files.isReadable(dir)) {
+                            matcherStack.pop()
+                            return FileVisitResult.SKIP_SUBTREE
+                        }
+                        return FileVisitResult.CONTINUE
+                    }
 
-            override fun visitFile(path: Path, attrs: BasicFileAttributes): FileVisitResult {
-                val matcher = matcherStack.peek() ?: baseMatcher
-                val rel = root.relativize(path).toString().replace(File.separatorChar, '/')
-                val name = path.fileName?.toString().orEmpty()
-                if (name.startsWith(".") && !matcher.isExplicitlyIncluded(rel, isDirectory = false)) {
-                    return FileVisitResult.CONTINUE
-                }
-                if (!matcher.isIgnored(rel, isDirectory = false)) {
-                    files.add(path)
-                }
-                return FileVisitResult.CONTINUE
-            }
+                    override fun visitFile(path: Path, attrs: BasicFileAttributes): FileVisitResult {
+                        val matcher = matcherStack.peek() ?: baseMatcher
+                        val rel = root.relativize(path).toString().replace(File.separatorChar, '/')
+                        if (isHiddenPath(path) && !matcher.isExplicitlyIncluded(rel, isDirectory = false)) {
+                            return FileVisitResult.CONTINUE
+                        }
+                        if (!matcher.isIgnored(rel, isDirectory = false)) {
+                            files.add(path)
+                        }
+                        return FileVisitResult.CONTINUE
+                    }
 
-            override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
-                matcherStack.pop()
-                return FileVisitResult.CONTINUE
-            }
-            })
+                    override fun visitFileFailed(path: Path, exc: IOException): FileVisitResult {
+                        return when (exc) {
+                            is AccessDeniedException, is FileSystemLoopException, is NoSuchFileException -> FileVisitResult.CONTINUE
+                            else -> FileVisitResult.CONTINUE
+                        }
+                    }
+
+                    override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
+                        if (matcherStack.isNotEmpty()) matcherStack.pop()
+                        return FileVisitResult.CONTINUE
+                    }
+                })
+            }.getOrElse { }
         }
         return files.toList()
+    }
+
+    private fun isHiddenPath(path: Path): Boolean {
+        val name = path.fileName?.toString().orEmpty()
+        if (name.startsWith(".")) return true
+        return runCatching { Files.isHidden(path) }.getOrDefault(false)
     }
 
     private fun loadIgnoreFile(dir: Path): List<String> {
