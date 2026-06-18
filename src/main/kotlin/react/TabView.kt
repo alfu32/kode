@@ -31,10 +31,14 @@ class TabView(
             drawRect(0, 0, cols, headerHeight)
             var x = 0
             titles.forEachIndexed { idx, title ->
+                if (x >= cols) return@forEachIndexed
                 val label = " $title "
                 val style = if (idx == selected) activeStyle else inactiveStyle
                 withStyle(style) {
-                    drawText(x.coerceAtLeast(0), 0, label.take(cols - x))
+                    val visibleWidth = (cols - x).coerceAtLeast(0)
+                    if (visibleWidth > 0) {
+                        drawText(x.coerceAtLeast(0), 0, label.take(visibleWidth))
+                    }
                 }
                 x += label.length
             }
