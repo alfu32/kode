@@ -86,6 +86,18 @@ val ttydAssets = listOf(
     "ttyd.msvc.dll",
     "ttyd.linux.so"
 )
+val downloadBundledTtydLibraries = providers.gradleProperty("downloadTtydLibraries")
+    .map { value ->
+        value.toBooleanStrictOrNull()
+            ?: throw GradleException("downloadTtydLibraries must be true or false, got '$value'")
+    }
+    .orElse(
+        providers.environmentVariable("KODE_DOWNLOAD_TTYD_LIBRARIES").map { value ->
+            value.toBooleanStrictOrNull()
+                ?: throw GradleException("KODE_DOWNLOAD_TTYD_LIBRARIES must be true or false, got '$value'")
+        }
+    )
+    .getOrElse(true)
 
 tasks.register("downloadTtydLibraries") {
     group = "distribution"
@@ -156,12 +168,16 @@ tasks.register<Jar>("fatJar") {
         attributes["Implementation-Version"] = project.version.toString()
     }
 
-    val ttydLibraries = tasks.named("downloadTtydLibraries")
-    dependsOn(ttydLibraries)
+    if (downloadBundledTtydLibraries) {
+        val ttydLibraries = tasks.named("downloadTtydLibraries")
+        dependsOn(ttydLibraries)
+        from(ttydResourceDir)
+    } else {
+        logger.lifecycle("Skipping bundled ttyd native library download; kode serve will require vendored native resources.")
+    }
 
     // include compiled classes/resources of this project
     from(sourceSets.main.get().output)
-    from(ttydResourceDir)
 
     // include all runtime dependencies
     val runtimeClasspath = configurations.runtimeClasspath.get()

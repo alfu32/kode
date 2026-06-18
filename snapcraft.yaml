@@ -59,7 +59,7 @@ parts:
       export GRADLE_USER_HOME="$CRAFT_PART_BUILD/.gradle"
       export PATH="$JAVA_HOME/bin:/snap/bin:$PATH"
 
-      gradle --no-daemon distBundle
+      gradle --no-daemon distBundle -PdownloadTtydLibraries=false
 
       MODULES="$("$JAVA_HOME/bin/jdeps" \
         --ignore-missing-deps \
