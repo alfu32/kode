@@ -91,6 +91,7 @@ tasks.register("downloadTtydLibraries") {
     group = "distribution"
     description = "Download ttyd shared libraries into generated resources for bundled serve mode"
     outputs.dir(ttydResourceDir)
+    outputs.upToDateWhen { false }
     doLast {
         val outDir = ttydResourceDir.get().asFile.resolve("native/ttyd")
         outDir.deleteRecursively()

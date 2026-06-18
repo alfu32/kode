@@ -5,6 +5,7 @@ import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -51,6 +52,18 @@ internal object TtydAdapter {
         }
         argvMemory.setPointer((nativeArgs.size * Native.POINTER_SIZE).toLong(), Pointer.NULL)
         return main.invokeInt(arrayOf(nativeArgs.size, argvMemory))
+    }
+
+    fun findExecutable(name: String = "ttyd"): Path? {
+        val candidates = if (isWindows()) listOf("$name.exe", "$name.cmd", "$name.bat", name) else listOf(name)
+        return System.getenv("PATH")
+            ?.split(File.pathSeparator)
+            .orEmpty()
+            .asSequence()
+            .flatMap { dir -> candidates.asSequence().map { Paths.get(dir).resolve(it) } }
+            .firstOrNull { Files.isExecutable(it) }
+            ?.toAbsolutePath()
+            ?.normalize()
     }
 
     private fun toNativeCString(value: String): Memory {
