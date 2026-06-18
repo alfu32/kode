@@ -84,6 +84,23 @@ parts:
 
       cp -a dist/. "$CRAFT_PART_INSTALL/opt/kode/"
 
+      case "$(dpkg --print-architecture)" in
+        amd64) JNA_PLATFORM="linux-x86-64" ;;
+        arm64) JNA_PLATFORM="linux-aarch64" ;;
+        *) JNA_PLATFORM="" ;;
+      esac
+      if [ -n "$JNA_PLATFORM" ]; then
+        JNA_RESOURCE="com/sun/jna/$JNA_PLATFORM/libjnidispatch.so"
+        JNA_EXTRACT_DIR="$CRAFT_PART_BUILD/.jna-extract"
+        rm -rf "$JNA_EXTRACT_DIR"
+        mkdir -p "$JNA_EXTRACT_DIR" "$CRAFT_PART_INSTALL/opt/kode/jna"
+        (
+          cd "$JNA_EXTRACT_DIR"
+          "$JAVA_HOME/bin/jar" xf "$CRAFT_PART_BUILD/dist/kode.jar" "$JNA_RESOURCE"
+        )
+        install -m 755 "$JNA_EXTRACT_DIR/$JNA_RESOURCE" "$CRAFT_PART_INSTALL/opt/kode/jna/libjnidispatch.so"
+      fi
+
       rm -f "$CRAFT_PART_INSTALL/opt/kode/kode" \
             "$CRAFT_PART_INSTALL/opt/kode/kode.sh" \
             "$CRAFT_PART_INSTALL/opt/kode/kode.bat" \
@@ -93,9 +110,20 @@ parts:
       install -d "$CRAFT_PART_INSTALL/bin"
       cat > "$CRAFT_PART_INSTALL/bin/kode" <<'EOF'
       #!/bin/sh
-      mkdir -p "$SNAP_USER_COMMON/.tree-sitter"
+      export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$SNAP_USER_COMMON/.cache}"
+      export KODE_TTYD_CACHE="$XDG_CACHE_HOME"
+      JNA_TMPDIR="$SNAP_USER_COMMON/.jna-tmp"
+      JAVA_TMPDIR="$SNAP_USER_COMMON/tmp"
+      mkdir -p \
+        "$SNAP_USER_COMMON/.tree-sitter/lib" \
+        "$XDG_CACHE_HOME" \
+        "$JNA_TMPDIR" \
+        "$JAVA_TMPDIR"
       exec "$SNAP/opt/kode/runtime/bin/java" \
         -Dkode.home="$SNAP/opt/kode" \
+        -Djava.io.tmpdir="$JAVA_TMPDIR" \
+        -Djna.boot.library.path="$SNAP/opt/kode/jna" \
+        -Djna.tmpdir="$JNA_TMPDIR" \
         -Dtree-sitter-lib="$SNAP_USER_COMMON/.tree-sitter/lib" \
         -jar "$SNAP/opt/kode/kode.jar" \
         "$@"
