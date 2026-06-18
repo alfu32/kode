@@ -38,6 +38,7 @@ parts:
     plugin: nil
     source: .
     build-packages:
+      - git
       - openjdk-21-jdk-headless
     stage-packages:
       - libx11-6
@@ -59,7 +60,12 @@ parts:
       export GRADLE_USER_HOME="$CRAFT_PART_BUILD/.gradle"
       export PATH="$JAVA_HOME/bin:/snap/bin:$PATH"
 
-      gradle --no-daemon distBundle -PdownloadTtydLibraries=false
+      VERSION="${V:-${KODE_VERSION:-}}"
+      if [ -z "$VERSION" ]; then
+        VERSION="$(git describe --tags --abbrev=0)"
+      fi
+
+      gradle --no-daemon distBundle -PdownloadTtydLibraries=false -PreleaseNumber="$VERSION"
 
       MODULES="$("$JAVA_HOME/bin/jdeps" \
         --ignore-missing-deps \
@@ -96,4 +102,4 @@ parts:
       EOF
       chmod 755 "$CRAFT_PART_INSTALL/bin/kode"
 
-      craftctl set version="$(git describe --tags --abbrev=0 2>/dev/null || echo 3.3.5)"
+      craftctl set version="$VERSION"
