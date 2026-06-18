@@ -4,9 +4,8 @@ import editor.lib.AsciiImageRenderer
 import editor.lib.BixelAsciiImageRenderer
 import editor.lib.QuadxelAsciiImageRenderer
 import editor.lib.BrailleAsciiImageRenderer
+import editor.lib.readKodeBitmap
 import editor.mime.MimeTypeResult
-import korlibs.image.format.readBitmap
-import korlibs.io.file.std.localVfs
 import kotlinx.coroutines.runBlocking
 import react.BaseComponent
 import react.StyleSet
@@ -326,7 +325,7 @@ class ImageViewerView(
         if (filePath.isEmpty()) return
         runCatching {
             runBlocking {
-                val bmp = localVfs(filePath).readBitmap()
+                val bmp = readKodeBitmap(filePath)
                 srcWidth = bmp.width
                 srcHeight = bmp.height
             }

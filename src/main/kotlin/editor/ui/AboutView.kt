@@ -58,6 +58,12 @@ class AboutView(
             sourceUrl = "https://github.com/java-native-access/jna"
         ),
         Credit(
+            name = "ttyd native web terminal (original by Shuanglei Tao, forked native libraries by alfu32)",
+            license = "MIT",
+            licenseUrl = "https://opensource.org/licenses/MIT",
+            sourceUrl = "https://github.com/tsl0922/ttyd | https://github.com/alfu32/ttyd"
+        ),
+        Credit(
             name = "Tree-sitter core 0.25.3",
             license = "MIT",
             licenseUrl = "https://opensource.org/licenses/MIT",

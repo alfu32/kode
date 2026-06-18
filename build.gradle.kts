@@ -1,4 +1,7 @@
 import java.io.ByteArrayOutputStream
+import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import org.gradle.api.tasks.bundling.Zip
 
 plugins {
@@ -76,6 +79,38 @@ kotlin {
 }
 
 val externalColorMap = layout.projectDirectory.file("token-colors.txt")
+val ttydResourceDir = layout.buildDirectory.dir("generated/ttyd-resources")
+val ttydReleaseBaseUrl = "https://github.com/alfu32/ttyd/releases/latest/download"
+val ttydAssets = listOf(
+    "ttyd.macos.dylib",
+    "ttyd.msvc.dll",
+    "ttyd.linux.so"
+)
+
+tasks.register("downloadTtydLibraries") {
+    group = "distribution"
+    description = "Download ttyd shared libraries into generated resources for bundled serve mode"
+    outputs.dir(ttydResourceDir)
+    doLast {
+        val outDir = ttydResourceDir.get().asFile.resolve("native/ttyd")
+        outDir.deleteRecursively()
+        outDir.mkdirs()
+        ttydAssets.forEach { asset ->
+            val target = outDir.resolve(asset)
+            val temp = outDir.resolve("$asset.download")
+            val url = "$ttydReleaseBaseUrl/$asset"
+            println("Downloading $url")
+            URI(url).toURL().openStream().use { input ->
+                temp.outputStream().use { output -> input.copyTo(output) }
+            }
+            Files.move(
+                temp.toPath(),
+                target.toPath(),
+                StandardCopyOption.REPLACE_EXISTING
+            )
+        }
+    }
+}
 
 fun Project.latestTagOrVersion(defaultVersion: String = baseVersion): String {
     return try {
@@ -120,8 +155,12 @@ tasks.register<Jar>("fatJar") {
         attributes["Implementation-Version"] = project.version.toString()
     }
 
+    val ttydLibraries = tasks.named("downloadTtydLibraries")
+    dependsOn(ttydLibraries)
+
     // include compiled classes/resources of this project
     from(sourceSets.main.get().output)
+    from(ttydResourceDir)
 
     // include all runtime dependencies
     val runtimeClasspath = configurations.runtimeClasspath.get()

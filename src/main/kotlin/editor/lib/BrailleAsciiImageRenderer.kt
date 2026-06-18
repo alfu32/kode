@@ -1,7 +1,5 @@
 package editor.lib
 
-import korlibs.image.format.readBitmap
-import korlibs.io.file.std.localVfs
 import kotlinx.coroutines.runBlocking
 
 class BrailleAsciiImageRenderer : AsciiImageRenderer {
@@ -12,7 +10,7 @@ class BrailleAsciiImageRenderer : AsciiImageRenderer {
         grayThreshold: Double,
         scatterThreshold: Double
     ): String = runBlocking {
-        val bmp = localVfs(path).readBitmap()
+        val bmp = readKodeBitmap(path)
         AsciiCore.pixelsToBraille(
             outWidth = outWidth,
             outHeight = outHeight,

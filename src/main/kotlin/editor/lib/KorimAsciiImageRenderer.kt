@@ -1,8 +1,6 @@
 package editor.lib
 
 // KorimAsciiImageRenderer.kt
-import korlibs.image.format.readBitmap
-import korlibs.io.file.std.localVfs
 import kotlinx.coroutines.runBlocking
 
 class KorimAsciiImageRenderer : AsciiImageRenderer {
@@ -14,7 +12,7 @@ class KorimAsciiImageRenderer : AsciiImageRenderer {
         grayThreshold: Double,
         scatterThreshold: Double
     ): String = runBlocking {
-        val bmp = localVfs(path).readBitmap()
+        val bmp = readKodeBitmap(path)
 
         AsciiCore.pixelsToAscii(
             outWidth = outWidth,

@@ -1,7 +1,5 @@
 package editor.lib
 
-import korlibs.image.format.readBitmap
-import korlibs.io.file.std.localVfs
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -16,7 +14,7 @@ class BixelAsciiImageRenderer : AsciiImageRenderer {
         grayThreshold: Double,
         scatterThreshold: Double
     ): String = runBlocking {
-        val bmp = localVfs(path).readBitmap()
+        val bmp = readKodeBitmap(path)
         AsciiCore.pixelsToBixels(
             outWidth = outWidth,
             outHeight = outHeight,

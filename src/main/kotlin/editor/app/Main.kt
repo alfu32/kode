@@ -32,16 +32,15 @@ import editor.ui.SourceFolderPickerDialog
 import editor.db.DbServerManager
 import editor.db.DbStatus
 import editor.codeintel.DbCodeIntelStore
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.Instant
 import editor.lib.FileTree
 import editor.lib.JGitService
-import java.io.File
 import java.net.URL
 import java.lang.management.ManagementFactory
-import java.lang.ProcessBuilder
 import com.sun.management.OperatingSystemMXBean
 import java.util.Locale
 import java.util.Comparator
@@ -220,6 +219,10 @@ fun main(args: Array<String>) {
             runInstall()
             return
         }
+        "serve" -> {
+            runServe(args.drop(1).toTypedArray())
+            return
+        }
         "cat" -> {
             if (args.size < 2) {
                 System.err.println("Missing file path for `kode cat`.")
@@ -269,13 +272,178 @@ private fun printHelp() {
         Usage:
           kode <folder>          Open project at folder
           kode cat <file>        Print file with syntax highlighting
+          kode serve [options] [folder]
+                               Serve Kode through a browser terminal
           kode install           Create launchers (cmd/bat/sh/ps1) in current folder
           kode update            Self-update from GitHub release
           kode version           Print version
           kode help              Show this help
+
+        Serve options:
+          --port <number>         HTTP port, default 11045
+          --host <address>        Bind address, default 127.0.0.1
+          --public                Bind 0.0.0.0
+          --credential <u:p>      Basic auth credential passed to ttyd
+          -- <args...>            Pass remaining args directly to ttyd
         """.trimIndent()
     )
 }
+
+private data class ServeOptions(
+    val port: Int = 11045,
+    val host: String = "127.0.0.1",
+    val credential: String? = null,
+    val folder: Path = Paths.get("").toAbsolutePath().normalize(),
+    val ttydArgs: List<String> = emptyList()
+)
+
+private fun runServe(args: Array<String>) {
+    val options = parseServeOptions(args) ?: return
+    if (!Files.isDirectory(options.folder)) {
+        System.err.println("Serve folder must be an existing directory: ${options.folder}")
+        exitProcess(1)
+    }
+
+    val kodeCommand = resolveKodeChildCommand(options.folder)
+    val ttyd = TtydAdapter.resolveLibrary()
+    if (ttyd == null) {
+        val platform = TtydAdapter.describePlatform()
+        val asset = TtydAdapter.assetNameForCurrentPlatform()
+        System.err.println("`kode serve` requires bundled ttyd, but no usable ttyd native library is available for $platform.")
+        if (asset != null) {
+            System.err.println("Expected bundled asset: /native/ttyd/$asset")
+            System.err.println("Run `./gradlew downloadTtydLibraries fatJar` before packaging.")
+        } else {
+            System.err.println("This OS is not mapped to a ttyd native library asset.")
+        }
+        exitProcess(1)
+    }
+
+    val ttydArgs = buildTtydArguments(options, kodeCommand)
+    println("Serving Kode with bundled ttyd (${ttyd.assetName}) at http://${options.host}:${options.port}")
+    if (options.host == "127.0.0.1" || options.host == "localhost") {
+        println("Remote access through SSH tunnel: ssh -L ${options.port}:127.0.0.1:${options.port} <host>")
+    } else if (options.credential == null) {
+        System.err.println("Warning: public writable terminal without --credential.")
+    }
+
+    val exit = try {
+        TtydAdapter.invokeMain(ttyd, ttydArgs)
+    } catch (ex: Throwable) {
+        System.err.println("Failed to start bundled ttyd native library (${ttyd.assetName}): ${ex.message}")
+        1
+    }
+    exitProcess(exit)
+}
+
+private fun parseServeOptions(args: Array<String>): ServeOptions? {
+    var port = 11045
+    var host = "127.0.0.1"
+    var credential: String? = null
+    var folder: Path? = null
+    val ttydArgs = mutableListOf<String>()
+    var i = 0
+    while (i < args.size) {
+        val arg = args[i]
+        when {
+            arg == "--" -> {
+                ttydArgs += args.drop(i + 1)
+                break
+            }
+            arg == "--port" || arg == "-p" || arg == "--post" -> {
+                val value = args.getOrNull(++i)
+                if (value == null) {
+                    System.err.println("Missing value for $arg")
+                    return null
+                }
+                port = value.toIntOrNull()?.takeIf { it in 1..65535 } ?: run {
+                    System.err.println("Invalid port: $value")
+                    return null
+                }
+            }
+            arg.startsWith("--port=") || arg.startsWith("--post=") -> {
+                val value = arg.substringAfter('=')
+                port = value.toIntOrNull()?.takeIf { it in 1..65535 } ?: run {
+                    System.err.println("Invalid port: $value")
+                    return null
+                }
+            }
+            arg == "--host" -> {
+                host = args.getOrNull(++i)?.takeIf { it.isNotBlank() } ?: run {
+                    System.err.println("Missing value for --host")
+                    return null
+                }
+            }
+            arg.startsWith("--host=") -> host = arg.substringAfter('=').takeIf { it.isNotBlank() } ?: host
+            arg == "--public" -> host = "0.0.0.0"
+            arg == "--credential" || arg == "-c" -> {
+                credential = args.getOrNull(++i)?.takeIf { it.contains(':') } ?: run {
+                    System.err.println("Missing or invalid value for $arg, expected user:password")
+                    return null
+                }
+            }
+            arg.startsWith("--credential=") -> {
+                credential = arg.substringAfter('=').takeIf { it.contains(':') } ?: run {
+                    System.err.println("Invalid credential, expected user:password")
+                    return null
+                }
+            }
+            arg.startsWith("-") -> {
+                ttydArgs += args.drop(i)
+                break
+            }
+            folder == null -> folder = Paths.get(arg).toAbsolutePath().normalize()
+            else -> {
+                ttydArgs += args.drop(i)
+                break
+            }
+        }
+        i++
+    }
+    return ServeOptions(
+        port = port,
+        host = host,
+        credential = credential,
+        folder = folder ?: Paths.get("").toAbsolutePath().normalize(),
+        ttydArgs = ttydArgs
+    )
+}
+
+private fun buildTtydArguments(options: ServeOptions, kodeCommand: List<String>): List<String> {
+    val command = mutableListOf(
+        "ttyd",
+        "-p", options.port.toString(),
+        "-i", options.host,
+        "-W",
+        "-T", "xterm-256color",
+        "-w", options.folder.toString(),
+        "-t", "titleFixed=Kode"
+    )
+    options.credential?.let { command += listOf("-c", it) }
+    command += options.ttydArgs
+    command += kodeCommand
+    return command
+}
+
+private fun resolveKodeChildCommand(folder: Path): List<String> {
+    val jar = resolveSelfJarPath()
+    return if (jar != null) {
+        listOf(resolveJavaExecutable(), "-jar", jar.toAbsolutePath().normalize().toString(), folder.toString())
+    } else {
+        listOf("kode", folder.toString())
+    }
+}
+
+private fun resolveJavaExecutable(): String {
+    val name = if (isWindowsHost()) "java.exe" else "java"
+    val javaHome = System.getProperty("java.home")?.takeIf { it.isNotBlank() }
+    val javaBin = javaHome?.let { Paths.get(it, "bin", name) }
+    if (javaBin != null && Files.isExecutable(javaBin)) return javaBin.toString()
+    return "java"
+}
+
+private fun isWindowsHost(): Boolean =
+    System.getProperty("os.name").lowercase(Locale.ROOT).contains("windows")
 
 private fun downloadUpdate(parent:Path,filename:String) {
     val target = parent.resolve(filename)
