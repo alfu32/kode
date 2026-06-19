@@ -27,8 +27,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Build Linux bundle
-        run: ./gradlew --no-daemon releaseBundle -PreleaseNumber="${{ inputs.tag }}" -PbundleRuntime=true
+      - name: Fetch appimagetool
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool.AppImage" \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool.AppImage"
+      - name: Build Linux bundle and AppImage
+        env:
+          APPIMAGETOOL: ${{ runner.temp }}/appimagetool.AppImage
+        run: ./gradlew --no-daemon releaseBundle releaseAppImage -PreleaseNumber="${{ inputs.tag }}" -PbundleRuntime=true
       - name: Archive Linux bundle
         run: |
           set -euo pipefail
@@ -42,6 +50,7 @@ jobs:
           path: |
             dist/kode-dist-${{ inputs.tag }}-linux.tar.gz
             dist/kode-dist-${{ inputs.tag }}-linux.zip
+            dist/kode-dist-${{ inputs.tag }}-linux.AppImage
 
   build-windows:
     runs-on: windows-latest

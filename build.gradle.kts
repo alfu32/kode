@@ -1,4 +1,5 @@
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -312,6 +313,194 @@ tasks.register<Zip>("releaseZip") {
     from(relDir)
     archiveFileName.set("kode-rel-$tag.zip")
     destinationDirectory.set(layout.projectDirectory.asFile)
+}
+
+val appImageDir = layout.buildDirectory.dir("appimage/Kode.AppDir")
+
+tasks.register("releaseAppImage") {
+    group = "distribution"
+    description = "Build a self-contained Linux AppImage from the release payload"
+    val fat = tasks.named<Jar>("fatJar")
+    val launchers = tasks.named("generateLaunchers")
+    dependsOn(fat, launchers, configurations.named("h2Dist"), "createRuntimeImage")
+    val outFile = layout.projectDirectory.file("dist/kode-dist-$bundleVersion-linux.AppImage")
+    outputs.dir(appImageDir)
+    outputs.file(outFile)
+
+    doLast {
+        if (!System.getProperty("os.name").lowercase().contains("linux")) {
+            throw GradleException("AppImage packaging is only supported on Linux hosts.")
+        }
+
+        val configuredTool = System.getenv("APPIMAGETOOL")
+            ?.takeIf { it.isNotBlank() }
+            ?: (findProperty("appImageTool") as String?)?.takeIf { it.isNotBlank() }
+        val localTool = layout.projectDirectory.file("appimagetool-x86_64.AppImage").asFile
+        val appImageToolPath = configuredTool
+            ?: localTool.takeIf { it.exists() }?.also { it.setExecutable(true, false) }?.absolutePath
+            ?: "appimagetool"
+
+        val toolWorks = try {
+            val probe = ProcessBuilder(appImageToolPath, "--version")
+                .directory(projectDir)
+                .redirectErrorStream(true)
+            if (appImageToolPath.endsWith(".AppImage")) {
+                probe.environment()["APPIMAGE_EXTRACT_AND_RUN"] = "1"
+            }
+            val process = probe.start()
+            process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor() == 0
+        } catch (_: IOException) {
+            false
+        }
+        if (!toolWorks) {
+            throw GradleException("appimagetool not found. Install appimagetool, set APPIMAGETOOL, or pass -PappImageTool=/path/to/appimagetool.")
+        }
+
+        val appDir = appImageDir.get().asFile
+        val output = outFile.asFile
+        delete(appDir)
+        delete(output)
+
+        val payloadDir = appDir.resolve("usr/lib/kode")
+        val binDir = appDir.resolve("usr/bin")
+        val applicationsDir = appDir.resolve("usr/share/applications")
+        val iconDir = appDir.resolve("usr/share/icons/hicolor/512x512/apps")
+        listOf(payloadDir, binDir, applicationsDir, iconDir, output.parentFile).forEach { it.mkdirs() }
+
+        copy {
+            from(fat.get().archiveFile) { rename { "kode.jar" } }
+            into(payloadDir)
+        }
+        val h2Jar = configurations.named("h2Dist").get().singleFile
+        copy {
+            from(h2Jar) { rename { "h2.jar" } }
+            into(payloadDir)
+        }
+        copy {
+            from(zipTree(h2Jar)) {
+                include("META-INF/LICENSE*", "LICENSE*")
+                rename { "h2-LICENSE.txt" }
+            }
+            into(payloadDir)
+        }
+        externalColorMap.asFile.takeIf { it.exists() }?.let { file ->
+            copy {
+                from(file)
+                into(payloadDir)
+            }
+        }
+        layout.projectDirectory.file("keyword-patterns.txt").asFile.takeIf { it.exists() }?.let { file ->
+            copy {
+                from(file)
+                into(payloadDir)
+            }
+        }
+        layout.projectDirectory.file("README.md").asFile.takeIf { it.exists() }?.let { file ->
+            copy {
+                from(file)
+                into(payloadDir)
+            }
+        }
+        layout.projectDirectory.file("codeintel/definitions.json").asFile.takeIf { it.exists() }?.let { file ->
+            copy {
+                from(file)
+                into(payloadDir.resolve("codeintel"))
+            }
+        }
+        layout.projectDirectory.file("lsp/servers.json").asFile.takeIf { it.exists() }?.let { file ->
+            copy {
+                from(file)
+                into(payloadDir.resolve("lsp"))
+            }
+        }
+        layout.projectDirectory.file("styles/app.css").asFile.takeIf { it.exists() }?.let { file ->
+            copy {
+                from(file)
+                into(payloadDir.resolve("styles"))
+            }
+        }
+        copy {
+            from(launcherDir) {
+                include("kode", "kode.sh")
+            }
+            into(payloadDir)
+        }
+        copy {
+            from(runtimeImageDir)
+            into(payloadDir.resolve("runtime"))
+        }
+
+        val binLauncher = binDir.resolve("kode")
+        binLauncher.writeText(
+            """
+            |#!/bin/sh
+            |set -eu
+            |HERE="$(CDPATH= cd -- "$(dirname -- "${'$'}0")" && pwd)"
+            |exec "${'$'}HERE/../lib/kode/kode" "${'$'}@"
+            |""".trimMargin()
+        )
+        binLauncher.setExecutable(true, false)
+
+        val appRun = appDir.resolve("AppRun")
+        appRun.writeText(
+            """
+            |#!/bin/sh
+            |set -eu
+            |HERE="$(CDPATH= cd -- "$(dirname -- "${'$'}0")" && pwd)"
+            |exec "${'$'}HERE/usr/bin/kode" "${'$'}@"
+            |""".trimMargin()
+        )
+        appRun.setExecutable(true, false)
+
+        val desktopEntry = """
+            |[Desktop Entry]
+            |Name=Kode
+            |Comment=Terminal-first code editor
+            |Exec=kode %F
+            |Icon=kode
+            |Terminal=true
+            |Type=Application
+            |Categories=Development;TextEditor;
+            |MimeType=text/plain;inode/directory;
+            |StartupNotify=false
+            |""".trimMargin()
+        appDir.resolve("kode.desktop").writeText(desktopEntry)
+        applicationsDir.resolve("kode.desktop").writeText(desktopEntry)
+
+        val iconSource = layout.projectDirectory.file("icon.png").asFile
+        if (iconSource.exists()) {
+            copy {
+                from(iconSource)
+                into(appDir)
+                rename { "kode.png" }
+            }
+            copy {
+                from(iconSource)
+                into(iconDir)
+                rename { "kode.png" }
+            }
+        }
+
+        ensureUnixRuntimeExecutables(payloadDir)
+
+        val arch = when (System.getProperty("os.arch").lowercase()) {
+            "amd64", "x86_64", "x64" -> "x86_64"
+            "aarch64", "arm64" -> "aarch64"
+            else -> System.getProperty("os.arch")
+        }
+        val pack = ProcessBuilder(appImageToolPath, appDir.absolutePath, output.absolutePath)
+            .directory(projectDir)
+            .inheritIO()
+        pack.environment()["ARCH"] = arch
+        if (appImageToolPath.endsWith(".AppImage")) {
+            pack.environment()["APPIMAGE_EXTRACT_AND_RUN"] = "1"
+        }
+        val process = pack.start()
+        if (process.waitFor() != 0) {
+            throw GradleException("appimagetool failed while building ${output.name}.")
+        }
+    }
 }
 
 
