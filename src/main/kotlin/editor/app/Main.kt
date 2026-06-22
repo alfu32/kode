@@ -305,14 +305,14 @@ private fun runServe(args: Array<String>) {
     }
 
     val kodeCommand = resolveKodeChildCommand(options.folder)
-    val ttyd = TtydAdapter.resolveLibrary()
+    val ttyd = TtydAdapter.resolveLauncher()
     if (ttyd == null) {
         val platform = TtydAdapter.describePlatform()
         val asset = TtydAdapter.assetNameForCurrentPlatform()
-        System.err.println("`kode serve` requires bundled ttyd, but no usable ttyd native library is available for $platform.")
+        System.err.println("`kode serve` requires bundled ttyd, but no usable ttyd launcher is available for $platform.")
         if (asset != null) {
             System.err.println("Expected bundled asset: /native/ttyd/$asset")
-            System.err.println("Run `./gradlew downloadTtydLibraries fatJar` before packaging.")
+            System.err.println("Vendor ttyd native libraries in src/main/resources/native/ttyd or run `./gradlew -PdownloadTtydLibraries=true downloadTtydLibraries fatJar` before packaging.")
         } else {
             System.err.println("This OS is not mapped to a ttyd native library asset.")
         }
@@ -320,7 +320,8 @@ private fun runServe(args: Array<String>) {
     }
 
     val ttydArgs = buildTtydArguments(options, kodeCommand)
-    println("Serving Kode with bundled ttyd (${ttyd.assetName}) at http://${options.host}:${options.port}")
+    val ttydKind = if (ttyd.mode == TtydLaunchMode.EXECUTABLE) "executable" else "native library"
+    println("Serving Kode with bundled ttyd $ttydKind (${ttyd.assetName}) at http://${options.host}:${options.port}")
     if (options.host == "127.0.0.1" || options.host == "localhost") {
         println("Remote access through SSH tunnel: ssh -L ${options.port}:127.0.0.1:${options.port} <host>")
     } else if (options.credential == null) {
@@ -328,9 +329,9 @@ private fun runServe(args: Array<String>) {
     }
 
     val exit = try {
-        TtydAdapter.invokeMain(ttyd, ttydArgs)
+        TtydAdapter.invoke(ttyd, ttydArgs)
     } catch (ex: Throwable) {
-        System.err.println("Failed to start bundled ttyd native library (${ttyd.assetName}): ${ex.message}")
+        System.err.println("Failed to start bundled ttyd $ttydKind (${ttyd.assetName}): ${ex.message}")
         1
     }
     exitProcess(exit)
@@ -428,19 +429,29 @@ private fun buildTtydArguments(options: ServeOptions, kodeCommand: List<String>)
 private fun resolveKodeChildCommand(folder: Path): List<String> {
     val jar = resolveSelfJarPath()
     return if (jar != null) {
-        listOf(resolveJavaExecutable(), "-jar", jar.toAbsolutePath().normalize().toString(), folder.toString())
+        listOf(resolveJavaExecutable(jar), "-jar", jar.toAbsolutePath().normalize().toString(), folder.toString())
     } else {
         listOf("kode", folder.toString())
     }
 }
 
-private fun resolveJavaExecutable(): String {
+private fun resolveJavaExecutable(selfJar: Path? = resolveSelfJarPath()): String {
     val name = if (isWindowsHost()) "java.exe" else "java"
+    selfJar?.parent?.let { jarDir ->
+        bundledJavaCandidates(jarDir, name).firstOrNull { Files.isExecutable(it) }?.let {
+            return it.toString()
+        }
+    }
     val javaHome = System.getProperty("java.home")?.takeIf { it.isNotBlank() }
     val javaBin = javaHome?.let { Paths.get(it, "bin", name) }
     if (javaBin != null && Files.isExecutable(javaBin)) return javaBin.toString()
     return "java"
 }
+
+private fun bundledJavaCandidates(jarDir: Path, name: String): Sequence<Path> = sequenceOf(
+    jarDir.resolve("runtime").resolve("bin").resolve(name),
+    jarDir.resolve("runtime").resolve("Contents").resolve("Home").resolve("bin").resolve(name)
+)
 
 private fun isWindowsHost(): Boolean =
     System.getProperty("os.name").lowercase(Locale.ROOT).contains("windows")

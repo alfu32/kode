@@ -98,11 +98,11 @@ val downloadBundledTtydLibraries = providers.gradleProperty("downloadTtydLibrari
                 ?: throw GradleException("KODE_DOWNLOAD_TTYD_LIBRARIES must be true or false, got '$value'")
         }
     )
-    .getOrElse(true)
+    .getOrElse(false)
 
 tasks.register("downloadTtydLibraries") {
     group = "distribution"
-    description = "Download ttyd shared libraries into generated resources for bundled serve mode"
+    description = "Download ttyd native libraries into generated resources for bundled serve mode"
     outputs.dir(ttydResourceDir)
     outputs.upToDateWhen { false }
     doLast {
@@ -174,7 +174,7 @@ tasks.register<Jar>("fatJar") {
         dependsOn(ttydLibraries)
         from(ttydResourceDir)
     } else {
-        logger.lifecycle("Skipping bundled ttyd native library download; kode serve will require vendored native resources.")
+        logger.lifecycle("Using vendored ttyd native libraries from src/main/resources.")
     }
 
     // include compiled classes/resources of this project

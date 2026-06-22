@@ -24,6 +24,7 @@ class GitPanelView(
 
     private var statusEntries: List<GitStatusEntry> = emptyList()
     private var commitEntries: List<GitCommitEntry> = emptyList()
+    private var gitErrorMessage: String? = null
     private var selectedCommitIdx: Int = -1
     private var selectedStatusIdx: Int = -1
     private var commitScroll: Int = 0
@@ -58,10 +59,23 @@ class GitPanelView(
         if (svc == null) {
             statusEntries = emptyList()
             commitEntries = emptyList()
+            gitErrorMessage = null
             return
         }
-        statusEntries = svc.statusPorcelain().sortedBy { it.path }
-        commitEntries = svc.listCommits()
+        val errors = mutableListOf<String>()
+        statusEntries = runCatching {
+            svc.statusPorcelain().sortedBy { it.path }
+        }.getOrElse { ex ->
+            errors += "Git status unavailable: ${formatGitError(ex)}"
+            emptyList()
+        }
+        commitEntries = runCatching {
+            svc.listCommits()
+        }.getOrElse { ex ->
+            errors += "Git commits unavailable: ${formatGitError(ex)}"
+            emptyList()
+        }
+        gitErrorMessage = errors.takeIf { it.isNotEmpty() }?.joinToString(" | ")
         commitScroll = commitScroll.coerceIn(0, (commitEntries.size - 1).coerceAtLeast(0))
         commitRows = buildCommitRows()
     }
@@ -112,16 +126,30 @@ class GitPanelView(
         val selectedStyle = styleSheet.getStyle("file-entry:selected")
         canvas.withStyle(lineStyle) {
             drawText(0, 0, ("Branch: $branch").take(cols).padEnd(cols, ' '))
-            val visible = (height - 1).coerceAtLeast(0)
+            val statusStartRow = statusStartRow()
+            gitErrorMessage?.let { message ->
+                if (height > 1) {
+                    drawText(0, 1, message.take(cols).padEnd(cols, ' '))
+                }
+            }
+            val visible = (height - statusStartRow).coerceAtLeast(0)
             statusEntries.take(visible).forEachIndexed { idx, entry ->
                 val style = if (idx == selectedStatusIdx) selectedStyle else lineStyle
                 withStyle(style) {
                     val stageFlag = if (entry.staged) "[S]" else "[ ]"
                     val label = "$stageFlag ${entry.code.padEnd(3)} ${entry.path}".take(cols).padEnd(cols, ' ')
-                    drawText(0, idx + 1, label)
+                    drawText(0, idx + statusStartRow, label)
                 }
             }
         }
+    }
+
+    private fun statusStartRow(): Int = if (gitErrorMessage == null) 1 else 2
+
+    private fun formatGitError(ex: Throwable): String {
+        val type = ex::class.simpleName ?: ex.javaClass.simpleName.ifBlank { "error" }
+        val detail = ex.message?.takeIf { it.isNotBlank() }
+        return if (detail == null) type else "$type: $detail"
     }
 
     private fun renderCommitBox(canvas: CanvasRenderer, cols: Int, offsetY: Int, height: Int) {
@@ -220,7 +248,7 @@ class GitPanelView(
         val midH = section
         when {
             y < topH -> { // status
-                val idx = y - 1
+                val idx = y - statusStartRow()
                 if (idx in statusEntries.indices) {
                     selectedStatusIdx = idx
                     val entry = statusEntries[idx]

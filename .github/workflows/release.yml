@@ -61,7 +61,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Build Windows bundle
-        run: .\gradlew.bat --no-daemon releaseBundle -PreleaseNumber="${{ inputs.tag }}"
+        run: .\gradlew.bat --no-daemon releaseBundle -PreleaseNumber="${{ inputs.tag }}" -PbundleRuntime=true
       - name: Archive Windows bundle
         shell: powershell
         run: |

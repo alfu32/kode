@@ -15,15 +15,21 @@ import java.util.Locale
 
 internal data class TtydLibrary(
     val path: Path,
-    val assetName: String
+    val assetName: String,
+    val mode: TtydLaunchMode
 )
+
+internal enum class TtydLaunchMode {
+    NATIVE_LIBRARY,
+    EXECUTABLE
+}
 
 internal object TtydAdapter {
     private const val RESOURCE_ROOT = "/native/ttyd"
 
-    fun resolveLibrary(): TtydLibrary? {
+    fun resolveLauncher(): TtydLibrary? {
         val asset = assetNameForCurrentPlatform() ?: return null
-        return extractBundledLibrary(asset)
+        return extractBundledLibrary(asset, launchModeForAsset(asset))
     }
 
     fun describePlatform(
@@ -42,7 +48,13 @@ internal object TtydAdapter {
             else -> null
         }
 
-    fun invokeMain(library: TtydLibrary, argv: List<String>): Int {
+    fun invoke(launcher: TtydLibrary, argv: List<String>): Int =
+        when (launcher.mode) {
+            TtydLaunchMode.NATIVE_LIBRARY -> invokeMain(launcher, argv)
+            TtydLaunchMode.EXECUTABLE -> invokeExecutable(launcher, argv)
+        }
+
+    private fun invokeMain(library: TtydLibrary, argv: List<String>): Int {
         val nativeLibrary = NativeLibrary.getInstance(library.path.toString())
         val main = nativeLibrary.getFunction("main", Function.C_CONVENTION)
         val nativeArgs = argv.map { toNativeCString(it) }
@@ -52,6 +64,14 @@ internal object TtydAdapter {
         }
         argvMemory.setPointer((nativeArgs.size * Native.POINTER_SIZE).toLong(), Pointer.NULL)
         return main.invokeInt(arrayOf(nativeArgs.size, argvMemory))
+    }
+
+    private fun invokeExecutable(executable: TtydLibrary, argv: List<String>): Int {
+        val command = listOf(executable.path.toString()) + argv.drop(1)
+        return ProcessBuilder(command)
+            .inheritIO()
+            .start()
+            .waitFor()
     }
 
     fun findExecutable(name: String = "ttyd"): Path? {
@@ -74,7 +94,7 @@ internal object TtydAdapter {
         return memory
     }
 
-    private fun extractBundledLibrary(asset: String): TtydLibrary? {
+    private fun extractBundledLibrary(asset: String, mode: TtydLaunchMode): TtydLibrary? {
         val resource = "$RESOURCE_ROOT/$asset"
         val bytes = TtydAdapter::class.java.getResourceAsStream(resource)?.use { it.readBytes() } ?: return null
         val hash = sha256(bytes).take(16)
@@ -87,12 +107,22 @@ internal object TtydAdapter {
                     Files.write(target, bytes)
                 }
                 target.toFile().setReadable(true, false)
+                if (mode == TtydLaunchMode.EXECUTABLE) {
+                    target.toFile().setExecutable(true, false)
+                }
             }.onSuccess {
-                return TtydLibrary(target, asset)
+                return TtydLibrary(target, asset, mode)
             }
         }
         return null
     }
+
+    private fun launchModeForAsset(asset: String): TtydLaunchMode =
+        if (asset.endsWith(".exe", ignoreCase = true)) {
+            TtydLaunchMode.EXECUTABLE
+        } else {
+            TtydLaunchMode.NATIVE_LIBRARY
+        }
 
     private fun resolveCacheRoots(): List<Path> {
         val roots = linkedSetOf<Path>()
