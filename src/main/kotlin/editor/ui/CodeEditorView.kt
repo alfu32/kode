@@ -80,7 +80,7 @@ class CodeEditorView(
     private var hoveredUsage: HoveredUsage? = null
     private var rerenderOnce: Boolean = false
     private val previewLineNumbers: MutableList<Int> = mutableListOf()
-    private var cachedCodeIntelTokens: List<editor.grammars.Token> = emptyList()
+    private var cachedCodeIntelTokensByLine: Map<Int, List<editor.grammars.Token>> = emptyMap()
     private var cachedCodeIntelTokenVersion: Long = -1L
 
     fun textContent(): String = buffer.text()
@@ -292,17 +292,18 @@ class CodeEditorView(
                 )
             )
             val semanticReady = codeIntelIndexer?.semanticVersion(filePath) == buffer.version()
+            val visibleLineRange = firstVisibleLine..lastVisibleLine
             val tokens = when {
                 freshTokens.isNotEmpty() || semanticReady -> {
-                    cachedCodeIntelTokens = cachedCodeIntelTokens
-                        .filterNot { it.line in firstVisibleLine..lastVisibleLine } + freshTokens
+                    cachedCodeIntelTokensByLine = cachedCodeIntelTokensByLine
+                        .filterKeys { it !in visibleLineRange } + freshTokens.groupBy { it.line }
                     cachedCodeIntelTokenVersion = buffer.version()
                     freshTokens
                 }
                 cachedCodeIntelTokenVersion >= 0L && cachedCodeIntelTokenVersion < buffer.version() -> {
                     // Keep the previous semantic paint while the debounced index catches up.
                     // Tree-sitter/regex lexical tokens continue to render immediately.
-                    cachedCodeIntelTokens
+                    visibleLineRange.flatMap { cachedCodeIntelTokensByLine[it].orEmpty() }
                 }
                 else -> freshTokens
             }
@@ -792,7 +793,7 @@ class CodeEditorView(
     }
 
     private fun clearCodeIntelTokenCache() {
-        cachedCodeIntelTokens = emptyList()
+        cachedCodeIntelTokensByLine = emptyMap()
         cachedCodeIntelTokenVersion = -1L
     }
 
