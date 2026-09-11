@@ -37,10 +37,15 @@ class CodeEditorView(
     private val codeIntelIndexer: CodeIntelService? = null,
     private val codeIntel: EditorIntelligenceService? = null,
     private val lsp: LspService? = null,
-    private val navigationHandler: ((String, Position) -> Unit)? = null
+    private val navigationHandler: ((String, Position) -> Unit)? = null,
+    private val projectRootProvider: () -> java.nio.file.Path = {
+        Paths.get("").toAbsolutePath().normalize()
+    }
 ) : BaseComponent(styleSheet) {
     private companion object {
         private const val HOVER_INFO_DELAY_MS = 500L
+        private const val MAX_DEFINITION_PREVIEW_LINES = 24
+        private const val MAX_USAGE_PATH_LENGTH = 64
     }
 
     private var localStyleSheet: StyleSheet = styleSheet
@@ -72,6 +77,8 @@ class CodeEditorView(
     private var hoveredUsage: HoveredUsage? = null
     private var rerenderOnce: Boolean = false
     private val previewLineNumbers: MutableList<Int> = mutableListOf()
+    private var cachedCodeIntelTokens: List<editor.grammars.Token> = emptyList()
+    private var cachedCodeIntelTokenVersion: Long = -1L
 
     fun textContent(): String = buffer.text()
 
@@ -79,6 +86,7 @@ class CodeEditorView(
         buffer.loadText(text)
         scrollTop = 0
         lastIndexedVersion = -1
+        clearCodeIntelTokenCache()
         triggerCodeIntel(force = true, immediate = true)
         syncLsp(open = true)
         rerenderOnce = true
@@ -144,6 +152,7 @@ class CodeEditorView(
         buffer.restoreState(state.buffer)
         scrollTop = state.scrollTop.coerceAtLeast(0)
         lastIndexedVersion = -1
+        clearCodeIntelTokenCache()
         triggerCodeIntel(force = true, immediate = true)
         syncLsp(open = true)
         rerenderOnce = true
@@ -158,6 +167,7 @@ class CodeEditorView(
         buffer.loadText(content)
         scrollTop = 0
         lastIndexedVersion = -1
+        clearCodeIntelTokenCache()
         triggerCodeIntel(force = true)
         syncLsp(open = true)
     }
@@ -187,6 +197,7 @@ class CodeEditorView(
         this.grammarLanguage = grammarLanguage ?: detection?.language
         scrollTop = 0
         lastIndexedVersion = -1
+        clearCodeIntelTokenCache()
         triggerCodeIntel(force = true)
         syncLsp(open = true)
     }
@@ -267,7 +278,7 @@ class CodeEditorView(
         val codeIntelTokensByLine = if (codeIntel != null && filePath.isNotEmpty()) {
             val sliceEnd = (lastVisibleLine + 1).coerceAtMost(lines.size)
             val lineSlice = lines.subList(firstVisibleLine, sliceEnd)
-            codeIntel.tokens(
+            val freshTokens = codeIntel.tokens(
                 TokensRequest(
                     filePath = filePath,
                     language = grammarLanguage ?: language,
@@ -275,7 +286,23 @@ class CodeEditorView(
                     lines = lineSlice,
                     version = buffer.version()
                 )
-            ).groupBy { it.line }
+            )
+            val semanticReady = codeIntelIndexer?.semanticVersion(filePath) == buffer.version()
+            val tokens = when {
+                freshTokens.isNotEmpty() || semanticReady -> {
+                    cachedCodeIntelTokens = cachedCodeIntelTokens
+                        .filterNot { it.line in firstVisibleLine..lastVisibleLine } + freshTokens
+                    cachedCodeIntelTokenVersion = buffer.version()
+                    freshTokens
+                }
+                cachedCodeIntelTokenVersion >= 0L && cachedCodeIntelTokenVersion < buffer.version() -> {
+                    // Keep the previous semantic paint while the debounced index catches up.
+                    // Tree-sitter/regex lexical tokens continue to render immediately.
+                    cachedCodeIntelTokens
+                }
+                else -> freshTokens
+            }
+            tokens.groupBy { it.line }
         } else {
             emptyMap()
         }
@@ -750,12 +777,19 @@ class CodeEditorView(
         val cursor = buffer.cursorPosition()
         val startCol = (cursor.column - prefix.length).coerceAtLeast(0)
         val startPos = Position(cursor.line, startCol)
-        buffer.startSelection(startPos)
-        buffer.selectTo(cursor)
-        buffer.deleteBackspace()
+        if (prefix.isNotEmpty()) {
+            buffer.startSelection(startPos)
+            buffer.selectTo(cursor)
+            buffer.deleteBackspace()
+        }
         buffer.insertText(suggestion)
         val newCursor = Position(cursor.line, startCol + suggestion.length)
         buffer.moveCursorTo(newCursor, expand = false)
+    }
+
+    private fun clearCodeIntelTokenCache() {
+        cachedCodeIntelTokens = emptyList()
+        cachedCodeIntelTokenVersion = -1L
     }
 
     private fun openSuggestions() {
@@ -925,6 +959,7 @@ class CodeEditorView(
         val entries = mutableListOf<Pair<String, String>>()
         entries += "name" to candidate.name
         val def = defs.firstOrNull()
+        val definitionPreview = def?.let(::loadDefinitionPreview)
         def?.kind?.let { entries += "kind" to it.name.lowercase() }
         def?.filePath?.let { entries += "file" to it }
         def?.range?.start?.let { pos ->
@@ -938,8 +973,27 @@ class CodeEditorView(
         def?.tsFieldNames?.let { entries += "ts_field_names" to it }
         def?.tsHierarchyKind?.let { entries += "ts_hierarchy_kind" to it }
         if (refs.isNotEmpty()) entries += "usages" to refs.size.toString()
-        if (entries.size == 1) return null // only name, nothing useful
-        return InfoPopup(candidate.anchor, entries)
+        if (entries.size == 1 && definitionPreview == null) return null // only name, nothing useful
+        return InfoPopup(candidate.anchor, entries, definitionPreview)
+    }
+
+    private fun loadDefinitionPreview(target: NavigationTarget): DefinitionPreview? {
+        val source = runCatching { Files.readString(Paths.get(target.filePath)) }.getOrNull() ?: return null
+        val range = target.definitionRange ?: target.range
+        val lines = source.split('\n')
+        if (lines.isEmpty()) return null
+        val firstLine = range.start.line.coerceIn(0, lines.lastIndex)
+        val lastLine = (if (range.end.column == 0 && range.end.line > firstLine) range.end.line - 1 else range.end.line)
+            .coerceIn(firstLine, lines.lastIndex)
+        val selected = lines.subList(firstLine, (lastLine + 1).coerceAtMost(firstLine + MAX_DEFINITION_PREVIEW_LINES))
+        if (selected.isEmpty()) return null
+        return DefinitionPreview(
+            filePath = target.filePath,
+            language = target.tsLanguage ?: language,
+            version = codeIntelIndexer?.semanticVersion(target.filePath) ?: 0L,
+            startLine = firstLine,
+            lines = selected
+        )
     }
 
     private fun maybeShowHoverInfo(now: Long): Boolean {
@@ -1636,38 +1690,107 @@ class CodeEditorView(
         }
         val anchorRow = visualRowForPosition(popup.anchor, layout)
         val screenRow = bodyStartRow + (anchorRow - scrollTop)
-        val maxLabel = popup.entries.maxOfOrNull { "${it.first}: ${it.second}".length } ?: 0
+        val preview = popup.definition
+        val maxLabel = maxOf(
+            popup.entries.maxOfOrNull { "${it.first}: ${it.second}".length } ?: 0,
+            preview?.lines?.maxOfOrNull(String::length) ?: 0,
+            if (preview != null) "definition:".length else 0
+        )
         val width = (maxLabel + 2).coerceAtMost((cols - gutterWidth).coerceAtLeast(16))
-        val height = (popup.entries.size + 1).coerceAtMost(rows.coerceAtLeast(2))
+        val contentRows = popup.entries.size + (preview?.let { it.lines.size + 1 } ?: 0)
+        val height = (contentRows + 1).coerceAtMost(rows.coerceAtLeast(2))
         val x = (gutterWidth + popup.anchor.column).coerceIn(0, (cols - width).coerceAtLeast(0))
         var finalY = (screenRow - height).coerceAtLeast(bodyStartRow)
         if (finalY + height > rows) finalY = (rows - height).coerceAtLeast(bodyStartRow)
         val style = localStyleSheet.getStyle("code-search-bar").withDefaults()
         canvas.withStyle(style) {
             drawRect(x, finalY, width, height)
-            popup.entries.take(height - 1).forEachIndexed { idx, entry ->
+            var row = 1
+            if (preview != null && row < height) {
+                drawText(x + 1, finalY + row, "definition:".take(width - 2).padEnd(width - 2, ' '))
+                row++
+                val previewSyntax = if (syntaxProvider != null && !preview.language.isNullOrBlank()) {
+                    syntaxProvider.tokensForLines(preview.startLine, preview.lines, preview.language!!).groupBy { it.line }
+                } else {
+                    emptyMap()
+                }
+                val previewSemantic = if (codeIntel != null && preview.version >= 0L) {
+                    codeIntel.tokens(
+                        TokensRequest(
+                            filePath = preview.filePath,
+                            language = preview.language,
+                            startLine = preview.startLine,
+                            lines = preview.lines,
+                            version = preview.version
+                        )
+                    ).groupBy { it.line }
+                } else {
+                    emptyMap()
+                }
+                preview.lines.forEachIndexed { index, lineText ->
+                    if (row >= height) return@forEachIndexed
+                    renderLineWithTokens(
+                        canvas = this,
+                        text = lineText,
+                        y = finalY + row,
+                        startX = x + 1,
+                        maxCols = width - 2,
+                        tokens = previewSyntax[preview.startLine + index].orEmpty(),
+                        overlayTokens = previewSemantic[preview.startLine + index].orEmpty(),
+                        baseStyle = style,
+                        selection = null,
+                        selectionStyle = style,
+                        highlights = emptyList(),
+                        highlightStyle = style,
+                        activeHighlightStyle = style
+                    )
+                    row++
+                }
+            }
+            popup.entries.forEach { entry ->
+                if (row >= height) return@forEach
                 val text = "${entry.first}: ${entry.second}".take(width - 2).padEnd(width - 2, ' ')
-                drawText(x + 1, finalY + idx + 1, text)
+                drawText(x + 1, finalY + row, text)
+                row++
             }
         }
         renderedInfo = RenderedPopup(x, finalY, width, height)
     }
 
     private fun buildUsageLabel(filePath: String, line: Int, column: Int, identifier: String): String {
-        val relPath = relativePath(filePath)
+        val relPath = compactPath(relativePath(filePath))
         val lineText = readLineText(filePath, line)
         val snippet = snippetAround(lineText, column, identifier.length)
         return "$relPath:${line + 1}:${column + 1} | $snippet"
     }
 
     private fun relativePath(filePath: String): String {
-        val root = Paths.get("").toAbsolutePath().normalize()
+        val root = runCatching { projectRootProvider().toAbsolutePath().normalize() }
+            .getOrDefault(Paths.get("").toAbsolutePath().normalize())
         val abs = Paths.get(filePath).toAbsolutePath().normalize()
         return if (abs.startsWith(root)) {
             root.relativize(abs).toString()
         } else {
             filePath
         }
+    }
+
+    private fun compactPath(path: String, maxLength: Int = MAX_USAGE_PATH_LENGTH): String {
+        val normalized = path.replace(File.separatorChar, '/')
+        if (normalized.length <= maxLength) return normalized
+        val parts = normalized.split('/').filter { it.isNotEmpty() }
+        if (parts.size < 4) return normalized.take(maxLength - 1) + "…"
+        val folders = parts.dropLast(1)
+        val compactParts = buildList {
+            add(folders.first())
+            folders.drop(1).dropLast(1).forEach { folder -> add(folder.first().toString()) }
+            add(folders.last())
+            add(parts.last())
+        }
+        val compact = compactParts.joinToString("/")
+        if (compact.length <= maxLength) return compact
+        return "${compactParts.first()}/…/${compactParts[compactParts.lastIndex - 1]}/${compactParts.last()}"
+            .take(maxLength - 1) + "…"
     }
 
     private fun readLineText(filePath: String, line: Int): String {
@@ -1710,5 +1833,16 @@ class CodeEditorView(
     private data class SuggestionEntry(val name: String, val detail: String?)
     private data class SuggestionPopup(val anchor: Position, val prefix: String, val entries: List<SuggestionEntry>)
     private data class HoverInfoCandidate(val key: Triple<Int, Int, Int>, val name: String, val startedAt: Long, val anchor: Position)
-    private data class InfoPopup(val anchor: Position, val entries: List<Pair<String, String>>)
+    private data class DefinitionPreview(
+        val filePath: String,
+        val language: String?,
+        val version: Long,
+        val startLine: Int,
+        val lines: List<String>
+    )
+    private data class InfoPopup(
+        val anchor: Position,
+        val entries: List<Pair<String, String>>,
+        val definition: DefinitionPreview? = null
+    )
 }

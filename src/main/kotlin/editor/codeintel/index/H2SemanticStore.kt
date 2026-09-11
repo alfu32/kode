@@ -45,12 +45,13 @@ class H2SemanticStore(
 
     override fun replaceFiles(deltas: Collection<FileSemanticDelta>, resolved: ResolvedSemanticProject) {
         if (deltas.isEmpty()) return
+        val uniqueDeltas = deltas.distinctBy { it.fileId }
         connection()?.use { connection ->
             ensureSchema(connection)
             connection.autoCommit = false
             runCatching {
-                deltas.forEach { deleteFile(connection, it.fileId) }
-                deltas.forEach { delta -> insertFileData(connection, delta, resolved) }
+                uniqueDeltas.forEach { deleteFile(connection, it.fileId) }
+                uniqueDeltas.forEach { delta -> insertFileData(connection, delta, resolved) }
                 connection.commit()
             }.getOrElse { error ->
                 runCatching { connection.rollback() }
@@ -65,7 +66,7 @@ class H2SemanticStore(
         resolved: ResolvedSemanticProject
     ) {
         insertFile(connection, delta)
-        val symbols = resolved.symbols.filter { it.fileId == delta.fileId }
+        val symbols = resolved.symbols.filter { it.fileId == delta.fileId }.distinctBy { it.id }
         val symbolIds = symbols.mapTo(mutableSetOf()) { it.id }
         insertScopes(connection, delta.scopes)
         insertSymbols(connection, symbols)

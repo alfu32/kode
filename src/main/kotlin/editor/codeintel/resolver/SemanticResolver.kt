@@ -53,8 +53,11 @@ class SemanticResolver {
         affectedFiles: Set<FileId>
     ): ResolvedSemanticProject {
         val deltaMap = deltas.associateBy { it.fileId }
-        val scopes = deltas.flatMap { it.scopes }
-        val rawSymbols = deltas.flatMap { it.symbols }
+        val scopes = deltas.flatMap { it.scopes }.distinctBy { it.id }
+        // A frontend may report the same stable declaration more than once while
+        // recovering from an incomplete tree. Stable identity makes the duplicate
+        // safe to collapse before persistence (which enforces symbol_id uniqueness).
+        val rawSymbols = deltas.flatMap { it.symbols }.distinctBy { it.id }
         val baselineSymbols = baseline?.symbols.orEmpty().associateBy { it.id }
         var symbols = rawSymbols.map { raw ->
             if (raw.fileId in affectedFiles) raw else baselineSymbols[raw.id] ?: raw

@@ -468,6 +468,8 @@ class CodeIntelService(
 
     fun hasPersistentData(): Boolean = store != null && semanticIndex.hasPersistentData()
 
+    fun semanticVersion(path: String): Long? = semanticIndex.snapshot().file(path)?.semanticVersion
+
     fun waitForIdle(timeoutMs: Long = 1000L) {
         val jobs = synchronized(lock) { pendingJobs.values.toList() }
         jobs.forEach { future ->
@@ -887,9 +889,16 @@ class CodeIntelService(
         val start = source?.let { positionAt(it.text, nameRange.startOffset) } ?: TextPosition(0, 0)
         val end = source?.let { positionAt(it.text, nameRange.endOffset) }
             ?: TextPosition(start.line, start.column + name.length)
+        val definitionStart = source?.let { positionAt(it.text, declarationRange.startOffset) }
+        val definitionEnd = source?.let { positionAt(it.text, declarationRange.endOffset) }
         return NavigationTarget(
             filePath = path,
             range = TextRange(start, end),
+            definitionRange = if (definitionStart != null && definitionEnd != null) {
+                TextRange(definitionStart, definitionEnd)
+            } else {
+                null
+            },
             kind = kind.toEditorKind(),
             name = name,
             tsLanguage = file?.languageId,

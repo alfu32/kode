@@ -918,7 +918,8 @@ private class SplitPanelsApp(
         codeIntel = codeIntelFacade,
         // lsp = lspService, // keep it
         lsp = null,
-        navigationHandler = this::navigateTo
+        navigationHandler = this::navigateTo,
+        projectRootProvider = { projectRoot }
     )
     private val diffViewer = SideBySideDiffView(styleSheet)
     private val hexViewer = BinaryHexView(styleSheet)
@@ -1425,7 +1426,8 @@ private class SplitPanelsApp(
             syntaxProvider = regexProvider,
             codeIntelIndexer = codeIntelIndexer,
             codeIntel = codeIntelFacade,
-            navigationHandler = this::navigateTo
+            navigationHandler = this::navigateTo,
+            projectRootProvider = { projectRoot }
         )
         focus = FocusTarget.FILES
         rightFocus = FocusTarget.CODE

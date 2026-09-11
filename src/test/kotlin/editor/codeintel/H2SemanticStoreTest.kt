@@ -40,6 +40,20 @@ class H2SemanticStoreTest {
     }
 
     @Test
+    fun collapsesDuplicateStableSymbolsBeforePersistence() {
+        val url = "jdbc:h2:mem:semantic-duplicate-symbol-${System.nanoTime()};DB_CLOSE_DELAY=-1"
+        val store = H2SemanticStore { url }
+        val adapter = KotlinSemanticAdapter()
+        val delta = adapter.extract(SourceFile("Program.kt", "kotlin", "class Program", 1L))
+        val duplicated = delta.copy(symbols = delta.symbols + delta.symbols)
+
+        val snapshot = SemanticIndex(store).apply(duplicated)
+
+        assertEquals(1, snapshot.workspaceSymbols().count { it.name == "Program" })
+        assertEquals(1, store.loadFiles().single { it.file.path == "Program.kt" }.symbols.count { it.name == "Program" })
+    }
+
+    @Test
     fun reResolvesCrossFileInferenceAfterPersistentReload() {
         val url = "jdbc:h2:mem:semantic-cross-file-${System.nanoTime()};DB_CLOSE_DELAY=-1"
         val store = H2SemanticStore { url }

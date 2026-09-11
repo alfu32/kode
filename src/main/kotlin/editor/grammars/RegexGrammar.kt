@@ -19,6 +19,10 @@ object RegexGrammarLoader {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun loadFromResources(resourceRoot: String = "/regex-grammars"): List<RegexGrammarDefinition> {
+        // val def2 = RegexGrammarDefinition()
+        /**
+        test multiline comment
+        */
         val indexStream = RegexGrammarLoader::class.java.getResourceAsStream("$resourceRoot/index.json")
             ?: return emptyList()
         val indexJson = indexStream.use { it.readBytes().toString(Charsets.UTF_8) }
@@ -58,3 +62,4 @@ object RegexGrammarLoader {
         }
     }
 }
+

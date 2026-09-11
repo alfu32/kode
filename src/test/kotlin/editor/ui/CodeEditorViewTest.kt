@@ -23,4 +23,38 @@ class CodeEditorViewTest {
         assertTrue(handled)
         assertEquals(Regex.escape("A.*B"), buffer.searchState().query)
     }
+
+    @Test
+    fun completionDoesNotDeleteReceiverDotWhenPrefixIsEmpty() {
+        val buffer = TextBuffer()
+        buffer.loadText("customer.")
+        buffer.moveCursorTo(Position(0, buffer.text().length), expand = false)
+        val view = CodeEditorView(StyleSheet(), buffer)
+
+        applySuggestion(view, "name", "")
+
+        assertEquals("customer.name", buffer.text())
+    }
+
+    @Test
+    fun completionReplacesOnlyTheTypedIdentifierPrefix() {
+        val buffer = TextBuffer()
+        buffer.loadText("customer.na")
+        buffer.moveCursorTo(Position(0, buffer.text().length), expand = false)
+        val view = CodeEditorView(StyleSheet(), buffer)
+
+        applySuggestion(view, "name", "na")
+
+        assertEquals("customer.name", buffer.text())
+    }
+
+    private fun applySuggestion(view: CodeEditorView, suggestion: String, prefix: String) {
+        val method = CodeEditorView::class.java.getDeclaredMethod(
+            "applySuggestion",
+            String::class.java,
+            String::class.java
+        )
+        method.isAccessible = true
+        method.invoke(view, suggestion, prefix)
+    }
 }
