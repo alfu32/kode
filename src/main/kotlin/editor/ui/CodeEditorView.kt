@@ -46,7 +46,7 @@ class CodeEditorView(
     private companion object {
         private const val HOVER_INFO_DELAY_MS = 500L
         private const val MAX_DEFINITION_PREVIEW_LINES = 24
-        private const val MAX_USAGE_PATH_LENGTH = 64
+        private const val MAX_USAGE_PATH_LENGTH = 48
     }
 
     private var localStyleSheet: StyleSheet = styleSheet
@@ -1770,18 +1770,29 @@ class CodeEditorView(
         val normalized = path.replace(File.separatorChar, '/')
         if (normalized.length <= maxLength) return normalized
         val parts = normalized.split('/').filter { it.isNotEmpty() }
-        if (parts.size < 4) return normalized.take(maxLength - 1) + "…"
+        if (parts.size < 2) return normalized.take((maxLength - 1).coerceAtLeast(1)) + "…"
         val folders = parts.dropLast(1)
+        val fileName = parts.last()
         val compactParts = buildList {
             add(folders.first())
             folders.drop(1).dropLast(1).forEach { folder -> add(folder.first().toString()) }
-            add(folders.last())
-            add(parts.last())
+            if (folders.size > 1) add(folders.last())
+            add(fileName)
         }
         val compact = compactParts.joinToString("/")
         if (compact.length <= maxLength) return compact
-        return "${compactParts.first()}/…/${compactParts[compactParts.lastIndex - 1]}/${compactParts.last()}"
-            .take(maxLength - 1) + "…"
+
+        // Preserve the complete filename while collapsing the path middle.
+        val anchor = if (folders.size == 1) {
+            "${folders.first()}/"
+        } else {
+            "${folders.first()}/…/${folders.last()}/"
+        }
+        val availableName = maxLength - anchor.length
+        if (availableName > 1) {
+            return anchor + fileName.take(availableName - 1) + "…"
+        }
+        return normalized.take((maxLength - 1).coerceAtLeast(1)) + "…"
     }
 
     private fun readLineText(filePath: String, line: Int): String {

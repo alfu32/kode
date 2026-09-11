@@ -115,6 +115,27 @@ class CodeEditorViewTest {
         }
     }
 
+    @Test
+    fun usagePathsCollapseDirectoriesAndPreserveFilename() {
+        val view = CodeEditorView(StyleSheet())
+        val method = CodeEditorView::class.java.getDeclaredMethod(
+            "compactPath",
+            String::class.java,
+            Int::class.javaPrimitiveType!!
+        )
+        method.isAccessible = true
+
+        val compact = method.invoke(
+            view,
+            "src/test/kotlin/editor/grammars/RegexSyntaxProviderTest.kt",
+            48
+        ) as String
+
+        assertTrue(compact.length <= 48)
+        assertTrue(compact != "src/test/kotlin/editor/grammars/RegexSyntaxProviderTest.kt")
+        assertTrue(compact.endsWith("RegexSyntaxProviderTest.kt"))
+    }
+
     private fun applySuggestion(view: CodeEditorView, suggestion: String, prefix: String) {
         val method = CodeEditorView::class.java.getDeclaredMethod(
             "applySuggestion",
