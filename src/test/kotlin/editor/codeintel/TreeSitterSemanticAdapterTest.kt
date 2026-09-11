@@ -29,4 +29,21 @@ class TreeSitterSemanticAdapterTest {
             assertTrue(delta.scopes.isNotEmpty(), "missing file scope for $language")
         }
     }
+
+    @Test
+    fun secondAdapterBatchProducesSemanticDeltas() {
+        val fixtures = mapOf(
+            "php" to "<?php class Customer { public function save(): void {} }",
+            "ruby" to "class Customer\n  def save\n  end\nend",
+            "bash" to "save() { echo customer; }",
+            "swift" to "class Customer { func save() {} }"
+        )
+
+        fixtures.forEach { (language, text) ->
+            val adapter = assertNotNull(TreeSitterSemanticAdapters.forLanguage(language))
+            val delta = adapter.extract(SourceFile("Fixture.$language", language, text, 1L))
+            assertEquals(language, delta.file.languageId)
+            assertTrue(delta.scopes.isNotEmpty(), "missing file scope for $language")
+        }
+    }
 }

@@ -237,10 +237,11 @@ class TreeSitterSemanticAdapter(
         private fun declarationFor(node: TsNode): Pair<TsNode, SymbolKind>? {
             val type = node.type.lowercase(Locale.ROOT)
             val kind = when {
-                type.contains("interface") -> SymbolKind.INTERFACE
+                type.contains("interface") || type.contains("protocol") -> SymbolKind.INTERFACE
                 type.contains("enum") && (type.contains("declaration") || type.contains("specifier")) -> SymbolKind.ENUM
                 type.contains("struct") && (type.contains("declaration") || type.contains("specifier")) -> SymbolKind.STRUCT
                 type.contains("type_alias") -> SymbolKind.TYPE_ALIAS
+                type == "module" -> SymbolKind.MODULE
                 type in TYPE_DECLARATIONS || (type.contains("class") && !type.contains("body")) -> SymbolKind.CLASS
                 type.contains("constructor") && type.contains("declaration") -> SymbolKind.CONSTRUCTOR
                 type.contains("method") && (type.contains("declaration") || type.contains("definition") || type.contains("signature")) -> SymbolKind.METHOD
@@ -271,7 +272,7 @@ class TreeSitterSemanticAdapter(
         private fun scopeKindFor(node: TsNode): ScopeKind? {
             val type = node.type.lowercase(Locale.ROOT)
             return when {
-                type in TYPE_DECLARATIONS || type.contains("class_declaration") -> ScopeKind.TYPE
+                type in TYPE_DECLARATIONS || type.contains("class_declaration") || type == "module" -> ScopeKind.TYPE
                 type in FUNCTION_DECLARATIONS || type.contains("method_") -> ScopeKind.FUNCTION
                 type.contains("lambda") || type.contains("arrow_function") -> ScopeKind.LAMBDA
                 type.contains("block") || type.contains("body") || type.contains("compound_statement") -> ScopeKind.BLOCK
@@ -300,12 +301,12 @@ class TreeSitterSemanticAdapter(
             "namespace_identifier", "variable_name", "name"
         )
         private val TYPE_DECLARATIONS = setOf(
-            "class_declaration", "class_definition", "class_specifier", "interface_declaration",
+            "class", "module", "class_declaration", "class_definition", "class_specifier", "interface_declaration",
             "interface_definition", "struct_specifier", "struct_declaration", "enum_declaration",
-            "enum_specifier", "type_declaration", "type_definition", "type_alias_declaration"
+            "enum_specifier", "protocol_declaration", "type_declaration", "type_definition", "type_alias_declaration"
         )
         private val FUNCTION_DECLARATIONS = setOf(
-            "function_declaration", "function_definition", "function_item", "method_declaration",
+            "method", "function_declaration", "function_definition", "function_item", "method_declaration",
             "method_definition", "function_item", "constructor_declaration", "function_signature"
         )
         private val PARAMETER_DECLARATIONS = setOf(
@@ -315,7 +316,7 @@ class TreeSitterSemanticAdapter(
         private val VARIABLE_DECLARATIONS = setOf(
             "variable_declarator", "variable_declaration", "lexical_declaration", "short_var_declaration",
             "var_spec", "const_spec", "init_declarator", "let_declaration", "const_declaration",
-            "local_variable_declaration", "assignment_pattern"
+            "local_variable_declaration", "assignment_pattern", "property_declaration", "declaration_statement"
         )
         private val PROPERTY_DECLARATIONS = setOf(
             "field_declaration", "property_declaration", "public_field_definition", "pair"
