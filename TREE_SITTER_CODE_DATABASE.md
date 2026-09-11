@@ -36,7 +36,7 @@ source -> Tree-sitter CST -> language adapter -> FileSemanticDelta
 - `editor.codeintel.resolver/ExpressionTypeResolver.kt`: conservative best-effort expression typing for identifiers, literals, calls, casts, parenthesized expressions, chained members, `this`, and `super`.
 - `editor.codeintel.completion/CompletionPipeline.kt`: local, member, type, import, keyword, workspace, and snippet providers plus the candidate engine.
 - `editor.codeintel.ml/CompletionRanker.kt`: ranker seam and deterministic first implementation. An ONNX implementation may score candidates but may not generate facts or members.
-- `editor.codeintel.semantic/SemanticTokens.kt`: semantic token classification based on the same resolved occurrences.
+- `editor.codeintel.semantic/SemanticTokens.kt`: merges persisted Tree-sitter lexical facts with classifications refined from resolved occurrences.
 - `editor.codeintel/CodeIntelService.kt`: compatibility facade used by the existing editor and pre-index scan. Kotlin is served from semantic snapshots; legacy extraction remains a low-confidence fallback for languages not migrated yet.
 
 ## Persisted model
@@ -49,6 +49,7 @@ semantic_scopes
 semantic_symbols
 semantic_occurrences
 semantic_expression_types
+semantic_lexical_tokens
 semantic_relations
 semantic_types
 semantic_unresolved_types
@@ -103,6 +104,7 @@ The first implemented slice supports:
 - conservative union inference for conflicting assignments, with only members shared by every alternative offered;
 - deterministic completion scoring;
 - semantic token refinement from resolved occurrences;
+- Tree-sitter keyword, string, number, and comment tokens merged with semantic identifier classifications;
 - persistent reload of extracted and resolved facts.
 
 Unknown types and unresolved occurrences are retained as unknown. Resolution does not invent a confident answer.
@@ -112,7 +114,7 @@ Unknown types and unresolved occurrences are retained as unknown. Resolution doe
 1. **Kotlin foundation (implemented):** emit symbols, scopes, occurrences, imports, unresolved types, and relations; persist per-file deltas; publish snapshots; route Kotlin compatibility queries through the semantic index.
 2. **Dependency invalidation (implemented):** persist typed file dependencies and resolution generations, compare `exportedSurfaceHash`, wake matching unresolved files for new definitions, and only re-resolve the transitive dependent closure when the public semantic surface changes.
 3. **Kotlin expression coverage (implemented):** support chained and safe member access, `this`, `super`, casts, parentheses, literals, assignment propagation, generic/nullable/function/union type decoding, fixed-point inference, and visibility-aware resolution/completion.
-4. **Semantic highlighting:** make the editor consume `SemanticTokenService` directly while retaining Tree-sitter lexical tokens for strings/comments/literals and unresolved identifiers.
+4. **Semantic highlighting (implemented):** persist Tree-sitter keyword/string/number/comment facts, merge them with resolved occurrence kinds in `SemanticTokenService`, and render the merged stream while retaining unknown identifiers.
 5. **Statistics and ranking:** persist completion selection history, same-function/same-file recency, and project frequency; keep deterministic candidate generation.
 6. **Additional adapters:** add Java, TypeScript/JavaScript, C/C++, Rust, and Python as grammar plus `LanguageSemanticAdapter` plus shared semantic scenarios. No adapter receives its own index, resolver, completion UI, or ranker.
 7. **Optional enrichment:** merge LSP/compiler/SCIP facts by confidence without making any provider mandatory or allowing lower-confidence facts to overwrite deterministic facts.

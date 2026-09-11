@@ -248,6 +248,60 @@ codeintel.field {
     fg: #ff8bd9;
     bg: #1a2237;
 }
+semantic.keyword {
+    fg: #cc7832;
+}
+semantic.type {
+    fg: #a9b7c6;
+}
+semantic.class {
+    fg: #e8bf6a;
+}
+semantic.interface {
+    fg: #e8bf6a;
+}
+semantic.function {
+    fg: #ffc66d;
+}
+semantic.method {
+    fg: #ff8bd9;
+}
+semantic.field {
+    fg: #ff8bd9;
+}
+semantic.property {
+    fg: #a5c261;
+}
+semantic.variable {
+    fg: #a9b7c6;
+}
+semantic.parameter {
+    fg: #d6deeb;
+}
+semantic.constant {
+    fg: #9876aa;
+}
+semantic.namespace {
+    fg: #a9b7c6;
+}
+semantic.module {
+    fg: #a9b7c6;
+}
+semantic.label {
+    fg: #bbb529;
+}
+semantic.macro {
+    fg: #bbb529;
+}
+semantic.string {
+    fg: #6a8759;
+}
+semantic.number {
+    fg: #6897bb;
+}
+semantic.comment {
+    fg: #808080;
+}
 lsp-list {
     bg: #0f1424;
     fg: #95aee6;

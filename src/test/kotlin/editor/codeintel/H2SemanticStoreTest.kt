@@ -5,6 +5,7 @@ import editor.codeintel.frontend.SourceFile
 import editor.codeintel.index.H2SemanticStore
 import editor.codeintel.index.SemanticIndex
 import editor.codeintel.model.FileDependencyKind
+import editor.codeintel.model.LexicalTokenKind
 import editor.codeintel.model.SourceRange
 import editor.codeintel.model.TypeRef
 import kotlin.test.Test
@@ -33,6 +34,9 @@ class H2SemanticStoreTest {
         assertEquals(7L, snapshot.file("Stored.kt")?.semanticVersion)
         assertEquals("Long", assertIs<TypeRef.Primitive>(snapshot.type(value.declaredTypeId)?.ref).name)
         assertTrue(snapshot.members(TypeRef.Named(stored.id)).any { it.name == "value" })
+        val file = requireNotNull(snapshot.file("Stored.kt"))
+        assertTrue(snapshot.lexicalTokens(file.id).any { it.kind == LexicalTokenKind.KEYWORD })
+        assertTrue(snapshot.lexicalTokens(file.id).any { it.kind == LexicalTokenKind.NUMBER })
     }
 
     @Test

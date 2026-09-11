@@ -19,6 +19,8 @@ import editor.codeintel.model.OccurrenceKind
 import editor.codeintel.model.SemanticIds
 import editor.codeintel.model.SymbolKind as SemanticSymbolKind
 import editor.codeintel.resolver.BestEffortExpressionTypeResolver
+import editor.codeintel.semantic.SemanticToken
+import editor.codeintel.semantic.SemanticTokenService
 import editor.grammars.KeywordSyntaxProvider
 import editor.grammars.Token
 import editor.lang.IdentifierOccurrence
@@ -157,6 +159,7 @@ class CodeIntelService(
     private val lock = Any()
     private val kotlinSemanticAdapter = KotlinSemanticAdapter()
     private val semanticIndex = SemanticIndex(store?.semanticStore())
+    private val semanticTokenService = SemanticTokenService()
     private val completionEngine = CompletionCandidateEngine(
         providers = listOf(
             LocalScopeCompletionProvider(),
@@ -831,29 +834,51 @@ class CodeIntelService(
         if (file.semanticVersion != request.version) return emptyList()
         val source = sourceFor(request.filePath, file.languageId) ?: return null
         val requestedLines = request.startLine until (request.startLine + request.lines.size)
-        return snapshot.occurrences(file.id).mapNotNull { occurrence ->
-            val start = positionAt(source.text, occurrence.range.startOffset)
-            val end = positionAt(source.text, occurrence.range.endOffset)
-            if (start.line !in requestedLines || end.line != start.line) return@mapNotNull null
-            val symbol = occurrence.resolvedSymbolId?.let(snapshot::symbol)
-            val scopes = mutableListOf(
-                if (occurrence.kind == OccurrenceKind.DECLARATION) DECL_SCOPE else USAGE_SCOPE
-            )
-            when (symbol?.kind) {
+        val sourceLines = source.text.split('\n')
+        return semanticTokenService.tokens(file.id, snapshot)
+            .flatMap { token -> token.toEditorTokens(source.text, sourceLines, requestedLines, snapshot) }
+            .toList()
+    }
+
+    private fun SemanticToken.toEditorTokens(
+        sourceText: String,
+        sourceLines: List<String>,
+        requestedLines: IntRange,
+        snapshot: editor.codeintel.index.SemanticSnapshot
+    ): Sequence<Token> = sequence {
+        val startPosition = positionAt(sourceText, range.startOffset)
+        val endPosition = positionAt(sourceText, range.endOffset)
+        val scopes = mutableListOf<String>()
+        occurrence?.let { occurrence ->
+            scopes += if (occurrence.kind == OccurrenceKind.DECLARATION) DECL_SCOPE else USAGE_SCOPE
+            when (occurrence.resolvedSymbolId?.let(snapshot::symbol)?.kind) {
                 SemanticSymbolKind.METHOD -> scopes += "codeintel.method"
                 SemanticSymbolKind.FIELD,
                 SemanticSymbolKind.PROPERTY -> scopes += "codeintel.field"
                 else -> Unit
             }
-            Token(
-                start = start.column,
-                end = end.column,
-                scopes = scopes,
-                line = start.line,
-                text = occurrence.text,
-                fg = null
+        }
+        scopes += "semantic.${kind.name.lowercase(Locale.ROOT)}"
+
+        for (line in startPosition.line..endPosition.line) {
+            if (line !in requestedLines) continue
+            val lineText = sourceLines.getOrNull(line) ?: continue
+            val startColumn = if (line == startPosition.line) startPosition.column else 0
+            val endColumn = if (line == endPosition.line) endPosition.column else lineText.length
+            val clampedStart = startColumn.coerceIn(0, lineText.length)
+            val clampedEnd = endColumn.coerceIn(clampedStart, lineText.length)
+            if (clampedEnd <= clampedStart) continue
+            yield(
+                Token(
+                    start = clampedStart,
+                    end = clampedEnd,
+                    scopes = scopes,
+                    line = line,
+                    text = lineText.substring(clampedStart, clampedEnd),
+                    fg = null
+                )
             )
-        }.toList()
+        }
     }
 
     private fun editor.codeintel.model.SymbolRecord.toNavigationTarget(path: String): NavigationTarget {

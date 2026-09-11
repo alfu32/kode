@@ -46,6 +46,7 @@ interface TsNode {
 
     fun parent(): TsNode?
     fun children(): List<TsNode>
+    fun allChildren(): List<TsNode> = children()
     fun fieldName(): String?
 }
 

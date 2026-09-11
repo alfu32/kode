@@ -5,6 +5,8 @@ import editor.codeintel.model.ExpressionTypeRecord
 import editor.codeintel.model.FileRecord
 import editor.codeintel.model.FileSemanticDelta
 import editor.codeintel.model.ImportRecord
+import editor.codeintel.model.LexicalTokenKind
+import editor.codeintel.model.LexicalTokenRecord
 import editor.codeintel.model.OccurrenceKind
 import editor.codeintel.model.OccurrenceRecord
 import editor.codeintel.model.RelationKind
@@ -78,6 +80,7 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
         private val imports = mutableListOf<ImportRecord>()
         private val typeHints = mutableListOf<TypeHint>()
         private val expressionTypes = mutableListOf<ExpressionTypeRecord>()
+        private val lexicalTokens = mutableListOf<LexicalTokenRecord>()
         private val declarationRanges = mutableMapOf<SourceRange, SymbolId>()
         private var packageName: String? = null
 
@@ -100,6 +103,7 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
             }
             collectAssignmentHints()
             collectOccurrences(root)
+            collectLexicalTokens(root)
 
             val exportedSymbols = symbols
                 .filter { it.ownerSymbolId == null || symbols.any { owner -> owner.id == it.ownerSymbolId && owner.kind in TYPE_KINDS } }
@@ -149,8 +153,27 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
                 imports = imports.distinct(),
                 typeHints = typeHints.distinct(),
                 expressionTypes = expressionTypes.distinct(),
+                lexicalTokens = lexicalTokens.distinct(),
                 exportedSurfaceHash = SemanticIds.hash(exported).toULong().toString(16)
             )
+        }
+
+        private fun collectLexicalTokens(node: TsNode) {
+            val children = node.allChildren()
+            val kind = when {
+                node.type.contains("comment") -> LexicalTokenKind.COMMENT
+                node.type in STRING_NODES -> LexicalTokenKind.STRING
+                node.type in NUMBER_NODES -> LexicalTokenKind.NUMBER
+                node.type in BOOLEAN_OR_NULL_NODES -> LexicalTokenKind.KEYWORD
+                children.isEmpty() && node.type == node.text && node.text in KOTLIN_KEYWORDS ->
+                    LexicalTokenKind.KEYWORD
+                else -> null
+            }
+            if (kind != null && node.endByte > node.startByte) {
+                lexicalTokens += LexicalTokenRecord(fileId, node.range(), kind)
+                return
+            }
+            children.forEach(::collectLexicalTokens)
         }
 
         private fun extractPackage(fileScope: ScopeRecord): ScopeRecord? {
@@ -790,6 +813,24 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
             "boolean_literal",
             "integer_literal",
             "real_literal"
+        )
+        private val STRING_NODES = setOf(
+            "string_literal",
+            "line_string_literal",
+            "multi_line_string_literal",
+            "character_literal"
+        )
+        private val NUMBER_NODES = setOf("integer_literal", "real_literal")
+        private val BOOLEAN_OR_NULL_NODES = setOf("boolean_literal", "null_literal")
+        private val KOTLIN_KEYWORDS = setOf(
+            "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
+            "interface", "is", "null", "object", "package", "return", "super", "this", "throw", "true",
+            "try", "typealias", "typeof", "val", "var", "when", "while", "by", "catch", "constructor",
+            "delegate", "dynamic", "field", "file", "finally", "get", "import", "init", "param", "property",
+            "receiver", "set", "setparam", "where", "actual", "abstract", "annotation", "companion", "const",
+            "crossinline", "data", "enum", "expect", "external", "final", "infix", "inline", "inner",
+            "internal", "lateinit", "noinline", "open", "operator", "out", "override", "private", "protected",
+            "public", "reified", "sealed", "suspend", "tailrec", "vararg", "value", "context"
         )
         private val DECLARED_TYPE = Regex(":\\s*([A-Za-z_][A-Za-z0-9_.]*(?:<[^>]+>)?\\??)")
         private val RETURN_TYPE = Regex("\\)\\s*:\\s*([A-Za-z_][A-Za-z0-9_.]*(?:<[^>]+>)?\\??)")

@@ -296,7 +296,14 @@ class CodeIntelServiceTest {
 
             assertTrue(declarations.containsAll(listOf("Foo", "bar", "baz", "qux")))
             assertTrue(usages.containsAll(listOf("Foo", "foo", "baz")))
-            assertFalse(tokens.any { it.text == "if" || it.text == "package" }) // keywords should be ignored
+            assertFalse(
+                tokens.any {
+                    (it.text == "if" || it.text == "package") &&
+                        it.scopes.any { scope -> scope.startsWith("codeintel.") }
+                }
+            )
+            assertTrue(tokens.any { it.text == "if" && "semantic.keyword" in it.scopes })
+            assertTrue(tokens.any { it.text == "package" && "semantic.keyword" in it.scopes })
         } finally {
             service.shutdown()
         }

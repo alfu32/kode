@@ -4,6 +4,7 @@ import editor.codeintel.model.FileId
 import editor.codeintel.model.FileDependencyRecord
 import editor.codeintel.model.FileRecord
 import editor.codeintel.model.FileSemanticDelta
+import editor.codeintel.model.LexicalTokenRecord
 import editor.codeintel.model.OccurrenceRecord
 import editor.codeintel.model.RelationKind
 import editor.codeintel.model.RelationRecord
@@ -32,6 +33,7 @@ interface SemanticSnapshot : AutoCloseable {
     fun occurrenceAt(fileId: FileId, offset: Int): OccurrenceRecord?
     fun occurrences(symbolId: SymbolId): Sequence<OccurrenceRecord>
     fun occurrences(fileId: FileId): Sequence<OccurrenceRecord>
+    fun lexicalTokens(fileId: FileId): Sequence<LexicalTokenRecord>
     fun expressionType(fileId: FileId, range: SourceRange): TypeRef?
     fun members(type: TypeRef): Sequence<SymbolRecord>
     fun visibleSymbols(fileId: FileId, offset: Int): Sequence<SymbolRecord>
@@ -123,6 +125,9 @@ class SemanticIndex(
         private val symbolsById = state.project.symbols.associateBy { it.id }
         private val scopesById = state.project.scopes.associateBy { it.id }
         private val occurrencesByFile = state.project.occurrences.groupBy { it.fileId }
+        private val lexicalTokensByFile = state.project.deltas.values
+            .flatMap { it.lexicalTokens }
+            .groupBy { it.fileId }
         private val occurrencesBySymbol = state.project.occurrences
             .filter { it.resolvedSymbolId != null }
             .groupBy { requireNotNull(it.resolvedSymbolId) }
@@ -151,6 +156,9 @@ class SemanticIndex(
 
         override fun occurrences(fileId: FileId): Sequence<OccurrenceRecord> =
             occurrencesByFile[fileId].orEmpty().asSequence()
+
+        override fun lexicalTokens(fileId: FileId): Sequence<LexicalTokenRecord> =
+            lexicalTokensByFile[fileId].orEmpty().asSequence()
 
         override fun expressionType(fileId: FileId, range: SourceRange): TypeRef? =
             expressionTypesByFile[fileId].orEmpty()

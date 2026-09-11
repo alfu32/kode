@@ -168,6 +168,20 @@ data class OccurrenceRecord(
     val confidence: Confidence
 )
 
+enum class LexicalTokenKind {
+    KEYWORD,
+    STRING,
+    NUMBER,
+    COMMENT
+}
+
+data class LexicalTokenRecord(
+    val fileId: FileId,
+    val range: SourceRange,
+    val kind: LexicalTokenKind,
+    val confidence: Confidence = Confidence(SemanticSource.TREE_SITTER, 0.90f)
+)
+
 data class ExpressionTypeRecord(
     val fileId: FileId,
     val range: SourceRange,
@@ -266,6 +280,7 @@ data class FileSemanticDelta(
     val imports: List<ImportRecord>,
     val typeHints: List<TypeHint> = emptyList(),
     val expressionTypes: List<ExpressionTypeRecord> = emptyList(),
+    val lexicalTokens: List<LexicalTokenRecord> = emptyList(),
     val exportedSurfaceHash: String
 ) {
     val fileId: FileId get() = file.id

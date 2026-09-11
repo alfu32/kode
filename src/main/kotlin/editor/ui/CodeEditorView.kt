@@ -1090,7 +1090,9 @@ class CodeEditorView(
         scope.replace(' ', '_').replace(":", "-").replace(",", "-")
 
     private fun styleForToken(token: editor.grammars.Token, base: StyleSet): StyleSet {
-        val scoped = token.scopes.lastOrNull()?.let { cachedStyle(it).withDefaults(base.fg, base.bg) } ?: base
+        val scoped = token.scopes.fold(base.copy()) { style, scope ->
+            style.merged(cachedStyle(scope))
+        }.withDefaults(base.fg, base.bg)
         token.fg?.let { color ->
             val copy = scoped.copy()
             copy.fg = color
@@ -1105,7 +1107,9 @@ class CodeEditorView(
     private val styleCache = mutableMapOf<String, StyleSet>()
 
     private fun cachedStyle(scope: String): StyleSet =
-        styleCache.getOrPut(scope) { localStyleSheet.getStyle(scopeToStyleId(scope)) }
+        styleCache.getOrPut(scope) {
+            localStyleSheet.rules[scopeToStyleId(scope)] ?: StyleSet()
+        }
 
     fun updateStyleSheet(styleSheet: StyleSheet) {
         this.localStyleSheet = styleSheet
@@ -1213,22 +1217,9 @@ class CodeEditorView(
         hoveredUsageRange: IntRange? = null
     ) {
         if (maxCols <= 0) return
-        val keywordTokens = tokens.filter { tok -> tok.scopes.any { it.contains("keyword") } }
-        val nonKeywordTokens = if (keywordTokens.isEmpty()) tokens else tokens - keywordTokens.toSet()
-        val usageTokens = overlayTokens.filter { tok ->
-            tok.scopes.any { scope -> scope.contains("codeintel.usage") }
-        }
-        val declarationOverlays = if (usageTokens.isEmpty()) overlayTokens else overlayTokens - usageTokens.toSet()
-        val methodFieldOverlays = declarationOverlays.filter { tok ->
-            tok.scopes.any { scope -> scope.contains("codeintel.method") || scope.contains("codeintel.field") }
-        }
-        val otherOverlays = if (methodFieldOverlays.isEmpty()) declarationOverlays else declarationOverlays - methodFieldOverlays.toSet()
-
-        val baseSegments = buildSegments(text, nonKeywordTokens, baseStyle)
-        val withCodeIntel = applyTokenOverlays(baseSegments, otherOverlays, baseStyle)
-        val withMethodFields = applyTokenOverlays(withCodeIntel, methodFieldOverlays, baseStyle)
-        val withKeywords = applyTokenOverlays(withMethodFields, keywordTokens, baseStyle)
-        val withHover = applyUsageHover(withKeywords, hoveredUsageRange, baseStyle)
+        val baseSegments = buildSegments(text, tokens, baseStyle)
+        val withSemanticTokens = applyTokenOverlays(baseSegments, overlayTokens, baseStyle)
+        val withHover = applyUsageHover(withSemanticTokens, hoveredUsageRange, baseStyle)
         val withHighlights = applyHighlights(withHover, highlights, highlightStyle, activeHighlightStyle)
         val withSelection = applySelection(withHighlights, selection, selectionStyle)
         withSelection.forEach { seg ->

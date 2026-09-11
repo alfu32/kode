@@ -44,6 +44,19 @@ class TreeSitterNode(
         return list
     }
 
+    override fun allChildren(): List<TsNode> {
+        val count = node.childCount
+        if (count <= 0) return emptyList()
+        val list = ArrayList<TsNode>(count)
+        for (i in 0 until count) {
+            val child = node.getChild(i)
+            if (child == null || child.isNull) continue
+            val fieldName = node.getFieldNameForChild(i)
+            list.add(TreeSitterNode(child, source, this, fieldName))
+        }
+        return list
+    }
+
     override fun fieldName(): String? = field
 
     private fun safeSubstring(start: Int, end: Int): String {
