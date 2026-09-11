@@ -203,6 +203,10 @@ code-body {
     bg: #1a2237;
     fg: #b6b9c5;
 }
+code-tab {
+    bg: #1a2237;
+    fg: #4a526a;
+}
 keyword {
     bg: #1a2237;
 }

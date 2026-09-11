@@ -22,6 +22,7 @@ import editor.grammars.SyntaxProvider
 import editor.app.EditorSessionState
 import react.BaseComponent
 import react.ClippedCanvasRenderer
+import react.Color
 import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
@@ -225,6 +226,13 @@ class CodeEditorView(
         val searchActiveMatchStyle =
             localStyleSheet.getStyle("code-search-active").withDefaults(searchMatchStyle.fg, searchMatchStyle.bg)
         val bodyStyle = baseBody
+        val tabMarkerStyle = localStyleSheet.getStyle("code-tab").withDefaults(
+            fg = baseBody.bg?.let { bg ->
+                val fg = baseBody.fg ?: bg
+                Color((bg.r + fg.r) / 2, (bg.g + fg.g) / 2, (bg.b + fg.b) / 2)
+            } ?: baseBody.fg,
+            bg = baseBody.bg
+        )
         val effectiveSearchVisible = searchVisible
         val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyStartRow = 1 + searchHeight
@@ -346,6 +354,11 @@ class CodeEditorView(
                 val chunkSelection = selectionCols?.let {
                     trimVisualRangeToChunk(it, visualLine, wrapped.startColumn, wrapped.endColumn)
                 }
+                val chunkTabRanges = visualLine.tabRanges.mapNotNull { range ->
+                    val start = maxOf(range.first, visualStart)
+                    val end = minOf(range.last + 1, visualEnd)
+                    if (start >= end) null else start - visualStart until end - visualStart
+                }
                 val highlights = searchTokensByLine[lineNumber]?.mapNotNull {
                     trimVisualHighlightToChunk(it, visualLine, wrapped.startColumn, wrapped.endColumn)
                 } ?: emptyList()
@@ -370,7 +383,9 @@ class CodeEditorView(
                     highlights = highlights,
                     highlightStyle = searchMatchStyle,
                     activeHighlightStyle = searchActiveMatchStyle,
-                    hoveredUsageRange = hoveredUsageRange
+                    hoveredUsageRange = hoveredUsageRange,
+                    tabRanges = chunkTabRanges,
+                    tabStyle = tabMarkerStyle
                 )
             }
         }
@@ -385,7 +400,16 @@ class CodeEditorView(
                 .coerceAtLeast(0)
             val cx = (gutterWidth + cursorCol).coerceAtMost(cols - 1)
             val visualColumn = cursorLine.visualColumn(cursor.column)
-            val ch = cursorLine.visualText.getOrNull(visualColumn)?.toString() ?: " "
+            val cursorEnd = if (cursor.column < cursorLine.rawText.length) {
+                cursorLine.visualColumn(cursor.column + 1)
+            } else {
+                visualColumn
+            }
+            val ch = if (cursorEnd > visualColumn) {
+                cursorLine.visualText.substring(visualColumn, cursorEnd)
+            } else {
+                " "
+            }
             canvas.withStyle(cursorStyle) {
                 drawText(cx, cy, ch)
             }
@@ -1271,14 +1295,19 @@ class CodeEditorView(
         highlights: List<FoundToken>,
         highlightStyle: StyleSet,
         activeHighlightStyle: StyleSet,
-        hoveredUsageRange: IntRange? = null
+        hoveredUsageRange: IntRange? = null,
+        tabRanges: List<IntRange> = emptyList(),
+        tabStyle: StyleSet = baseStyle
     ) {
         if (maxCols <= 0) return
         val baseSegments = buildSegments(text, tokens, baseStyle)
         val withSemanticTokens = applyTokenOverlays(baseSegments, overlayTokens, baseStyle)
         val withHover = applyUsageHover(withSemanticTokens, hoveredUsageRange, baseStyle)
         val withHighlights = applyHighlights(withHover, highlights, highlightStyle, activeHighlightStyle)
-        val withSelection = applySelection(withHighlights, selection, selectionStyle)
+        val withTabs = tabRanges.fold(withHighlights) { segments, range ->
+            overlayRange(segments, range.first, range.last + 1, tabStyle)
+        }
+        val withSelection = applySelection(withTabs, selection, selectionStyle)
         withSelection.forEach { seg ->
             if (seg.start >= maxCols) return
             val drawEnd = minOf(seg.end, maxCols, text.length)
@@ -1815,7 +1844,9 @@ class CodeEditorView(
                         selectionStyle = style,
                         highlights = emptyList(),
                         highlightStyle = style,
-                        activeHighlightStyle = style
+                        activeHighlightStyle = style,
+                        tabRanges = visualLine.tabRanges,
+                        tabStyle = localStyleSheet.getStyle("code-tab").withDefaults(style.fg, style.bg)
                     )
                     row++
                 }
@@ -1904,17 +1935,23 @@ class CodeEditorView(
 
     private data class VisualLine(val rawText: String) {
         val visualText: String
+        val tabRanges: List<IntRange>
         private val rawToVisual: IntArray
 
         init {
             val out = StringBuilder(rawText.length)
+            val tabs = mutableListOf<IntRange>()
             rawToVisual = IntArray(rawText.length + 1)
             var column = 0
             rawText.forEachIndexed { index, ch ->
                 rawToVisual[index] = column
                 if (ch == '\t') {
-                    val spaces = TAB_WIDTH - (column % TAB_WIDTH)
-                    repeat(spaces) { out.append(' ') }
+                    // Keep the marker atomic: one logical tab is always rendered
+                    // as exactly four terminal cells, regardless of its column.
+                    val spaces = TAB_WIDTH
+                    val start = column
+                    out.append("|-->")
+                    tabs += start until (start + spaces)
                     column += spaces
                 } else if (ch.isISOControl()) {
                     val escaped = if (ch.code <= 0xFF) {
@@ -1931,6 +1968,7 @@ class CodeEditorView(
             }
             rawToVisual[rawText.length] = column
             visualText = out.toString()
+            tabRanges = tabs
         }
 
         fun visualColumn(rawColumn: Int): Int = rawToVisual[rawColumn.coerceIn(0, rawText.length)]

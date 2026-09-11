@@ -110,8 +110,8 @@ class CodeEditorViewTest {
         view.render(renderer)
 
         val rendered = renderer.snapshot().lines().drop(1).take(2).map { it.drop(3) }
-        assertTrue(rendered[0].startsWith("    for (i = 0; i < len; i++) {"))
-        assertTrue(rendered[1].startsWith("        return i;"))
+        assertTrue(rendered[0].startsWith("|-->for (i = 0; i < len; i++) {"))
+        assertTrue(rendered[1].startsWith("|-->|-->return i;"))
     }
 
     @Test
@@ -125,6 +125,19 @@ class CodeEditorViewTest {
         visualColumn.isAccessible = true
         assertEquals(1, visualColumn.invoke(line, 1))
         assertEquals(5, visualColumn.invoke(line, 2))
+    }
+
+    @Test
+    fun logicalCursorStepsTreatTabAndControlAsOneCharacterEach() {
+        val buffer = TextBuffer()
+        buffer.loadText("\t\u0001x")
+
+        buffer.moveRight()
+        assertEquals(Position(0, 1), buffer.cursorPosition())
+        buffer.moveRight()
+        assertEquals(Position(0, 2), buffer.cursorPosition())
+        buffer.moveLeft()
+        assertEquals(Position(0, 1), buffer.cursorPosition())
     }
 
     @Test
