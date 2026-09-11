@@ -12,6 +12,7 @@ import editor.codeintel.completion.WorkspaceSymbolCompletionProvider
 import editor.codeintel.frontend.KotlinSemanticAdapter
 import editor.codeintel.frontend.LegacySemanticDeltaFactory
 import editor.codeintel.frontend.SourceFile
+import editor.codeintel.frontend.TreeSitterSemanticAdapters
 import editor.codeintel.index.SemanticIndex
 import editor.codeintel.ml.HeuristicCompletionRanker
 import editor.codeintel.model.FileId
@@ -510,12 +511,13 @@ class CodeIntelService(
         if (language.isNullOrBlank()) return
         val latestVersion = synchronized(lock) { latestVersionByPath[path] }
         if (latestVersion != version) return
-        var kotlinDelta: editor.codeintel.model.FileSemanticDelta? = null
-        if (language.lowercase(Locale.ROOT) in KOTLIN_LANGUAGE_IDS) {
-            val source = SourceFile(path, "kotlin", text, version)
+        var semanticDelta: editor.codeintel.model.FileSemanticDelta? = null
+        val semanticAdapter = semanticAdapterFor(language)
+        if (semanticAdapter != null) {
+            val source = SourceFile(path, semanticAdapter.languageId, text, version)
             runCatching {
-                val delta = kotlinSemanticAdapter.extract(source)
-                kotlinDelta = delta
+                val delta = semanticAdapter.extract(source)
+                semanticDelta = delta
                 submitSemanticDelta(delta)
                 cacheSemanticSource(source)
             }
@@ -526,7 +528,7 @@ class CodeIntelService(
         val knownNames = synchronized(lock) { workspaceIndex.keys.toSet() }
         // The Kotlin semantic adapter already traversed this tree. Reuse its
         // facts for the compatibility index instead of parsing the file again.
-        val extracted = kotlinDelta?.let { compatibilityExtraction(it, text, language) }
+        val extracted = semanticDelta?.let { compatibilityExtraction(it, text, language) }
             ?: extractor.extract(path, text, language)
         val defs = extracted.symbols.map {
             SymbolDef(
@@ -563,7 +565,7 @@ class CodeIntelService(
             definitions = defs.sortedBy { it.range.first },
             identifiersByLine = filteredIdents
         )
-        if (language.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) {
+        if (semanticDelta == null) {
             runCatching {
                 submitSemanticDelta(
                     LegacySemanticDeltaFactory.create(path, language, text, version, defs, filteredIdents)
@@ -639,10 +641,16 @@ class CodeIntelService(
     }
 
     private fun canReuseSemanticFacts(path: String, language: String, text: String): Boolean {
-        if (language.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return false
+        if (semanticAdapterFor(language) == null) return false
         val file = semanticIndex.snapshot().file(path) ?: return false
         val hash = SemanticIds.hash(text).toULong().toString(16)
-        return file.languageId.lowercase(Locale.ROOT) in KOTLIN_LANGUAGE_IDS && file.contentHash == hash
+        return semanticAdapterFor(file.languageId) != null && file.contentHash == hash
+    }
+
+    private fun semanticAdapterFor(language: String?): editor.codeintel.frontend.LanguageSemanticAdapter? {
+        val key = language?.lowercase(Locale.ROOT) ?: return null
+        return if (key in KOTLIN_LANGUAGE_IDS) kotlinSemanticAdapter
+        else TreeSitterSemanticAdapters.forLanguage(key)
     }
 
     private fun rebuildWorkspaceIndex(path: String, newDefs: List<SymbolDef>) {
@@ -774,7 +782,7 @@ class CodeIntelService(
     private fun semanticDefinition(request: DefinitionRequest): NavigationTarget? {
         val snapshot = semanticIndex.snapshot()
         val file = snapshot.file(request.filePath) ?: return null
-        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return null
+        if (semanticAdapterFor(file.languageId) == null) return null
         val source = sourceFor(request.filePath, file.languageId) ?: return null
         val offset = offsetAt(source.text, request.position)
         val symbol = snapshot.symbolAt(file.id, offset)
@@ -790,7 +798,7 @@ class CodeIntelService(
     private fun semanticReferences(request: ReferenceRequest): List<NavigationTarget> {
         val snapshot = semanticIndex.snapshot()
         val file = snapshot.file(request.filePath) ?: return emptyList()
-        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return emptyList()
+        if (semanticAdapterFor(file.languageId) == null) return emptyList()
         val source = sourceFor(request.filePath, file.languageId)
         val atCursor = source?.let { snapshot.symbolAt(file.id, offsetAt(it.text, request.position)) }
         val symbol = atCursor?.takeIf { it.name == request.symbol || it.qualifiedName == request.symbol }
@@ -819,10 +827,10 @@ class CodeIntelService(
     private fun semanticCompletions(request: CompletionRequest): List<CompletionItem>? {
         val snapshot = semanticIndex.snapshot()
         val file = snapshot.file(request.filePath) ?: return null
-        if (file.languageId !in KOTLIN_LANGUAGE_IDS) return null
+        val semanticAdapter = semanticAdapterFor(file.languageId) ?: return null
         val source = sourceFor(request.filePath, file.languageId) ?: return null
         val offset = offsetAt(source.text, request.position)
-        val languageContext = kotlinSemanticAdapter.completionContext(source, offset)
+        val languageContext = semanticAdapter.completionContext(source, offset)
         val lineStart = source.text.lastIndexOf('\n', (offset - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
         val importContext = source.text.substring(lineStart, offset).trimStart().startsWith("import ")
         val context = CompletionContext(
@@ -848,7 +856,7 @@ class CodeIntelService(
     private fun semanticDocumentSymbols(path: String): List<Symbol> {
         val snapshot = semanticIndex.snapshot()
         val file = snapshot.file(path) ?: return emptyList()
-        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return emptyList()
+        if (semanticAdapterFor(file.languageId) == null) return emptyList()
         val source = sourceFor(path, file.languageId) ?: return emptyList()
         return snapshot.symbols(file.id).map { symbol ->
             Symbol(
@@ -868,7 +876,7 @@ class CodeIntelService(
     private fun semanticOutline(path: String): List<SymbolDef> {
         val snapshot = semanticIndex.snapshot()
         val file = snapshot.file(path) ?: return emptyList()
-        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return emptyList()
+        if (semanticAdapterFor(file.languageId) == null) return emptyList()
         val source = sourceFor(path, file.languageId) ?: return emptyList()
         return snapshot.symbols(file.id).map { symbol ->
             val start = positionAt(source.text, symbol.nameRange.startOffset)
@@ -915,7 +923,7 @@ class CodeIntelService(
     private fun semanticTokens(request: TokensRequest): List<Token>? {
         val snapshot = semanticIndex.snapshot()
         val file = snapshot.file(request.filePath) ?: return null
-        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return null
+        if (semanticAdapterFor(file.languageId) == null) return null
         val source = sourceFor(request.filePath, file.languageId) ?: return null
         val reusedVersion = synchronized(lock) { reusedSemanticVersions[request.filePath] }
         if (file.semanticVersion != request.version && reusedVersion != request.version) return emptyList()

@@ -96,18 +96,19 @@ class SemanticHighlightingTest {
                 1L
             )
         )
+        val secondText = "class Customer { val id: Long = 42 }"
         val second = adapter.extract(
             SourceFile(
                 "Incremental.kt",
                 "kotlin",
-                "class Customer { val id: Long = 42 }",
+                secondText,
                 2L
             )
         )
 
         assertTrue(first.symbols.any { it.name == "Customer" })
         assertTrue(second.symbols.any { it.name == "Customer" })
-        assertTrue(second.lexicalTokens.any { it.text == "42" })
+        assertTrue(second.lexicalTokens.any { secondText.substring(it.range.startOffset, it.range.endOffset) == "42" })
     }
 
     private fun SourceFile.fileId() = editor.codeintel.model.SemanticIds.file(path)

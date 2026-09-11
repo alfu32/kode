@@ -45,7 +45,7 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
     )
     private val parseStates = LinkedHashMap<String, ParseState>(32, 0.75f, true)
 
-    fun extract(file: SourceFile): FileSemanticDelta {
+    override fun extract(file: SourceFile): FileSemanticDelta {
         val root = parseIncrementally(file)
             ?: error("Tree-sitter Kotlin parser could not parse ${file.path}")
         return extract(file, SyntaxTree(root))
@@ -119,7 +119,7 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
         offset: Int
     ): LanguageCompletionContext = completionContext(file, offset)
 
-    fun completionContext(file: SourceFile, offset: Int): LanguageCompletionContext {
+    override fun completionContext(file: SourceFile, offset: Int): LanguageCompletionContext {
         val before = file.text.substring(0, offset.coerceIn(0, file.text.length))
         val prefix = identifierPrefix(before)
         var cursor = before.length - prefix.length - 1
