@@ -137,9 +137,18 @@ class KotlinSemanticVerticalSliceTest {
         val first = extract(1, "Customer")
         val implementationOnly = extract(2, "Customer")
         val signatureChange = extract(2, "String")
+        val movedDeclaration = adapter.extract(
+            editor.codeintel.frontend.SourceFile(
+                "Surface.kt",
+                "kotlin",
+                "\nclass Customer\nfun load(): Customer = Customer()",
+                3L
+            )
+        )
 
         assertEquals(first.exportedSurfaceHash, implementationOnly.exportedSurfaceHash)
         assertTrue(first.exportedSurfaceHash != signatureChange.exportedSurfaceHash)
+        assertTrue(first.exportedSurfaceHash != movedDeclaration.exportedSurfaceHash)
     }
 
     @Test

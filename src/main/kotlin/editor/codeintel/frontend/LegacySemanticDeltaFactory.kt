@@ -81,7 +81,9 @@ object LegacySemanticDeltaFactory {
             parseVersion = version,
             semanticVersion = version
         )
-        val exported = symbols.sortedBy { it.name }.joinToString("|") { "${it.name}:${it.kind}" }
+        val exported = symbols.sortedBy { it.name }.joinToString("|") {
+            "${it.id.value}:${it.qualifiedName}:${it.kind}"
+        }
         return FileSemanticDelta(
             file = semanticFile,
             scopes = listOf(scope),

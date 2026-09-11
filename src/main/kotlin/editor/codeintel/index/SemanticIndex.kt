@@ -1,6 +1,7 @@
 package editor.codeintel.index
 
 import editor.codeintel.model.FileId
+import editor.codeintel.model.FileDependencyRecord
 import editor.codeintel.model.FileRecord
 import editor.codeintel.model.FileSemanticDelta
 import editor.codeintel.model.OccurrenceRecord
@@ -36,6 +37,9 @@ interface SemanticSnapshot : AutoCloseable {
     fun workspaceSymbols(): Sequence<SymbolRecord>
     fun scopes(fileId: FileId): Sequence<ScopeRecord>
     fun relations(from: SymbolId, kind: RelationKind? = null): Sequence<RelationRecord>
+    fun dependencies(fileId: FileId): Sequence<FileDependencyRecord>
+    fun dependents(fileId: FileId): Sequence<FileDependencyRecord>
+    fun resolutionGeneration(fileId: FileId): Long
     fun type(id: TypeId?): TypeRecord?
 
     override fun close() = Unit
@@ -43,13 +47,18 @@ interface SemanticSnapshot : AutoCloseable {
 
 interface SemanticStore {
     fun replaceFile(delta: FileSemanticDelta, resolved: ResolvedSemanticProject)
+    fun replaceFiles(deltas: Collection<FileSemanticDelta>, resolved: ResolvedSemanticProject) {
+        deltas.forEach { replaceFile(it, resolved) }
+    }
     fun loadFiles(): List<FileSemanticDelta>
+    fun loadDependencies(): List<FileDependencyRecord> = emptyList()
     fun hasData(): Boolean
 }
 
 class SemanticIndex(
     private val store: SemanticStore? = null,
-    private val resolver: SemanticResolver = SemanticResolver()
+    private val resolver: SemanticResolver = SemanticResolver(),
+    private val invalidationPlanner: SemanticInvalidationPlanner = SemanticInvalidationPlanner()
 ) {
     private val revision = AtomicLong(0L)
     private val state = AtomicReference(SnapshotState.empty())
@@ -59,10 +68,17 @@ class SemanticIndex(
 
     fun applyAll(updates: Collection<FileSemanticDelta>): SemanticSnapshot = synchronized(updateLock) {
         if (updates.isEmpty()) return@synchronized Snapshot(state.get())
-        val deltas = state.get().project.deltas.toMutableMap()
+        val previous = state.get().project
+        val deltas = previous.deltas.toMutableMap()
         updates.forEach { delta -> deltas[delta.fileId] = delta }
-        val resolved = resolver.resolve(deltas.values)
-        updates.forEach { delta -> store?.replaceFile(delta, resolved) }
+        val plan = invalidationPlanner.plan(previous, updates)
+        val resolved = if (previous.deltas.isEmpty()) {
+            resolver.resolve(deltas.values)
+        } else {
+            resolver.resolveIncremental(deltas.values, previous, plan.affectedFiles)
+        }
+        val affectedDeltas = plan.affectedFiles.mapNotNull(resolved.deltas::get)
+        store?.replaceFiles(affectedDeltas, resolved)
         val next = SnapshotState(revision.incrementAndGet(), resolved)
         state.set(next)
         Snapshot(next)
@@ -108,6 +124,8 @@ class SemanticIndex(
             .filter { it.resolvedSymbolId != null }
             .groupBy { requireNotNull(it.resolvedSymbolId) }
         private val relationsFrom = state.project.relations.groupBy { it.from }
+        private val dependenciesFrom = state.project.dependencies.groupBy { it.fromFileId }
+        private val dependenciesTo = state.project.dependencies.groupBy { it.toFileId }
 
         override fun file(id: FileId): FileRecord? = filesById[id]
 
@@ -191,6 +209,15 @@ class SemanticIndex(
 
         override fun relations(from: SymbolId, kind: RelationKind?): Sequence<RelationRecord> =
             relationsFrom[from].orEmpty().asSequence().filter { kind == null || it.kind == kind }
+
+        override fun dependencies(fileId: FileId): Sequence<FileDependencyRecord> =
+            dependenciesFrom[fileId].orEmpty().asSequence()
+
+        override fun dependents(fileId: FileId): Sequence<FileDependencyRecord> =
+            dependenciesTo[fileId].orEmpty().asSequence()
+
+        override fun resolutionGeneration(fileId: FileId): Long =
+            state.project.resolutionGenerations[fileId] ?: 0L
 
         override fun type(id: TypeId?): TypeRecord? = id?.let(state.project.types::get)
 

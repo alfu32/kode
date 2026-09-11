@@ -84,6 +84,15 @@ enum class RelationKind {
     ALIAS_OF
 }
 
+enum class FileDependencyKind {
+    IMPORT,
+    TYPE_REFERENCE,
+    CALL,
+    INHERITANCE,
+    MEMBER_REFERENCE,
+    REFERENCE
+}
+
 enum class SemanticSource {
     TREE_SITTER,
     STATIC_INFERENCE,
@@ -180,6 +189,13 @@ data class RelationRecord(
     val to: SymbolId,
     val kind: RelationKind,
     val confidence: Confidence = Confidence(SemanticSource.STATIC_INFERENCE, 0.95f)
+)
+
+data class FileDependencyRecord(
+    val fromFileId: FileId,
+    val toFileId: FileId,
+    val kind: FileDependencyKind,
+    val generation: Long
 )
 
 enum class TypeRole {

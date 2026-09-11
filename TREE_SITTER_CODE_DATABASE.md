@@ -29,6 +29,8 @@ source -> Tree-sitter CST -> language adapter -> FileSemanticDelta
 - `editor.codeintel.frontend/KotlinSemanticAdapter.kt`: first adapter vertical slice. It extracts Kotlin declarations, lexical scopes, declared/return/super types, imports, calls, member references, ownership, and initializer hints from Tree-sitter.
 - `editor.codeintel.frontend/LegacySemanticDeltaFactory.kt`: explicitly low-confidence bridge that pre-caches non-migrated language output in the normalized schema without making it authoritative for semantic queries.
 - `editor.codeintel.index/SemanticIndex.kt`: per-file replacement, progressive project resolution, atomic snapshot publication, and snapshot queries.
+- `editor.codeintel.index/DependencyGraph.kt`: indexed forward/reverse file edges and cycle-safe transitive dependent traversal.
+- `editor.codeintel.index/SemanticInvalidationPlanner.kt`: exported-surface comparison, unresolved-name wake-up, and minimal affected-file planning.
 - `editor.codeintel.index/H2SemanticStore.kt`: normalized transactional persistence using Kode's existing embedded project database lifecycle. The schema is independent from the temporary legacy tables.
 - `editor.codeintel.resolver/SemanticResolver.kt`: scope-aware symbol resolution, declared and inferred types, calls, ownership, and inheritance.
 - `editor.codeintel.resolver/ExpressionTypeResolver.kt`: conservative best-effort expression typing used by member completion.
@@ -51,11 +53,36 @@ semantic_types
 semantic_unresolved_types
 semantic_imports
 semantic_type_hints
+semantic_file_dependencies
 ```
 
 Indexes cover symbol names and qualified names, symbol file/scope ownership, occurrence file offsets and resolved symbols, relation directions, and scope ranges. Tree-sitter trees and editor buffer text are not stored in these tables.
 
-Every update replaces one file's records in one transaction. Full-project pre-indexing batches deltas, resolves the workspace once, and publishes one snapshot rather than exposing partially scanned state. Interactive edits replace one file immediately. Resolution completes before an immutable snapshot is atomically published, so readers continue using the preceding snapshot during extraction and persistence. Stable IDs are derived from file identity and declaration/source locations; occurrences point to resolved `SymbolId` values instead of relying on text equality.
+Every update replaces the affected files' records in one transaction. Full-project pre-indexing batches deltas, resolves the workspace once, and publishes one snapshot rather than exposing partially scanned state. Interactive edits extract one file, compare its exported semantic surface, and re-resolve only that file unless its public surface changed. Resolution and persistence complete before an immutable snapshot is atomically published, so readers continue using the preceding snapshot during the update. Stable IDs are derived from file identity and declaration/source locations; occurrences point to resolved `SymbolId` values instead of relying on text equality.
+
+## Incremental dependency invalidation
+
+The resolved project derives typed file edges for imports, type references, calls, inheritance, member references, and general references. The same graph is available through `SemanticSnapshot` and is persisted as the project pre-cache. Each file also carries a resolution generation.
+
+On an edit:
+
+```text
+extract changed file
+        |
+compare exportedSurfaceHash
+        |
+        +-- unchanged -> resolve and replace changed file only
+        |
+        +-- changed ----> follow reverse dependency closure
+                              |
+                         resolve affected files
+                              |
+                    one persistence transaction
+                              |
+                       publish snapshot N+1
+```
+
+The exported fingerprint includes exported declarations, their symbol identities, declared/inferred type hints, and imports. Including symbol identity is necessary because IDs currently include source offsets; moving a declaration must wake dependents even if its signature text is unchanged. A newly introduced definition has no prior graph edge, so the planner also wakes files with matching unresolved type, call, occurrence, or import facts. Cycles are handled by a visited-set traversal. Removing or renaming an exported symbol re-resolves dependents and clears stale type/occurrence bindings.
 
 ## Current Kotlin vertical slice
 
@@ -79,7 +106,7 @@ Unknown types and unresolved occurrences are retained as unknown. Resolution doe
 ## Incremental migration plan
 
 1. **Kotlin foundation (implemented):** emit symbols, scopes, occurrences, imports, unresolved types, and relations; persist per-file deltas; publish snapshots; route Kotlin compatibility queries through the semantic index.
-2. **Dependency invalidation:** persist file dependencies and compare `exportedSurfaceHash`; only re-resolve dependent files when the public semantic surface changes.
+2. **Dependency invalidation (implemented):** persist typed file dependencies and resolution generations, compare `exportedSurfaceHash`, wake matching unresolved files for new definitions, and only re-resolve the transitive dependent closure when the public semantic surface changes.
 3. **Kotlin expression coverage:** add chained member access, `this`, `super`, casts, parenthesized expressions, assignment propagation, generic and nullable type decoding, and visibility rules.
 4. **Semantic highlighting:** make the editor consume `SemanticTokenService` directly while retaining Tree-sitter lexical tokens for strings/comments/literals and unresolved identifiers.
 5. **Statistics and ranking:** persist completion selection history, same-function/same-file recency, and project frequency; keep deterministic candidate generation.
@@ -98,7 +125,11 @@ The milestone fixtures cover:
 - `Customer.kt` plus `Service.kt`, including reverse indexing order;
 - `Customer : Entity()` exposing both declared and inherited members;
 - stable old snapshots while a new file version is published;
-- semantic facts surviving a database reload.
+- semantic facts surviving a database reload;
+- implementation-only edits leaving dependent resolution generations unchanged;
+- exported-surface edits invalidating transitive dependents, including cyclic graphs;
+- new definitions waking unresolved files and removed definitions clearing stale bindings;
+- dependency edges and generations surviving persistent reload.
 
 ## Design constraints
 

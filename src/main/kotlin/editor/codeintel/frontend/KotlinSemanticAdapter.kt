@@ -96,13 +96,30 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
                 .sortedBy { it.qualifiedName ?: it.name }
             val exportedIds = exportedSymbols.mapTo(mutableSetOf()) { it.id }
             val exported = buildString {
-                append(exportedSymbols.joinToString("|") { "${it.qualifiedName}:${it.kind}:${it.flags}" })
+                append(
+                    exportedSymbols.joinToString("|") {
+                        "${it.id.value}:${it.qualifiedName}:${it.kind}:${it.flags}"
+                    }
+                )
                 append("#types=")
                 append(
                     unresolvedTypes
                         .filter { it.ownerSymbolId in exportedIds }
                         .sortedBy { "${it.ownerSymbolId.value}:${it.role}:${it.name}" }
                         .joinToString("|") { "${it.ownerSymbolId.value}:${it.role}:${it.name}" }
+                )
+                append("#hints=")
+                append(
+                    typeHints
+                        .filter { it.targetSymbolId in exportedIds }
+                        .sortedBy { "${it.targetSymbolId.value}:${it.kind}:${it.referencedName}" }
+                        .joinToString("|") { "${it.targetSymbolId.value}:${it.kind}:${it.referencedName}" }
+                )
+                append("#imports=")
+                append(
+                    imports
+                        .sortedBy { "${it.path}:${it.alias}:${it.wildcard}" }
+                        .joinToString("|") { "${it.path}:${it.alias}:${it.wildcard}" }
                 )
             }
             return FileSemanticDelta(

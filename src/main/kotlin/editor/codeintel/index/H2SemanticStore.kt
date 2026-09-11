@@ -1,6 +1,8 @@
 package editor.codeintel.index
 
 import editor.codeintel.model.Confidence
+import editor.codeintel.model.FileDependencyKind
+import editor.codeintel.model.FileDependencyRecord
 import editor.codeintel.model.FileId
 import editor.codeintel.model.FileRecord
 import editor.codeintel.model.FileSemanticDelta
@@ -35,29 +37,46 @@ class H2SemanticStore(
     @Volatile
     private var initializedUrl: String? = null
 
-    override fun replaceFile(delta: FileSemanticDelta, resolved: ResolvedSemanticProject) {
+    override fun replaceFile(delta: FileSemanticDelta, resolved: ResolvedSemanticProject) =
+        replaceFiles(listOf(delta), resolved)
+
+    override fun replaceFiles(deltas: Collection<FileSemanticDelta>, resolved: ResolvedSemanticProject) {
+        if (deltas.isEmpty()) return
         connection()?.use { connection ->
             ensureSchema(connection)
             connection.autoCommit = false
             runCatching {
-                deleteFile(connection, delta.fileId)
-                insertFile(connection, delta)
-                val symbols = resolved.symbols.filter { it.fileId == delta.fileId }
-                val symbolIds = symbols.mapTo(mutableSetOf()) { it.id }
-                insertScopes(connection, delta.scopes)
-                insertSymbols(connection, symbols)
-                insertOccurrences(connection, resolved.occurrences.filter { it.fileId == delta.fileId })
-                insertRelations(connection, delta.fileId, resolved.relations.filter { it.from in symbolIds })
-                insertTypes(connection, delta.fileId, symbols, resolved)
-                insertUnresolvedTypes(connection, delta.fileId, delta.unresolvedTypes)
-                insertImports(connection, delta.imports)
-                insertTypeHints(connection, delta.fileId, delta.typeHints)
+                deltas.forEach { deleteFile(connection, it.fileId) }
+                deltas.forEach { delta -> insertFileData(connection, delta, resolved) }
                 connection.commit()
             }.getOrElse { error ->
                 runCatching { connection.rollback() }
                 throw error
             }
         }
+    }
+
+    private fun insertFileData(
+        connection: Connection,
+        delta: FileSemanticDelta,
+        resolved: ResolvedSemanticProject
+    ) {
+        insertFile(connection, delta)
+        val symbols = resolved.symbols.filter { it.fileId == delta.fileId }
+        val symbolIds = symbols.mapTo(mutableSetOf()) { it.id }
+        insertScopes(connection, delta.scopes)
+        insertSymbols(connection, symbols)
+        insertOccurrences(connection, resolved.occurrences.filter { it.fileId == delta.fileId })
+        insertRelations(connection, delta.fileId, resolved.relations.filter { it.from in symbolIds })
+        insertTypes(connection, delta.fileId, symbols, resolved)
+        insertUnresolvedTypes(connection, delta.fileId, delta.unresolvedTypes)
+        insertImports(connection, delta.imports)
+        insertTypeHints(connection, delta.fileId, delta.typeHints)
+        insertDependencies(
+            connection,
+            delta.fileId,
+            resolved.dependencies.filter { it.fromFileId == delta.fileId }
+        )
     }
 
     override fun loadFiles(): List<FileSemanticDelta> {
@@ -128,6 +147,24 @@ class H2SemanticStore(
         }
     }
 
+    override fun loadDependencies(): List<FileDependencyRecord> {
+        val connection = connection() ?: return emptyList()
+        connection.use { conn ->
+            ensureSchema(conn)
+            return query(
+                conn,
+                "SELECT from_file_id,to_file_id,kind,generation FROM semantic_file_dependencies"
+            ) { result ->
+                FileDependencyRecord(
+                    fromFileId = FileId(result.getLong(1)),
+                    toFileId = FileId(result.getLong(2)),
+                    kind = FileDependencyKind.valueOf(result.getString(3)),
+                    generation = result.getLong(4)
+                )
+            }
+        }
+    }
+
     private fun connection(): Connection? {
         val url = urlProvider() ?: return null
         return runCatching { DriverManager.getConnection(url, DB_USER, DB_PASS) }.getOrNull()
@@ -152,12 +189,6 @@ class H2SemanticStore(
     }
 
     private fun deleteFile(connection: Connection, fileId: FileId) {
-        connection.prepareStatement(
-            "DELETE FROM semantic_relations WHERE to_symbol IN (SELECT symbol_id FROM semantic_symbols WHERE file_id = ?)"
-        ).use { statement ->
-            statement.setLong(1, fileId.value)
-            statement.executeUpdate()
-        }
         CHILD_TABLES.forEach { table ->
             connection.prepareStatement("DELETE FROM $table WHERE file_id = ?").use { statement ->
                 statement.setLong(1, fileId.value)
@@ -363,6 +394,26 @@ class H2SemanticStore(
         }
     }
 
+    private fun insertDependencies(
+        connection: Connection,
+        fileId: FileId,
+        records: List<FileDependencyRecord>
+    ) {
+        connection.prepareStatement(
+            "INSERT INTO semantic_file_dependencies(file_id,from_file_id,to_file_id,kind,generation) VALUES(?,?,?,?,?)"
+        ).use { statement ->
+            records.forEach { record ->
+                statement.setLong(1, fileId.value)
+                statement.setLong(2, record.fromFileId.value)
+                statement.setLong(3, record.toFileId.value)
+                statement.setString(4, record.kind.name)
+                statement.setLong(5, record.generation)
+                statement.addBatch()
+            }
+            statement.executeBatch()
+        }
+    }
+
     private fun loadScopes(connection: Connection): List<ScopeRecord> = query(connection,
         "SELECT scope_id,file_id,parent_id,owner_symbol_id,kind,start_offset,end_offset FROM semantic_scopes"
     ) { result ->
@@ -459,7 +510,7 @@ class H2SemanticStore(
         private const val DB_PASS = "sa"
         private val CHILD_TABLES = listOf(
             "semantic_scopes", "semantic_symbols", "semantic_occurrences", "semantic_relations", "semantic_types",
-            "semantic_unresolved_types", "semantic_imports", "semantic_type_hints"
+            "semantic_unresolved_types", "semantic_imports", "semantic_type_hints", "semantic_file_dependencies"
         )
         private val SCHEMA = listOf(
             "CREATE TABLE IF NOT EXISTS semantic_files(file_id BIGINT PRIMARY KEY,path VARCHAR(2048) UNIQUE,language_id VARCHAR(64),content_hash VARCHAR(64),parse_version BIGINT,semantic_version BIGINT,dependency_generation BIGINT,exported_surface_hash VARCHAR(64))",
@@ -471,6 +522,7 @@ class H2SemanticStore(
             "CREATE TABLE IF NOT EXISTS semantic_unresolved_types(file_id BIGINT,owner_symbol_id BIGINT,scope_id BIGINT,name VARCHAR(1024),role VARCHAR(32),start_offset INT,end_offset INT,confidence_source VARCHAR(32),confidence_value REAL)",
             "CREATE TABLE IF NOT EXISTS semantic_imports(file_id BIGINT,scope_id BIGINT,path VARCHAR(2048),alias VARCHAR(512),wildcard BOOLEAN,start_offset INT,end_offset INT)",
             "CREATE TABLE IF NOT EXISTS semantic_type_hints(file_id BIGINT,target_symbol_id BIGINT,scope_id BIGINT,start_offset INT,end_offset INT,referenced_name VARCHAR(1024),kind VARCHAR(32),confidence_source VARCHAR(32),confidence_value REAL)",
+            "CREATE TABLE IF NOT EXISTS semantic_file_dependencies(file_id BIGINT,from_file_id BIGINT,to_file_id BIGINT,kind VARCHAR(32),generation BIGINT,PRIMARY KEY(file_id,to_file_id,kind))",
             "CREATE INDEX IF NOT EXISTS semantic_symbols_name_idx ON semantic_symbols(name)",
             "CREATE INDEX IF NOT EXISTS semantic_symbols_qualified_name_idx ON semantic_symbols(qualified_name)",
             "CREATE INDEX IF NOT EXISTS semantic_symbols_file_idx ON semantic_symbols(file_id)",
@@ -479,7 +531,8 @@ class H2SemanticStore(
             "CREATE INDEX IF NOT EXISTS semantic_occurrences_symbol_idx ON semantic_occurrences(resolved_symbol_id)",
             "CREATE INDEX IF NOT EXISTS semantic_relations_from_idx ON semantic_relations(from_symbol,kind)",
             "CREATE INDEX IF NOT EXISTS semantic_relations_to_idx ON semantic_relations(to_symbol,kind)",
-            "CREATE INDEX IF NOT EXISTS semantic_scopes_range_idx ON semantic_scopes(file_id,start_offset,end_offset)"
+            "CREATE INDEX IF NOT EXISTS semantic_scopes_range_idx ON semantic_scopes(file_id,start_offset,end_offset)",
+            "CREATE INDEX IF NOT EXISTS semantic_dependencies_to_idx ON semantic_file_dependencies(to_file_id)"
         )
     }
 }
