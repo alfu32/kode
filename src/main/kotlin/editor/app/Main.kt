@@ -39,6 +39,7 @@ import java.nio.file.Paths
 import java.time.Instant
 import editor.lib.FileTree
 import editor.lib.JGitService
+import editor.lib.ProjectFolderStatusClassifier
 import java.net.URL
 import java.lang.management.ManagementFactory
 import com.sun.management.OperatingSystemMXBean
@@ -957,7 +958,13 @@ private class SplitPanelsApp(
         },
         onSelectRecent = { entry -> openRecent(entry) },
         onRemoveRecent = { entry -> removeRecent(entry) },
-        syntaxProvider = regexProvider
+        syntaxProvider = regexProvider,
+        folderStatusProvider = ProjectFolderStatusClassifier(
+            rootProvider = { projectRoot },
+            sourceRootsProvider = { sourceRoots.toList() },
+            exclusionsProvider = { scanExclusions.toList() },
+            ignorePatternsProvider = { gitService?.ignoredPatterns().orEmpty() }
+        )::status
     )
     private val settingsView = SettingsView(
         styleSheet,
@@ -998,6 +1005,7 @@ private class SplitPanelsApp(
             .toMutableMap()
         sourceRoots = loadSourceRoots(loaded.sourceRoots)
         scanExclusions = loadScanExclusions(loaded.scanExclusions)
+        filesTabView.refreshFileTree()
         restoreLastSession()
         if (runInitialScan) {
             if (hasPersistentIndex()) {
@@ -1464,6 +1472,7 @@ private class SplitPanelsApp(
             return "Source root already added: ${formatSourceRoot(normalized)}"
         }
         sourceRoots.add(normalized)
+        filesTabView.refreshFileTree()
         val reindexed = applySourceRootsChanged()
         return if (reindexed) {
             "Added source root: ${formatSourceRoot(normalized)}"
@@ -1476,6 +1485,7 @@ private class SplitPanelsApp(
         val normalized = normalizeSourceRoot(root) ?: return "Invalid source root."
         val removed = sourceRoots.removeIf { normalizeSourceRoot(it) == normalized }
         if (!removed) return "Source root not found."
+        filesTabView.refreshFileTree()
         val reindexed = applySourceRootsChanged()
         return if (reindexed) {
             "Removed source root: ${formatSourceRoot(normalized)}"
@@ -1514,6 +1524,7 @@ private class SplitPanelsApp(
             return "Scan exclusion already added: $normalized"
         }
         scanExclusions.add(normalized)
+        filesTabView.refreshFileTree()
         val reindexed = applyScanExclusionsChanged()
         return if (reindexed) "Added scan exclusion: $normalized"
         else "Added scan exclusion, but failed to clear index."
@@ -1523,6 +1534,7 @@ private class SplitPanelsApp(
         val normalized = normalizeScanExclusion(exclusion) ?: return "Invalid scan exclusion."
         val removed = scanExclusions.removeIf { normalizeScanExclusion(it) == normalized }
         if (!removed) return "Scan exclusion not found."
+        filesTabView.refreshFileTree()
         val reindexed = applyScanExclusionsChanged()
         return if (reindexed) "Removed scan exclusion: $normalized"
         else "Removed scan exclusion, but failed to clear index."

@@ -8,6 +8,33 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.ArrayDeque
 
 object ProjectFileScanner {
+    /**
+     * Evaluates gitignore rules for one path without walking the whole project.
+     * File-tree status classification uses this bounded operation while opening
+     * a project or expanding a folder.
+     */
+    fun isIgnoredPath(
+        root: Path,
+        path: Path,
+        ignoreGlobs: List<String> = emptyList()
+    ): Boolean {
+        val normalizedRoot = root.toAbsolutePath().normalize()
+        val target = path.toAbsolutePath().normalize()
+        if (!target.startsWith(normalizedRoot) || target == normalizedRoot) return false
+
+        var matcher = GitIgnoreMatcher.fromGlobs(loadIgnoreFile(normalizedRoot) + ignoreGlobs)
+        var current = normalizedRoot
+        var ignored = false
+        val relativeParts = normalizedRoot.relativize(target)
+        relativeParts.forEach { part ->
+            current = current.resolve(part)
+            matcher = matcher.withAdditionalRules(loadIgnoreFile(current))
+            val relative = normalizedRoot.relativize(current).toString().replace(File.separatorChar, '/')
+            matcher.ignoreDecision(relative, isDirectory = Files.isDirectory(current))?.let { ignored = it }
+        }
+        return ignored
+    }
+
     fun listFilesForIndex(root: Path, ignoreGlobs: List<String>): List<Path> {
         return listFilesForIndex(root, listOf(root), ignoreGlobs)
     }
@@ -112,15 +139,19 @@ object ProjectFileScanner {
     ) {
 
         fun isIgnored(relPath: String, isDirectory: Boolean): Boolean {
+            return ignoreDecision(relPath, isDirectory) ?: false
+        }
+
+        fun ignoreDecision(relPath: String, isDirectory: Boolean): Boolean? {
             val normalized = relPath.replace(File.separatorChar, '/')
-            var ignored = false
+            var decision: Boolean? = null
             rules.forEach { rule ->
                 if (rule.dirOnly && !isDirectory) return@forEach
                 if (rule.matches(normalized)) {
-                    ignored = !rule.negated
+                    decision = !rule.negated
                 }
             }
-            return ignored
+            return decision
         }
 
         fun isExplicitlyIncluded(relPath: String, isDirectory: Boolean): Boolean {

@@ -3,6 +3,7 @@ package editor.ui
 import editor.lib.FileTree
 import editor.lib.FileTreeEntry
 import editor.lib.IFileTree
+import editor.lib.ProjectFolderStatus
 import editor.mime.DefaultMimeTypeDetector
 import editor.mime.MimeTypeCategory
 import editor.mime.MimeTypeResult
@@ -16,7 +17,8 @@ class FileTreeView(
     styleSheet: StyleSheet,
     private var tree: IFileTree = FileTree.newFileTree(System.getProperty("user.dir")),
     private val onSelect: (FileTreeEntry, String?) -> Unit = { _, _ -> },
-    private val syntaxProvider: editor.grammars.SyntaxProvider? = null
+    private val syntaxProvider: editor.grammars.SyntaxProvider? = null,
+    private val folderStatusProvider: ((String) -> ProjectFolderStatus?)? = null
 ) : BaseComponent(styleSheet) {
 
     private var selectedPath: String? = null
@@ -29,9 +31,16 @@ class FileTreeView(
     private var lastRows: Int = 0
     private val mimeDetector = DefaultMimeTypeDetector()
     private val mimeCache = mutableMapOf<String, MimeCacheEntry>()
+    private val folderStatusCache = mutableMapOf<String, ProjectFolderStatus?>()
+
+    init {
+        preclassifySubtree(tree.root, depth = 2)
+    }
 
     fun refreshFileTree() {
         tree.refreshOpenNodes()
+        folderStatusCache.clear()
+        preclassifySubtree(tree.root, depth = 2)
     }
 
     fun setTree(newTree: IFileTree) {
@@ -43,6 +52,8 @@ class FileTreeView(
         renameInput.text = ""
         renameInput.cursor = 0
         mimeCache.clear()
+        folderStatusCache.clear()
+        preclassifySubtree(tree.root, depth = 2)
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -54,6 +65,7 @@ class FileTreeView(
 
         tree.refreshOpenNodes()
         val entries = tree.flattened()
+        entries.filter { it.typ == "folder" }.forEach { folderStatus(it.fullPath) }
 
         val availableRows = (rows - 1).coerceAtLeast(0) // leave room for header
         val maxOffset = (entries.size - availableRows).coerceAtLeast(0)
@@ -65,6 +77,14 @@ class FileTreeView(
         val selectedStyle = styleSheet.getStyle("file-entry:selected")
         val folderStyle = styleSheet.getStyle("file-entry:folder")
         val selectedFolderStyle = styleSheet.getStyle("file-entry:folder:selected")
+        val ignoredFolderStyle = styleSheet.getStyle("file-entry:folder:ignored")
+        val sourceFolderStyle = styleSheet.getStyle("file-entry:folder:source")
+        val outsideSourceFolderStyle = styleSheet.getStyle("file-entry:folder:outside-source")
+        val excludedFolderStyle = styleSheet.getStyle("file-entry:folder:excluded")
+        val selectedIgnoredFolderStyle = styleSheet.getStyle("file-entry:folder:ignored:selected")
+        val selectedSourceFolderStyle = styleSheet.getStyle("file-entry:folder:source:selected")
+        val selectedOutsideSourceFolderStyle = styleSheet.getStyle("file-entry:folder:outside-source:selected")
+        val selectedExcludedFolderStyle = styleSheet.getStyle("file-entry:folder:excluded:selected")
         val plainStyle = styleSheet.getStyle("file-entry:plain")
         val selectedPlainStyle = styleSheet.getStyle("file-entry:plain:selected")
         val visible = entries.drop(scrollOffset).take(availableRows)
@@ -72,9 +92,22 @@ class FileTreeView(
             val rowY = idx + 1
             val isSelected = entry.fullPath == selectedPath
             val isPlain = entry.typ == "file" && shouldUsePlainStyle(entry.fullPath, entry.name)
+            val folderStatus = if (entry.typ == "folder") folderStatus(entry.fullPath) else null
             val style = when {
-                entry.typ == "folder" && isSelected -> selectedFolderStyle
-                entry.typ == "folder" -> folderStyle
+                entry.typ == "folder" && isSelected -> when (folderStatus) {
+                    ProjectFolderStatus.GIT_IGNORED -> selectedIgnoredFolderStyle
+                    ProjectFolderStatus.IN_SOURCE -> selectedSourceFolderStyle
+                    ProjectFolderStatus.OUTSIDE_SOURCE -> selectedOutsideSourceFolderStyle
+                    ProjectFolderStatus.EXCLUDED_SOURCE -> selectedExcludedFolderStyle
+                    null -> selectedFolderStyle
+                }
+                entry.typ == "folder" -> when (folderStatus) {
+                    ProjectFolderStatus.GIT_IGNORED -> ignoredFolderStyle
+                    ProjectFolderStatus.IN_SOURCE -> sourceFolderStyle
+                    ProjectFolderStatus.OUTSIDE_SOURCE -> outsideSourceFolderStyle
+                    ProjectFolderStatus.EXCLUDED_SOURCE -> excludedFolderStyle
+                    null -> folderStyle
+                }
                 isPlain && isSelected -> selectedPlainStyle
                 isPlain -> plainStyle
                 isSelected -> selectedStyle
@@ -194,6 +227,7 @@ class FileTreeView(
                 } else if (renameTarget == entry.fullPath && y == renameRow) {
                     // keep editing
                 } else if (entry.typ == "folder") {
+                    preclassifySubtree(entry.fullPath, depth = 2)
                     tree.toggle(entry.fullPath)
                 } else {
                     onSelect(entry, entry.detectType())
@@ -249,6 +283,7 @@ class FileTreeView(
             "right", "enter" -> {
                 val current = entries[currentIndex]
                 if (current.typ == "folder") {
+                    preclassifySubtree(current.fullPath, depth = 2)
                     tree.toggle(current.fullPath)
                 } else {
                     onSelect(current, current.detectType())
@@ -273,6 +308,24 @@ class FileTreeView(
         val syntaxKnown = lang != null && syntaxProvider?.languages()?.contains(lang) == true
         val isUnknownSyntax = isTextLike && !syntaxKnown
         return isPlainText || isUnknownSyntax
+    }
+
+    private fun folderStatus(path: String): ProjectFolderStatus? {
+        if (!folderStatusCache.containsKey(path)) {
+            folderStatusCache[path] = folderStatusProvider?.invoke(path)
+        }
+        return folderStatusCache[path]
+    }
+
+    private fun preclassifySubtree(path: String, depth: Int) {
+        if (folderStatusProvider == null || depth < 0) return
+        folderStatus(path)
+        if (depth == 0) return
+        val directory = File(path)
+        val children = runCatching { directory.listFiles()?.toList().orEmpty() }.getOrDefault(emptyList())
+        children.filter { it.isDirectory }.forEach { child ->
+            preclassifySubtree(child.canonicalPath, depth - 1)
+        }
     }
 
     private fun detectMime(path: String, name: String): MimeTypeResult {

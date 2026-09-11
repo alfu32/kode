@@ -89,6 +89,24 @@ file-entry:folder {
     fg: #ffcc22;
     text-decoration: bold;
 }
+file-entry:folder:ignored {
+    bg: #1a2134;
+    fg: #c18a3a;
+}
+file-entry:folder:source {
+    bg: #1a2134;
+    fg: #ffcc22;
+    text-decoration: bold;
+}
+file-entry:folder:outside-source {
+    bg: #1a2134;
+    fg: #fff0a6;
+    text-decoration: bold;
+}
+file-entry:folder:excluded {
+    bg: #1a2134;
+    fg: #b86f4b;
+}
 file-entry:plain {
     bg: #1a2134;
     fg: #999999;
@@ -101,6 +119,24 @@ file-entry:folder:selected {
     bg: #243250;
     fg: #ffcc22;
     text-decoration: bold;
+}
+file-entry:folder:ignored:selected {
+    bg: #243250;
+    fg: #c18a3a;
+}
+file-entry:folder:source:selected {
+    bg: #243250;
+    fg: #ffcc22;
+    text-decoration: bold;
+}
+file-entry:folder:outside-source:selected {
+    bg: #243250;
+    fg: #fff0a6;
+    text-decoration: bold;
+}
+file-entry:folder:excluded:selected {
+    bg: #243250;
+    fg: #b86f4b;
 }
 file-entry:plain:selected {
     bg: #243250;

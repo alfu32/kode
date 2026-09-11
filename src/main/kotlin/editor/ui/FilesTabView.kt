@@ -4,6 +4,7 @@ import editor.app.RecentFileEntry
 import editor.lib.FileTree
 import editor.lib.FileTreeEntry
 import editor.lib.IFileTree
+import editor.lib.ProjectFolderStatus
 import editor.grammars.SyntaxProvider
 import react.BaseComponent
 import react.ClippedCanvasRenderer
@@ -24,10 +25,17 @@ class FilesTabView(
     private val onSelectFile: (FileTreeEntry, String?) -> Unit = { _, _ -> },
     private val onSelectRecent: (RecentFileEntry) -> Unit = {},
     private val onRemoveRecent: (RecentFileEntry) -> Unit = {},
-    private val syntaxProvider: SyntaxProvider? = null
+    private val syntaxProvider: SyntaxProvider? = null,
+    private val folderStatusProvider: ((String) -> ProjectFolderStatus?)? = null
 ) : BaseComponent(styleSheet) {
 
-    private val fileTreeView = FileTreeView(styleSheet, tree, onSelectFile, syntaxProvider)
+    private val fileTreeView = FileTreeView(
+        styleSheet,
+        tree,
+        onSelectFile,
+        syntaxProvider,
+        folderStatusProvider
+    )
     private var recentHeight: Int = 0
     private var recentScroll: Int = 0
     private var lastRows: Int = 0
