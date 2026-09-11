@@ -27,6 +27,9 @@ enum class SemanticTokenKind {
     STRING,
     NUMBER,
     COMMENT,
+    ATTRIBUTE,
+    LIFETIME,
+    OPERATOR,
     UNKNOWN
 }
 
@@ -88,5 +91,8 @@ class SemanticTokenService {
         LexicalTokenKind.STRING -> SemanticTokenKind.STRING
         LexicalTokenKind.NUMBER -> SemanticTokenKind.NUMBER
         LexicalTokenKind.COMMENT -> SemanticTokenKind.COMMENT
+        LexicalTokenKind.ATTRIBUTE -> SemanticTokenKind.ATTRIBUTE
+        LexicalTokenKind.LIFETIME -> SemanticTokenKind.LIFETIME
+        LexicalTokenKind.OPERATOR -> SemanticTokenKind.OPERATOR
     }
 }

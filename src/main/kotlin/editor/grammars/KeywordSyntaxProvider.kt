@@ -120,8 +120,16 @@ object KeywordSyntaxProvider : SyntaxProvider {
     }
 
     private fun extractKeywords(regex: String): List<String> {
-        // Heuristic: take first (...) group and split on '|'
-        val group = Regex("\\(([^()]+)\\)").find(regex)?.groupValues?.get(1) ?: return emptyList()
+        // Prefer the alternatives group over the anchoring group. Most grammar
+        // patterns begin with `(^|\\b)` and the old first-group heuristic made
+        // keyword completion return only `^` and `\\b`.
+        val groups = Regex("\\(([^()]*)\\)").findAll(regex).map { it.groupValues[1] }.toList()
+        val group = groups.firstOrNull { body ->
+            body.contains('|') && body.split('|').any { part ->
+                val candidate = part.replace("\\b", "").replace("\\", "").trim()
+                candidate.isNotEmpty() && candidate !in setOf("^", "$")
+            }
+        } ?: groups.firstOrNull() ?: return emptyList()
         return group.split('|')
             .map { it.replace("\\b", "").replace("\\", "").trim() }
             .filter { it.isNotEmpty() }

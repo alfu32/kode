@@ -302,6 +302,15 @@ semantic.number {
 semantic.comment {
     fg: #808080;
 }
+semantic.attribute {
+    fg: #bbb529;
+}
+semantic.lifetime {
+    fg: #9876aa;
+}
+semantic.operator {
+    fg: #cc7832;
+}
 lsp-list {
     bg: #0f1424;
     fg: #95aee6;

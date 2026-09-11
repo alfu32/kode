@@ -407,17 +407,25 @@ class H2SemanticStore(
         connection.prepareStatement(
             "INSERT INTO semantic_expression_types(file_id,start_offset,end_offset,type_kind,type_name,type_symbol_id,confidence_source,confidence_value) VALUES(?,?,?,?,?,?,?,?)"
         ).use { statement ->
-            records.forEach { record ->
-                statement.setLong(1, record.fileId.value)
-                statement.setInt(2, record.range.startOffset)
-                statement.setInt(3, record.range.endOffset)
-                statement.setString(4, record.type.javaClass.simpleName.uppercase())
-                statement.setString(5, (record.type as? TypeRef.Primitive)?.name)
-                statement.setNullableLong(6, (record.type as? TypeRef.Named)?.symbolId?.value)
-                statement.setString(7, record.confidence.source.name)
-                statement.setFloat(8, record.confidence.value)
-                statement.addBatch()
-            }
+            // The database key identifies an expression by source range. A
+            // recovering/incremental frontend may emit multiple competing type
+            // facts for that range; persist only the strongest one.
+            records
+                .filter { it.range.endOffset > it.range.startOffset }
+                .groupBy { Triple(it.fileId, it.range.startOffset, it.range.endOffset) }
+                .values
+                .mapNotNull { candidates -> candidates.maxByOrNull { it.confidence.value } }
+                .forEach { record ->
+                    statement.setLong(1, record.fileId.value)
+                    statement.setInt(2, record.range.startOffset)
+                    statement.setInt(3, record.range.endOffset)
+                    statement.setString(4, record.type.javaClass.simpleName.uppercase())
+                    statement.setString(5, (record.type as? TypeRef.Primitive)?.name)
+                    statement.setNullableLong(6, (record.type as? TypeRef.Named)?.symbolId?.value)
+                    statement.setString(7, record.confidence.source.name)
+                    statement.setFloat(8, record.confidence.value)
+                    statement.addBatch()
+                }
             statement.executeBatch()
         }
     }

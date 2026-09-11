@@ -5,7 +5,10 @@ import editor.codeintel.frontend.SourceFile
 import editor.codeintel.index.H2SemanticStore
 import editor.codeintel.index.SemanticIndex
 import editor.codeintel.model.FileDependencyKind
+import editor.codeintel.model.Confidence
 import editor.codeintel.model.LexicalTokenKind
+import editor.codeintel.model.ExpressionTypeRecord
+import editor.codeintel.model.SemanticSource
 import editor.codeintel.model.SourceRange
 import editor.codeintel.model.TypeRef
 import kotlin.test.Test
@@ -51,6 +54,29 @@ class H2SemanticStoreTest {
 
         assertEquals(1, snapshot.workspaceSymbols().count { it.name == "Program" })
         assertEquals(1, store.loadFiles().single { it.file.path == "Program.kt" }.symbols.count { it.name == "Program" })
+    }
+
+    @Test
+    fun collapsesDuplicateExpressionTypeRangesBeforePersistence() {
+        val url = "jdbc:h2:mem:semantic-duplicate-expression-${System.nanoTime()};DB_CLOSE_DELAY=-1"
+        val store = H2SemanticStore { url }
+        val adapter = KotlinSemanticAdapter()
+        val delta = adapter.extract(SourceFile("Expressions.kt", "kotlin", "val value = 1", 1L))
+        val literal = delta.expressionTypes.single()
+        val duplicate = ExpressionTypeRecord(
+            fileId = literal.fileId,
+            range = literal.range,
+            type = TypeRef.Primitive("Long"),
+            confidence = Confidence(SemanticSource.HEURISTIC, 0.50f)
+        )
+        val emptyRange = literal.copy(
+            range = SourceRange(literal.range.startOffset, literal.range.startOffset)
+        )
+
+        val snapshot = SemanticIndex(store).apply(delta.copy(expressionTypes = listOf(literal, duplicate, emptyRange)))
+
+        assertEquals(TypeRef.Primitive("Int"), snapshot.expressionType(literal.fileId, literal.range))
+        assertEquals(1, store.loadFiles().single { it.file.path == "Expressions.kt" }.expressionTypes.size)
     }
 
     @Test

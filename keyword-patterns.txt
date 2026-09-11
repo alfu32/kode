@@ -181,7 +181,7 @@ riscv=(^|\b)(addi?|sub|lw|sw|li|la|jal|jr?|beq|bne|blt|bge|sll|srl|sra)($|\b)
 rosmsg=^[A-Za-z0-9_]+\s+[A-Za-z0-9_/\[\]]+$
 rst=^\.\.\s+[A-Za-z-]+::|^={2,}$|^-{2,}$|^\*{2,}$
 ruby=(^|\b)(class|module|def|end|if|elsif|else|unless|case|when|while|until|for|do|begin|rescue|ensure|yield|return)($|\b)
-rust=(^|\b)(crate|mod|use|pub|fn|struct|enum|trait|impl|type|const|static|let|mut|if|else|match|loop|while|for|in|move|async|await|unsafe|return)($|\b)
+rust=(^|\b)(as|async|await|become|box|break|const|continue|crate|do|dyn|else|enum|extern|false|final|fn|for|gen|if|impl|in|let|loop|macro|match|mod|move|mut|override|priv|pub|ref|return|self|Self|static|struct|super|trait|true|try|type|typeof|unsafe|unsized|use|virtual|where|while|yield|union)($|\b)
 sas=(^|\b)(DATA|SET|RUN|PROC|IF|THEN|ELSE|DO|END|BY|WHERE|OUTPUT)($|\b)
 sass=^\s*[A-Za-z0-9_.#:-]+\s*:\s*[^;]+$|^\s*\$[A-Za-z0-9_-]+\s*:\s*[^;]+$
 scala=(^|\b)(package|import|object|class|trait|extends|with|type|val|var|def|if|else|for|while|match|case|yield|implicit|sealed|lazy)($|\b)

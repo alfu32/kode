@@ -172,7 +172,10 @@ enum class LexicalTokenKind {
     KEYWORD,
     STRING,
     NUMBER,
-    COMMENT
+    COMMENT,
+    ATTRIBUTE,
+    LIFETIME,
+    OPERATOR
 }
 
 data class LexicalTokenRecord(

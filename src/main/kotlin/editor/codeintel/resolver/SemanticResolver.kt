@@ -229,6 +229,12 @@ class SemanticResolver {
         }
         val finalRelations = relations.distinctBy { Triple(it.from, it.to, it.kind) }
         val finalOccurrences = occurrenceById.values.toList()
+        val finalExpressionTypes = resolvedDeltas.values
+            .flatMap { it.expressionTypes }
+            .filter { it.range.endOffset > it.range.startOffset }
+            .groupBy { Triple(it.fileId, it.range.startOffset, it.range.endOffset) }
+            .values
+            .mapNotNull { candidates -> candidates.maxByOrNull { it.confidence.value } }
         val dependencies = deriveDependencies(
             resolvedDeltas.values,
             symbols,
@@ -245,7 +251,7 @@ class SemanticResolver {
             occurrences = finalOccurrences,
             relations = finalRelations,
             types = types,
-            expressionTypes = resolvedDeltas.values.flatMap { it.expressionTypes },
+            expressionTypes = finalExpressionTypes,
             dependencies = dependencies,
             resolutionGenerations = generations
         )
