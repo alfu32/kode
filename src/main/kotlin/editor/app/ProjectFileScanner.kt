@@ -12,10 +12,19 @@ object ProjectFileScanner {
         return listFilesForIndex(root, listOf(root), ignoreGlobs)
     }
 
-    fun listFilesForIndex(root: Path, sourceRoots: List<Path>, ignoreGlobs: List<String>): List<Path> {
+    fun listFilesForIndex(
+        root: Path,
+        sourceRoots: List<Path>,
+        ignoreGlobs: List<String>,
+        forcedIgnoreGlobs: List<String> = emptyList(),
+    ): List<Path> {
         if (sourceRoots.isEmpty()) return emptyList()
-        val baseRules = ignoreGlobs + loadIgnoreFile(root)
+        // Read the root gitignore even when the project is not a Git repository.
+        // Project exclusions are matched separately so nested gitignore rules
+        // cannot re-include a path selected by the user.
+        val baseRules = loadIgnoreFile(root) + ignoreGlobs
         val baseMatcher = GitIgnoreMatcher.fromGlobs(baseRules)
+        val forcedMatcher = GitIgnoreMatcher.fromGlobs(forcedIgnoreGlobs)
         val files = LinkedHashSet<Path>()
         sourceRoots.forEach { sourceRoot ->
             if (!Files.exists(sourceRoot)) return@forEach
@@ -31,6 +40,10 @@ object ProjectFileScanner {
                         val rel = root.relativize(dir).toString().replace(File.separatorChar, '/')
                         // Always skip git metadata and build outputs early.
                         if (rel.startsWith(".git") || rel.startsWith("build")) {
+                            matcherStack.pop()
+                            return FileVisitResult.SKIP_SUBTREE
+                        }
+                        if (rel.isNotEmpty() && forcedMatcher.isIgnored(rel, isDirectory = true)) {
                             matcherStack.pop()
                             return FileVisitResult.SKIP_SUBTREE
                         }
@@ -53,6 +66,9 @@ object ProjectFileScanner {
                     override fun visitFile(path: Path, attrs: BasicFileAttributes): FileVisitResult {
                         val matcher = matcherStack.peek() ?: baseMatcher
                         val rel = root.relativize(path).toString().replace(File.separatorChar, '/')
+                        if (forcedMatcher.isIgnored(rel, isDirectory = false)) {
+                            return FileVisitResult.CONTINUE
+                        }
                         if (isHiddenPath(path) && !matcher.isExplicitlyIncluded(rel, isDirectory = false)) {
                             return FileVisitResult.CONTINUE
                         }
@@ -167,7 +183,7 @@ object ProjectFileScanner {
                     val negated = trimmed.startsWith("!")
                     val body = if (negated) trimmed.substring(1) else trimmed
                     val dirOnly = body.endsWith("/")
-                    val pattern = body.trimEnd('/').removePrefix("/")
+                    val pattern = body.trimEnd('/').removePrefix("/").replace('\\', '/')
                     IgnoreRule(
                         negated = negated,
                         dirOnly = dirOnly,

@@ -12,10 +12,11 @@ import editor.lib.PositionState
 
 @Serializable
 data class ProjectSession(
-    val version: Int = 4,
+    val version: Int = 5,
     val recentFiles: List<RecentFileEntry> = emptyList(),
     val openEditors: List<EditorSessionState> = emptyList(),
     val sourceRoots: List<String> = emptyList(),
+    val scanExclusions: List<String> = emptyList(),
 )
 
 @Serializable

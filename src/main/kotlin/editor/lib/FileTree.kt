@@ -137,6 +137,7 @@ class FileTree private constructor(
         val files = mutableListOf<String>()
 
         for (entry in listed) {
+            if (isKodeMetadata(entry.name)) continue
             val full = entry.canonicalFile.path
             if (entry.isDirectory) {
                 directories += full
@@ -174,4 +175,7 @@ class FileTree private constructor(
 
         item.children = children
     }
+
+    private fun isKodeMetadata(name: String): Boolean =
+        name == ".kode" || name == ".kode.json"
 }

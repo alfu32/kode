@@ -9,6 +9,7 @@ enum class MimeTypeCategory {
 enum class MimeTypeDetectionSource {
     EXTENSION,
     SIGNATURE,
+    SHEBANG,
     PLATFORM,
     FALLBACK,
     UNKNOWN,

@@ -884,6 +884,7 @@ private class SplitPanelsApp(
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
     private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
     private var sourceRoots: MutableList<String> = mutableListOf()
+    private var scanExclusions: MutableList<String> = mutableListOf()
     private var lastPersistMs: Long = 0L
     private var pendingPersist: Boolean = false
     private val persistDebounceMs: Long = 3000L
@@ -969,7 +970,10 @@ private class SplitPanelsApp(
         projectRootProvider = { projectRoot },
         sourceRootsProvider = { sourceRoots.toList() },
         onRequestAdd = { showSourcePicker() },
-        onRemoveSource = { root -> removeSourceRoot(root) }
+        onRemoveSource = { root -> removeSourceRoot(root) },
+        exclusionsProvider = { scanExclusions.toList() },
+        onRequestAddExclusion = { showScanExclusionPicker() },
+        onRemoveExclusion = { exclusion -> removeScanExclusion(exclusion) },
     )
     private val helpView = HelpView(styleSheet)
     private var currentOpenPath: String = ""
@@ -992,6 +996,7 @@ private class SplitPanelsApp(
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
         sourceRoots = loadSourceRoots(loaded.sourceRoots)
+        scanExclusions = loadScanExclusions(loaded.scanExclusions)
         restoreLastSession()
         if (runInitialScan) {
             if (hasPersistentIndex()) {
@@ -1412,6 +1417,7 @@ private class SplitPanelsApp(
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
         sourceRoots = loadSourceRoots(loaded.sourceRoots)
+        scanExclusions = loadScanExclusions(loaded.scanExclusions)
         codeIntelIndexer.loadFromStore()
 
         codeEditor = CodeEditorView(
@@ -1438,6 +1444,9 @@ private class SplitPanelsApp(
         val normalized = roots.mapNotNull { normalizeSourceRoot(it) }.distinct().toMutableList()
         return if (normalized.isEmpty()) mutableListOf(".") else normalized
     }
+
+    private fun loadScanExclusions(exclusions: List<String>): MutableList<String> =
+        exclusions.mapNotNull { normalizeScanExclusion(it) }.distinct().toMutableList()
 
     private fun addSourceRoot(path: Path): String {
         val abs = path.toAbsolutePath().normalize()
@@ -1471,6 +1480,70 @@ private class SplitPanelsApp(
         } else {
             "Removed source root, but failed to clear index."
         }
+    }
+
+    private fun showScanExclusionPicker() {
+        sourcePicker = SourceFolderPickerDialog(
+            styleSheet,
+            projectRoot,
+            onConfirm = { selected ->
+                val msg = addScanExclusion(selected)
+                projectSettingsView.setMessage(msg)
+            },
+            onDismiss = {
+                sourcePickerVisible = false
+                sourcePicker = null
+            },
+            foldersOnly = false,
+            title = "Select file or folder to exclude",
+        )
+        sourcePickerVisible = true
+    }
+
+    private fun addScanExclusion(path: Path): String {
+        val abs = path.toAbsolutePath().normalize()
+        if (!Files.exists(abs)) return "Selected path does not exist."
+        if (!abs.startsWith(projectRoot) || abs == projectRoot) {
+            return "Exclusions must be a file or folder inside the project root."
+        }
+        val normalized = normalizeScanExclusion(projectRoot.relativize(abs).toString())
+            ?: return "Invalid scan exclusion."
+        if (scanExclusions.any { normalizeScanExclusion(it) == normalized }) {
+            return "Scan exclusion already added: $normalized"
+        }
+        scanExclusions.add(normalized)
+        val reindexed = applyScanExclusionsChanged()
+        return if (reindexed) "Added scan exclusion: $normalized"
+        else "Added scan exclusion, but failed to clear index."
+    }
+
+    private fun removeScanExclusion(exclusion: String): String? {
+        val normalized = normalizeScanExclusion(exclusion) ?: return "Invalid scan exclusion."
+        val removed = scanExclusions.removeIf { normalizeScanExclusion(it) == normalized }
+        if (!removed) return "Scan exclusion not found."
+        val reindexed = applyScanExclusionsChanged()
+        return if (reindexed) "Removed scan exclusion: $normalized"
+        else "Removed scan exclusion, but failed to clear index."
+    }
+
+    private fun normalizeScanExclusion(value: String?): String? {
+        val trimmed = value?.trim()?.replace('\\', '/') ?: return null
+        if (trimmed.isEmpty() || trimmed == ".") return null
+        val normalized = trimmed.removePrefix("./").trim('/').replace(Regex("/+"), "/")
+        if (normalized.isEmpty() || normalized == "." || normalized.split('/').any { it == ".." }) return null
+        return normalized
+    }
+
+    private fun applyScanExclusionsChanged(): Boolean {
+        val cleared = dbManager.clearIndex()
+        codeIntelIndexer.clear()
+        if (!cleared) {
+            persistSession(force = true)
+            return false
+        }
+        triggerFreshScan()
+        persistSession(force = true)
+        return true
     }
 
     private fun applySourceRootsChanged(): Boolean {
@@ -1578,7 +1651,7 @@ private class SplitPanelsApp(
     private fun listFilesForIndex(): List<Path> {
         val ignorePatterns = gitService?.ignoredPatterns().orEmpty()
         val roots = resolveSourceRoots()
-        return ProjectFileScanner.listFilesForIndex(projectRoot, roots, ignorePatterns)
+        return ProjectFileScanner.listFilesForIndex(projectRoot, roots, ignorePatterns, scanExclusions)
     }
 
     fun hasPersistentIndex(): Boolean {
@@ -1739,7 +1812,8 @@ private class SplitPanelsApp(
             ProjectSession(
                 recentFiles = recentsForSave,
                 openEditors = editorsForSave,
-                sourceRoots = sourceRoots.toList()
+                sourceRoots = sourceRoots.toList(),
+                scanExclusions = scanExclusions.toList()
             )
         )
         lastPersistMs = System.currentTimeMillis()

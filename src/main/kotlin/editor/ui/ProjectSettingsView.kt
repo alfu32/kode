@@ -12,8 +12,15 @@ class ProjectSettingsView(
     private val projectRootProvider: () -> Path,
     private val sourceRootsProvider: () -> List<String>,
     private val onRequestAdd: () -> Unit,
-    private val onRemoveSource: (String) -> String?
+    private val onRemoveSource: (String) -> String?,
+    private val exclusionsProvider: () -> List<String> = { emptyList() },
+    private val onRequestAddExclusion: () -> Unit = {},
+    private val onRemoveExclusion: (String) -> String? = { null },
 ) : BaseComponent(styleSheet) {
+
+    private data class SettingEntry(val value: String, val exclusion: Boolean)
+    private data class ButtonHit(val range: IntRange, val action: ButtonAction)
+    private enum class ButtonAction { ADD_SOURCE, ADD_EXCLUSION, REMOVE }
 
     private var selectedIdx: Int = 0
     private var scrollTop: Int = 0
@@ -25,9 +32,8 @@ class ProjectSettingsView(
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
         val baseStyle = styleSheet.getStyle("content")
-        canvas.withStyle(baseStyle) {
-            drawRect(0, 0, cols, rows)
-        }
+        canvas.withStyle(baseStyle) { drawRect(0, 0, cols, rows) }
+
         val header = headerLines()
         header.take(rows).forEachIndexed { idx, line ->
             canvas.withStyle(baseStyle) {
@@ -36,31 +42,27 @@ class ProjectSettingsView(
         }
 
         val listStart = header.size
-        val listRows = (rows - listStart).coerceAtLeast(0)
-        renderSources(canvas, cols, listStart, listRows, baseStyle)
+        renderEntries(canvas, cols, listStart, (rows - listStart).coerceAtLeast(0), baseStyle)
     }
 
     override fun dispatch(event: UIEvent): Boolean {
-        val rows = event.rows ?: 0
-        val headerSize = headerLines().size
-        val listStart = headerSize
-        val listRows = (rows - listStart).coerceAtLeast(0)
-        val roots = sourceRootsProvider()
-        selectedIdx = if (roots.isEmpty()) 0 else selectedIdx.coerceIn(roots.indices)
+        val entries = settingEntries()
+        val listStart = headerLines().size
+        val listRows = ((event.rows ?: 0) - listStart).coerceAtLeast(0)
+        selectedIdx = if (entries.isEmpty()) 0 else selectedIdx.coerceIn(entries.indices)
 
         if (event.kind == "mouse_down") {
             val y = event.y ?: return false
             val x = event.x ?: return false
-            val hit = buttonHits[y]?.firstOrNull { x in it.range }
-            if (hit != null) {
-                handleAction(hit.action, roots)
+            buttonHits[y]?.firstOrNull { x in it.range }?.let { hit ->
+                handleAction(hit.action, entries)
                 return true
             }
             if (y >= listStart) {
-                val idx = scrollTop + (y - listStart)
-                if (idx in roots.indices) {
+                val idx = scrollTop + y - listStart
+                if (idx in entries.indices) {
                     selectedIdx = idx
-                    ensureSelectionVisible(listRows, roots.size)
+                    ensureSelectionVisible(listRows, entries.size)
                     return true
                 }
             }
@@ -69,27 +71,31 @@ class ProjectSettingsView(
 
         if (event.kind == "mouse_scroll") {
             val delta = event.scrollDelta ?: return false
-            val maxScroll = (roots.size - listRows).coerceAtLeast(0)
-            val prev = scrollTop
+            val maxScroll = (entries.size - listRows).coerceAtLeast(0)
+            val previous = scrollTop
             scrollTop = (scrollTop - delta).coerceIn(0, maxScroll)
-            return prev != scrollTop
+            return previous != scrollTop
         }
 
         if (event.kind != "key_down") return false
-        val key = event.key?.lowercase()
+        val key = event.key?.lowercase() ?: return false
         return when (key) {
-            "up" -> moveSelection(roots, -1, listRows)
-            "down" -> moveSelection(roots, 1, listRows)
-            "pageup" -> moveSelection(roots, -listRows, listRows)
-            "pagedown" -> moveSelection(roots, listRows, listRows)
-            "home" -> moveSelection(roots, -selectedIdx, listRows)
-            "end" -> moveSelection(roots, (roots.lastIndex - selectedIdx).coerceAtLeast(0), listRows)
+            "up" -> moveSelection(entries, -1, listRows)
+            "down" -> moveSelection(entries, 1, listRows)
+            "pageup" -> moveSelection(entries, -listRows, listRows)
+            "pagedown" -> moveSelection(entries, listRows, listRows)
+            "home" -> moveSelection(entries, -selectedIdx, listRows)
+            "end" -> moveSelection(entries, (entries.lastIndex - selectedIdx).coerceAtLeast(0), listRows)
             "a" -> {
                 onRequestAdd()
                 true
             }
+            "x" -> {
+                onRequestAddExclusion()
+                true
+            }
             "d", "backspace", "delete" -> {
-                handleRemove(roots)
+                removeSelected(entries)
                 true
             }
             else -> false
@@ -100,44 +106,49 @@ class ProjectSettingsView(
         lastMessage = message
     }
 
-    private fun headerLines(): List<String> {
-        val root = projectRootProvider().toString()
-        val sources = sourceRootsProvider().size
-        val lines = mutableListOf<String>()
-        lines += "Project Settings"
-        lines += "Root: $root"
-        lines += "Source roots: $sources"
-        lines += lastMessage
-        lines += ""
-        return lines
-    }
+    private fun headerLines(): List<String> = listOf(
+        "Project Settings",
+        "Root: ${projectRootProvider()}",
+        "Source roots: ${sourceRootsProvider().size}   Scan exclusions: ${exclusionsProvider().size}",
+        lastMessage,
+        "",
+    )
 
-    private fun renderSources(canvas: CanvasRenderer, cols: Int, startRow: Int, rows: Int, baseStyle: StyleSet) {
+    private fun settingEntries(): List<SettingEntry> =
+        sourceRootsProvider().map { SettingEntry(it, exclusion = false) } +
+            exclusionsProvider().map { SettingEntry(it, exclusion = true) }
+
+    private fun renderEntries(
+        canvas: CanvasRenderer,
+        cols: Int,
+        startRow: Int,
+        rows: Int,
+        baseStyle: StyleSet,
+    ) {
         if (rows <= 0) return
-        val roots = sourceRootsProvider()
+        val entries = settingEntries()
         val listStyle = styleSheet.getStyle("file-entry")
         val selectedStyle = styleSheet.getStyle("file-entry:selected")
         val buttonStyle = styleSheet.getStyle("lsp-button")
-        val buttonRow = (startRow - 1).coerceAtLeast(0)
-        renderButtons(canvas, buttonRow, cols, buttonStyle)
-        if (roots.isEmpty()) {
-            val msg = "No source roots. Press [add(a)] to include folders."
+        renderButtons(canvas, (startRow - 1).coerceAtLeast(0), cols, buttonStyle)
+
+        selectedIdx = if (entries.isEmpty()) 0 else selectedIdx.coerceIn(entries.indices)
+        val maxScroll = (entries.size - rows).coerceAtLeast(0)
+        scrollTop = scrollTop.coerceIn(0, maxScroll)
+        if (entries.isEmpty()) {
             canvas.withStyle(baseStyle) {
-                drawText(0, startRow, msg.take(cols).padEnd(cols, ' '))
+                drawText(0, startRow, "No source roots or scan exclusions. Use [add source] or [add exclusion].".take(cols).padEnd(cols, ' '))
             }
             return
         }
-        selectedIdx = if (roots.isEmpty()) 0 else selectedIdx.coerceIn(roots.indices)
-        val maxScroll = (roots.size - rows).coerceAtLeast(0)
-        scrollTop = scrollTop.coerceIn(0, maxScroll)
-        val visible = roots.drop(scrollTop).take(rows)
-        visible.forEachIndexed { idx, root ->
-            val rowY = startRow + idx
+
+        entries.drop(scrollTop).take(rows).forEachIndexed { idx, entry ->
             val absIdx = scrollTop + idx
             val style = if (absIdx == selectedIdx) selectedStyle else listStyle
-            val label = formatRoot(root)
+            val prefix = if (entry.exclusion) "[exclude] " else "[source]  "
+            val label = prefix + formatPath(entry.value)
             canvas.withStyle(style) {
-                drawText(0, rowY, label.take(cols).padEnd(cols, ' '))
+                drawText(0, startRow + idx, label.take(cols).padEnd(cols, ' '))
             }
         }
     }
@@ -146,64 +157,60 @@ class ProjectSettingsView(
         if (y < 0) return
         val baseStyle = styleSheet.getStyle("content")
         val buttons = listOf(
-            "[add(a)]" to ButtonAction.ADD,
-            "[remove(d)]" to ButtonAction.REMOVE
+            "[source(a)]" to ButtonAction.ADD_SOURCE,
+            "[exclude(x)]" to ButtonAction.ADD_EXCLUSION,
+            "[remove(d)]" to ButtonAction.REMOVE,
         )
         var cursor = 0
         val hits = mutableListOf<ButtonHit>()
         buttons.forEach { (label, action) ->
             val padded = " $label "
-            if (cursor + padded.length > cols) return
+            if (cursor + padded.length > cols) return@forEach
             canvas.withStyle(buttonStyle) { drawText(cursor, y, padded) }
-            hits += ButtonHit(cursor until (cursor + padded.length), action)
+            hits += ButtonHit(cursor until cursor + padded.length, action)
             cursor += padded.length + 1
         }
-        if (hits.isNotEmpty()) {
-            buttonHits[y] = hits
-        }
-        if (cursor < cols) {
-            canvas.withStyle(baseStyle) { drawText(cursor, y, " ".repeat(cols - cursor)) }
-        }
+        if (hits.isNotEmpty()) buttonHits[y] = hits
+        if (cursor < cols) canvas.withStyle(baseStyle) { drawText(cursor, y, " ".repeat(cols - cursor)) }
     }
 
-    private fun formatRoot(value: String): String =
+    private fun formatPath(value: String): String =
         when {
             value.isBlank() || value == "." -> "(project root)"
             value.startsWith("./") -> value.removePrefix("./")
             else -> value
         }
 
-    private fun moveSelection(roots: List<String>, delta: Int, listRows: Int): Boolean {
-        if (roots.isEmpty()) return false
-        val target = (selectedIdx + delta).coerceIn(roots.indices)
+    private fun moveSelection(entries: List<SettingEntry>, delta: Int, listRows: Int): Boolean {
+        if (entries.isEmpty()) return false
+        val target = (selectedIdx + delta).coerceIn(entries.indices)
         if (target == selectedIdx) return false
         selectedIdx = target
-        ensureSelectionVisible(listRows, roots.size)
+        ensureSelectionVisible(listRows, entries.size)
         return true
     }
 
     private fun ensureSelectionVisible(listRows: Int, total: Int) {
         if (listRows <= 0) return
-        if (selectedIdx < scrollTop) {
-            scrollTop = selectedIdx
-        } else if (selectedIdx >= scrollTop + listRows) {
-            scrollTop = (selectedIdx - listRows + 1).coerceAtLeast(0)
-        }
+        if (selectedIdx < scrollTop) scrollTop = selectedIdx
+        else if (selectedIdx >= scrollTop + listRows) scrollTop = selectedIdx - listRows + 1
         scrollTop = scrollTop.coerceIn(0, (total - listRows).coerceAtLeast(0))
     }
 
-    private fun handleAction(action: ButtonAction, roots: List<String>) {
+    private fun handleAction(action: ButtonAction, entries: List<SettingEntry>) {
         when (action) {
-            ButtonAction.ADD -> onRequestAdd()
-            ButtonAction.REMOVE -> handleRemove(roots)
+            ButtonAction.ADD_SOURCE -> onRequestAdd()
+            ButtonAction.ADD_EXCLUSION -> onRequestAddExclusion()
+            ButtonAction.REMOVE -> removeSelected(entries)
         }
     }
 
-    private fun handleRemove(roots: List<String>) {
-        val target = roots.getOrNull(selectedIdx) ?: return
-        lastMessage = onRemoveSource(target) ?: ""
+    private fun removeSelected(entries: List<SettingEntry>) {
+        val target = entries.getOrNull(selectedIdx) ?: return
+        lastMessage = if (target.exclusion) {
+            onRemoveExclusion(target.value)
+        } else {
+            onRemoveSource(target.value)
+        } ?: ""
     }
-
-    private data class ButtonHit(val range: IntRange, val action: ButtonAction)
-    private enum class ButtonAction { ADD, REMOVE }
 }

@@ -26,6 +26,7 @@ class DefaultMimeTypeDetector(
 
     override fun detect(bytes: ByteArray): MimeTypeResult {
         val limited = if (byteLimit > 0) bytes.copyOfRange(0, min(bytes.size, byteLimit)) else bytes
+        detectShellShebang(limited)?.let { return it }
         signatureDetectors.forEach { detector ->
             detector.match(limited)?.let { return it }
         }
@@ -51,19 +52,25 @@ class DefaultMimeTypeDetector(
 
     override fun detectFile(path: Path): MimeTypeResult {
         val nameResult = detectFilename(path.fileName.toString())
-        if (nameResult.source != MimeTypeDetectionSource.FALLBACK) {
-            return nameResult
-        }
         if (!Files.isRegularFile(path)) {
             return nameResult
         }
 
-        var contentResult: MimeTypeResult? = null
         val buffer = runCatching {
             Files.newInputStream(path).use { input ->
                 readBytes(input, byteLimit)
             }
         }.getOrNull()
+        // A shebang is more reliable than a missing or misleading extension
+        // for executable scripts. Check it before the extension fast path.
+        if (buffer != null) {
+            detectShellShebang(buffer)?.let { return it }
+        }
+        if (nameResult.source != MimeTypeDetectionSource.FALLBACK) {
+            return nameResult
+        }
+
+        var contentResult: MimeTypeResult? = null
         if (buffer != null) {
             contentResult = detect(buffer)
             if (contentResult?.source != MimeTypeDetectionSource.FALLBACK) {
@@ -200,6 +207,36 @@ class DefaultMimeTypeDetector(
         return printable >= data.size * 0.9
     }
 
+    private fun detectShellShebang(data: ByteArray): MimeTypeResult? {
+        if (data.isEmpty()) return null
+        val line = data.toString(Charsets.UTF_8)
+            .lineSequence()
+            .firstOrNull()
+            ?.removePrefix("\uFEFF")
+            ?.trimEnd('\r')
+            ?: return null
+        if (!line.startsWith("#!")) return null
+
+        val tokens = line.substring(2).trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.isEmpty()) return null
+        val interpreter = if (tokens.first().substringAfterLast('/') == "env") {
+            tokens.drop(1)
+                .dropWhile { it.startsWith("-") || it.contains('=') }
+                .firstOrNull()
+        } else {
+            tokens.first()
+        } ?: return null
+        val name = interpreter.substringAfterLast('/').lowercase(Locale.ROOT)
+        if (name !in SHELL_INTERPRETERS) return null
+        return MimeTypeResult(
+            mime = "text/shellscript",
+            extension = ".sh",
+            language = "shellscript",
+            mimeTypeCategory = MimeTypeCategory.TEXT,
+            source = MimeTypeDetectionSource.SHEBANG,
+        )
+    }
+
     private data class SignatureDetector(
         val mime: String,
         val extension: String,
@@ -219,6 +256,9 @@ class DefaultMimeTypeDetector(
         const val OCTET_STREAM: String = "application/octet-stream"
         const val DEFAULT_LIMIT: Int = 3072
         private const val DEFAULT_READ_SIZE: Int = 4096
+        private val SHELL_INTERPRETERS = setOf(
+            "ash", "bash", "csh", "dash", "fish", "ksh", "nu", "nushell", "sh", "tcsh", "zsh"
+        )
 
         private fun categoryForMime(mime: String): MimeTypeCategory {
             val lower = mime.lowercase(Locale.ROOT)

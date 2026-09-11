@@ -854,7 +854,7 @@ private class TreeSitterDefinitionExtractor(
             "lua" -> runCatching { TreeSitterLua() }.getOrNull()
             "cpp", "c++", "cc", "cxx", "hpp", "h++", "hh", "hxx" -> runCatching { TreeSitterCpp() }.getOrNull()
             "svelte" -> runCatching { TreeSitterSvelte() }.getOrNull()
-            "bash", "sh" -> runCatching { TreeSitterBash() }.getOrNull()
+            "bash", "sh", "shellscript" -> runCatching { TreeSitterBash() }.getOrNull()
             "go", "golang" -> runCatching { TreeSitterGo() }.getOrNull()
             "perl", "pl" -> runCatching { TreeSitterPerl() }.getOrNull()
             "d" -> runCatching { TreeSitterD() }.getOrNull()
@@ -1008,6 +1008,11 @@ private class TreeSitterDefinitionExtractor(
             )
         ),
         "bash" to LangSpec(
+            declNodes = setOf("function_definition"),
+            containerNodes = emptySet(),
+            kindMap = mapOf("function_definition" to SymbolKind.FUNCTION)
+        ),
+        "shellscript" to LangSpec(
             declNodes = setOf("function_definition"),
             containerNodes = emptySet(),
             kindMap = mapOf("function_definition" to SymbolKind.FUNCTION)

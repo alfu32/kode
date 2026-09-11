@@ -78,4 +78,26 @@ class DefaultMimeTypeDetectorTest {
             Files.deleteIfExists(temp)
         }
     }
+
+    @Test
+    fun `detects shell script from a bash shebang without an extension`() {
+        val result = detector.detect("#!/usr/bin/env bash -e\necho hello\n".toByteArray())
+        assertEquals("text/shellscript", result.mime)
+        assertEquals("shellscript", result.language)
+        assertEquals(MimeTypeDetectionSource.SHEBANG, result.source)
+        assertEquals(MimeTypeCategory.TEXT, result.mimeTypeCategory)
+    }
+
+    @Test
+    fun `detects shell script from a direct sh shebang in a file`() {
+        val temp = Files.createTempFile("script-", "")
+        Files.writeString(temp, "#!/bin/sh\nprintf '%s\\n' ok\n")
+        try {
+            val result = detector.detectFile(temp)
+            assertEquals("shellscript", result.language)
+            assertEquals(MimeTypeDetectionSource.SHEBANG, result.source)
+        } finally {
+            Files.deleteIfExists(temp)
+        }
+    }
 }

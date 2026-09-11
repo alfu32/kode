@@ -14,7 +14,9 @@ class SourceFolderPickerDialog(
     styleSheet: StyleSheet,
     projectRoot: Path,
     private val onConfirm: (Path) -> Unit,
-    private val onDismiss: () -> Unit
+    private val onDismiss: () -> Unit,
+    private val foldersOnly: Boolean = true,
+    private val title: String = "Select source folder",
 ) : BaseComponent(styleSheet) {
 
     private data class Bounds(val x: Int, val y: Int, val width: Int, val height: Int) {
@@ -150,7 +152,6 @@ class SourceFolderPickerDialog(
     }
 
     private fun renderHeader(canvas: CanvasRenderer, x: Int, y: Int, width: Int) {
-        val title = "Select source folder"
         val hint = "Enter: select   Esc: cancel"
         val style = styleSheet.getStyle("project-search-dialog").withDefaults()
         canvas.withStyle(style) {
@@ -172,7 +173,11 @@ class SourceFolderPickerDialog(
             val style = if (isSelected) selectedStyle else lineStyle
             canvas.withStyle(style) {
                 val indent = "  ".repeat(entry.padding)
-                val prefix = if (entry.isOpen) "[-] " else "[+] "
+                val prefix = when {
+                    entry.typ != "folder" -> "[=] "
+                    entry.isOpen -> "[-] "
+                    else -> "[+] "
+                }
                 val name = entry.name
                 val line = (indent + prefix + name).take(width).padEnd(width, ' ')
                 drawText(x, rowY, line)
@@ -214,7 +219,7 @@ class SourceFolderPickerDialog(
             isOpen = true
         )
         val children = tree.flattened()
-            .filter { it.typ == "folder" }
+            .filter { !foldersOnly || it.typ == "folder" }
             .map { it.copy(padding = it.padding + 1) }
         return listOf(rootEntry) + children
     }
