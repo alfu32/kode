@@ -23,6 +23,8 @@ data class DbStatus(
  * Manages a portable database server process per project. The database is expected to be an
  * external runnable jar (e.g., H2) launched in server mode with its data directory under the
  * project root. If the jar is missing, the manager reports ERROR but does not crash the app.
+ * Set `-Dkode.db.mode=memory` for a disposable per-process database while developing; disk mode
+ * remains the default so project pre-indexing survives restarts.
  */
 class DbServerManager {
     private val lock = Any()
@@ -45,7 +47,7 @@ class DbServerManager {
         }
         val baseDir = projectRoot.resolve(".kode/db")
         val existingDbFile = baseDir.resolve("kode.mv.db")
-        freshStart = !Files.exists(existingDbFile)
+        freshStart = inMemoryMode() || !Files.exists(existingDbFile)
         runCatching { Files.createDirectories(baseDir) }
         status = DbStatus(DbStatus.State.STARTING, jarPath = jar, baseDir = baseDir)
         currentRoot = projectRoot
@@ -79,13 +81,19 @@ class DbServerManager {
 
     fun clearIndex(): Boolean = synchronized(lock) {
         val dir = status.baseDir ?: return false
-        if (!Files.exists(dir)) return true
-        runCatching {
+        val root = currentRoot
+        val restart = status.state == DbStatus.State.RUNNING && root != null
+        if (restart) stopLocked()
+        val cleared = if (!Files.exists(dir)) {
+            true
+        } else runCatching {
             Files.walk(dir)
                 .sorted(Comparator.reverseOrder())
                 .forEach { Files.deleteIfExists(it) }
             Files.createDirectories(dir)
         }.isSuccess
+        if (!cleared) return false
+        if (restart) start(requireNotNull(root)).state == DbStatus.State.RUNNING else true
     }
 
     private fun stopLocked() {
@@ -97,7 +105,7 @@ class DbServerManager {
 
     private fun primeDatabase(port: Int): Result<Unit> = runCatching {
         Class.forName("org.h2.Driver")
-        val url = "jdbc:h2:tcp://127.0.0.1:$port/kode;AUTO_RECONNECT=TRUE;DB_CLOSE_ON_EXIT=FALSE;DB_CLOSE_DELAY=-1"
+        val url = jdbcUrlFor(port)
         DriverManager.getConnection(url, DB_USER, DB_PASS).use { conn ->
             conn.createStatement().use { stmt ->
                 stmt.execute("CREATE SCHEMA IF NOT EXISTS KODE")
@@ -176,10 +184,18 @@ class DbServerManager {
     fun jdbcUrl(): String? = synchronized(lock) {
         val port = currentPort ?: status.port ?: return null
         if (status.state != DbStatus.State.RUNNING) return null
-        "jdbc:h2:tcp://127.0.0.1:$port/kode;AUTO_RECONNECT=TRUE;DB_CLOSE_ON_EXIT=FALSE;DB_CLOSE_DELAY=-1"
+        jdbcUrlFor(port)
     }
 
     fun wasFreshStart(): Boolean = synchronized(lock) { freshStart }
+
+    private fun jdbcUrlFor(port: Int): String {
+        val database = if (inMemoryMode()) "mem:kode" else "kode"
+        return "jdbc:h2:tcp://127.0.0.1:$port/$database;AUTO_RECONNECT=TRUE;DB_CLOSE_ON_EXIT=FALSE;DB_CLOSE_DELAY=-1"
+    }
+
+    private fun inMemoryMode(): Boolean =
+        System.getProperty("kode.db.mode")?.equals("memory", ignoreCase = true) == true
 
     companion object {
         private const val DB_USER = "sa"
