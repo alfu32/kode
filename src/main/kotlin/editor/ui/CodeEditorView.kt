@@ -7,6 +7,7 @@ import editor.codeintel.EditorIntelligenceService
 import editor.codeintel.NavigationTarget
 import editor.codeintel.ReferenceRequest
 import editor.codeintel.TextPosition
+import editor.codeintel.TextRange
 import editor.codeintel.TokensRequest
 import editor.lsp.LspService
 import editor.lib.FoundToken
@@ -979,7 +980,13 @@ class CodeEditorView(
 
     private fun loadDefinitionPreview(target: NavigationTarget): DefinitionPreview? {
         val source = runCatching { Files.readString(Paths.get(target.filePath)) }.getOrNull() ?: return null
-        val range = target.definitionRange ?: target.range
+        // Legacy providers only report the identifier span. Expand that fallback
+        // to the complete declaration line so hover remains useful for languages
+        // without a semantic adapter yet.
+        val range = target.definitionRange ?: TextRange(
+            start = TextPosition(target.range.start.line, 0),
+            end = TextPosition(target.range.start.line, Int.MAX_VALUE)
+        )
         val lines = source.split('\n')
         if (lines.isEmpty()) return null
         val firstLine = range.start.line.coerceIn(0, lines.lastIndex)
@@ -1397,9 +1404,13 @@ class CodeEditorView(
             if (segStart > cursor) {
                 segments.add(StyledSegment(cursor, segStart, baseStyle))
             }
-            if (segEnd > segStart) {
+            // Syntax providers may return overlapping matches (especially while
+            // recovering from incomplete source). Never emit overlapping draw
+            // ranges: they cause duplicated glyphs and terminal artifacts.
+            val effectiveStart = maxOf(segStart, cursor)
+            if (segEnd > effectiveStart) {
                 val style = styleForToken(tok, baseStyle)
-                segments.add(StyledSegment(segStart, segEnd, style))
+                segments.add(StyledSegment(effectiveStart, segEnd, style))
             }
             cursor = maxOf(cursor, segEnd)
             if (cursor >= text.length) return@forEach
