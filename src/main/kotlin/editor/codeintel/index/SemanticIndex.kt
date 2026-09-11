@@ -33,7 +33,11 @@ interface SemanticSnapshot : AutoCloseable {
     fun occurrenceAt(fileId: FileId, offset: Int): OccurrenceRecord?
     fun occurrences(symbolId: SymbolId): Sequence<OccurrenceRecord>
     fun occurrences(fileId: FileId): Sequence<OccurrenceRecord>
+    fun occurrences(fileId: FileId, range: SourceRange): Sequence<OccurrenceRecord> =
+        occurrences(fileId).filter { it.range.startOffset < range.endOffset && it.range.endOffset > range.startOffset }
     fun lexicalTokens(fileId: FileId): Sequence<LexicalTokenRecord>
+    fun lexicalTokens(fileId: FileId, range: SourceRange): Sequence<LexicalTokenRecord> =
+        lexicalTokens(fileId).filter { it.range.startOffset < range.endOffset && it.range.endOffset > range.startOffset }
     fun expressionType(fileId: FileId, range: SourceRange): TypeRef?
     fun members(type: TypeRef): Sequence<SymbolRecord>
     fun visibleSymbols(fileId: FileId, offset: Int): Sequence<SymbolRecord>
@@ -170,8 +174,14 @@ class SemanticIndex(
         override fun occurrences(fileId: FileId): Sequence<OccurrenceRecord> =
             occurrencesByFile[fileId].orEmpty().asSequence()
 
+        override fun occurrences(fileId: FileId, range: SourceRange): Sequence<OccurrenceRecord> =
+            overlapping(occurrencesByFile[fileId].orEmpty(), range) { it.range }
+
         override fun lexicalTokens(fileId: FileId): Sequence<LexicalTokenRecord> =
             lexicalTokensByFile[fileId].orEmpty().asSequence()
+
+        override fun lexicalTokens(fileId: FileId, range: SourceRange): Sequence<LexicalTokenRecord> =
+            overlapping(lexicalTokensByFile[fileId].orEmpty(), range) { it.range }
 
         override fun expressionType(fileId: FileId, range: SourceRange): TypeRef? =
             expressionTypesByFile[fileId].orEmpty()
@@ -321,6 +331,30 @@ class SemanticIndex(
 
         private fun isVisibleAt(symbol: SymbolRecord, fileId: FileId, offset: Int): Boolean =
             symbol.fileId != fileId || symbol.kind !in LOCAL_KINDS || symbol.nameRange.startOffset <= offset
+
+        private fun <T> overlapping(
+            records: List<T>,
+            range: SourceRange,
+            sourceRange: (T) -> SourceRange
+        ): Sequence<T> {
+            if (records.isEmpty() || range.endOffset <= range.startOffset) return emptySequence()
+            var low = 0
+            var high = records.size
+            while (low < high) {
+                val middle = (low + high) ushr 1
+                if (sourceRange(records[middle]).startOffset < range.startOffset) {
+                    low = middle + 1
+                } else {
+                    high = middle
+                }
+            }
+            var first = low
+            while (first > 0 && sourceRange(records[first - 1]).endOffset > range.startOffset) first--
+            return records.asSequence()
+                .drop(first)
+                .takeWhile { sourceRange(it).startOffset < range.endOffset }
+                .filter { sourceRange(it).endOffset > range.startOffset }
+        }
 
         companion object {
             private val TYPE_KINDS = setOf(

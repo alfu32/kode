@@ -57,6 +57,8 @@ class CodeEditorView(
     private var grammarLanguage: String? = null
     private var scrollTop: Int = 0
     private var lastLayout: VisualLayout? = null
+    private var lastLayoutVersion: Long = -1L
+    private var lastLayoutWidth: Int = -1
     private var dragging = false
     private var lastCols: Int = 0
     private var lastTotalCols: Int = 0
@@ -255,14 +257,15 @@ class CodeEditorView(
 
         val gutterWidth = computeGutterWidth()
         val contentCols = (cols - gutterWidth).coerceAtLeast(0)
-        val lines = buffer.text().split("\n")
-        val layout = buildLayout(lines, contentCols)
-        lastLayout = layout
+        val layout = cachedLayout(contentCols)
+        val lines = layout.lines
 
         val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
         scrollTop = scrollTop.coerceIn(0, maxOffset)
 
-        val visibleRows = layout.wrapped.drop(scrollTop).take(bodyRows)
+        val visibleStart = scrollTop.coerceIn(0, layout.wrapped.size)
+        val visibleEnd = (visibleStart + bodyRows).coerceAtMost(layout.wrapped.size)
+        val visibleRows = layout.wrapped.subList(visibleStart, visibleEnd)
         if (visibleRows.isEmpty()) return
 
         val selection = buffer.selectionRange()
@@ -437,7 +440,7 @@ class CodeEditorView(
         val rows = (event.rows ?: lastRows).coerceAtLeast(1)
         val gutterWidth = computeGutterWidth()
         val contentCols = (cols - gutterWidth).coerceAtLeast(0)
-        val layout = buildLayout(buffer.text().split("\n"), contentCols).also { lastLayout = it }
+        val layout = cachedLayout(contentCols)
         val effectiveSearchVisible = searchVisible
         val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyRows = (rows - 1 - searchHeight).coerceAtLeast(0)
@@ -1075,7 +1078,7 @@ class CodeEditorView(
         val bodyRows = (totalRows - 1 - searchHeight).coerceAtLeast(0)
         if (bodyRows == 0) return
         val contentCols = (lastCols - gutterWidth).coerceAtLeast(0)
-        val activeLayout = layout ?: buildLayout(buffer.text().split("\n"), contentCols).also { lastLayout = it }
+        val activeLayout = layout ?: cachedLayout(contentCols)
         if (activeLayout.wrapped.isEmpty()) return
         val cursorRow = visualRowForPosition(buffer.cursorPosition(), activeLayout)
         val maxOffset = (activeLayout.wrapped.size - bodyRows).coerceAtLeast(0)
@@ -1168,10 +1171,7 @@ class CodeEditorView(
         val currentRows = lastRows.coerceAtLeast(1)
         val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(currentRows - 1) else 0
         val gutterWidth = computeGutterWidth()
-        val layout = lastLayout ?: buildLayout(
-            buffer.text().split("\n"),
-            (lastCols - gutterWidth).coerceAtLeast(0)
-        ).also { lastLayout = it }
+        val layout = cachedLayout((lastCols - gutterWidth).coerceAtLeast(0))
         if (center) {
             val bodyRows = (currentRows - 1 - searchHeight).coerceAtLeast(1)
             val targetRow = visualRowForPosition(start, layout)
@@ -1182,15 +1182,15 @@ class CodeEditorView(
     }
 
     fun restoreViewport(cursor: PositionState, scroll: Int) {
-        val lines = buffer.text().split("\n")
+        val cols = lastCols.coerceAtLeast(1)
+        val rows = lastRows.coerceAtLeast(1)
+        val gutterWidth = computeGutterWidth()
+        val layout = cachedLayout((cols - gutterWidth).coerceAtLeast(0))
+        val lines = layout.lines
         val line = cursor.line.coerceIn(0, (lines.size - 1).coerceAtLeast(0))
         val col = cursor.column.coerceIn(0, lines.getOrElse(line) { "" }.length)
         val pos = Position(line, col)
         buffer.moveCursorTo(pos, expand = false)
-        val cols = lastCols.coerceAtLeast(1)
-        val rows = lastRows.coerceAtLeast(1)
-        val gutterWidth = computeGutterWidth()
-        val layout = buildLayout(lines, (cols - gutterWidth).coerceAtLeast(0)).also { lastLayout = it }
         val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyRows = (rows - 1 - searchHeight).coerceAtLeast(1)
         val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
@@ -1228,10 +1228,7 @@ class CodeEditorView(
         val currentRows = lastRows.coerceAtLeast(1)
         val searchHeight = if (searchVisible) searchBar.preferredHeight().coerceAtMost(currentRows - 1) else 0
         val gutterWidth = computeGutterWidth()
-        val layout = lastLayout ?: buildLayout(
-            buffer.text().split("\n"),
-            (lastCols - gutterWidth).coerceAtLeast(0)
-        ).also { lastLayout = it }
+        val layout = cachedLayout((lastCols - gutterWidth).coerceAtLeast(0))
         triggerCodeIntel()
         ensureCursorVisible(currentRows, searchHeight, layout, gutterWidth)
     }
@@ -1581,6 +1578,19 @@ class CodeEditorView(
         val idxInLine = (pos.column.coerceAtMost(lineLength) / width).coerceAtMost(wraps - 1)
         val index = offset + idxInLine
         return layout.wrapped.getOrNull(index)
+    }
+
+    private fun cachedLayout(contentCols: Int): VisualLayout {
+        val width = contentCols.coerceAtLeast(1)
+        val cached = lastLayout
+        if (cached != null && lastLayoutVersion == buffer.version() && lastLayoutWidth == width) {
+            return cached
+        }
+        val layout = buildLayout(buffer.text().split("\n"), width)
+        lastLayout = layout
+        lastLayoutVersion = buffer.version()
+        lastLayoutWidth = width
+        return layout
     }
 
     private fun renderUsagePopup(

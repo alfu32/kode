@@ -17,6 +17,7 @@ import editor.codeintel.ml.HeuristicCompletionRanker
 import editor.codeintel.model.FileId
 import editor.codeintel.model.OccurrenceKind
 import editor.codeintel.model.SemanticIds
+import editor.codeintel.model.SourceRange
 import editor.codeintel.model.SymbolKind as SemanticSymbolKind
 import editor.codeintel.resolver.BestEffortExpressionTypeResolver
 import editor.codeintel.semantic.SemanticToken
@@ -148,6 +149,7 @@ class CodeIntelService(
         Thread(runnable, "code-intel").apply { isDaemon = true }
     }
     private val latestVersionByPath = mutableMapOf<String, Long>()
+    private val reusedSemanticVersions = mutableMapOf<String, Long>()
     private val pendingJobs = mutableMapOf<String, ScheduledFuture<*>>()
     private val documents = mutableMapOf<String, DocumentIndex>()
     private val defsByPath = mutableMapOf<String, List<SymbolDef>>()
@@ -156,7 +158,9 @@ class CodeIntelService(
     private val semanticSources = java.util.LinkedHashMap<String, SourceFile>(HOT_SOURCE_CACHE_SIZE, 0.75f, true)
     private data class SemanticTokenCacheEntry(
         val version: Long,
-        val byLine: Map<Int, List<Token>>
+        val lineStarts: IntArray,
+        val byLine: MutableMap<Int, List<Token>> = mutableMapOf(),
+        val computedLines: MutableSet<Int> = mutableSetOf()
     )
     private val semanticTokenCache = java.util.LinkedHashMap<String, SemanticTokenCacheEntry>(16, 0.75f, true)
     private val pendingSemanticDeltas = linkedMapOf<FileId, editor.codeintel.model.FileSemanticDelta>()
@@ -183,6 +187,12 @@ class CodeIntelService(
         synchronized(lock) {
             latestVersionByPath[path] = version
             pendingJobs.remove(path)?.cancel(false)
+            cacheSemanticSource(SourceFile(path, language, text, version))
+            if (canReuseSemanticFacts(path, language, text)) {
+                reusedSemanticVersions[path] = version
+                return
+            }
+            reusedSemanticVersions.remove(path)
             val future = executor.schedule(
                 { performIndex(path, language, text, version) },
                 debounceMs,
@@ -197,6 +207,12 @@ class CodeIntelService(
         synchronized(lock) {
             latestVersionByPath[path] = version
             pendingJobs.remove(path)?.cancel(false)
+            cacheSemanticSource(SourceFile(path, language, text, version))
+            if (canReuseSemanticFacts(path, language, text)) {
+                reusedSemanticVersions[path] = version
+                return
+            }
+            reusedSemanticVersions.remove(path)
         }
         performIndex(path, language, text, version)
     }
@@ -437,6 +453,7 @@ class CodeIntelService(
             pendingJobs.values.forEach { it.cancel(false) }
             pendingJobs.clear()
             latestVersionByPath.clear()
+            reusedSemanticVersions.clear()
             documents.clear()
             defsByPath.clear()
             workspaceIndex.clear()
@@ -453,6 +470,7 @@ class CodeIntelService(
         semanticIndex.load()
         val loaded = store?.loadAll() ?: return
         synchronized(lock) {
+            reusedSemanticVersions.clear()
             semanticTokenCache.clear()
             defsByPath.clear()
             workspaceIndex.clear()
@@ -567,6 +585,13 @@ class CodeIntelService(
             }
         }
         if (applyNow) semanticIndex.apply(delta)
+    }
+
+    private fun canReuseSemanticFacts(path: String, language: String, text: String): Boolean {
+        if (language.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return false
+        val file = semanticIndex.snapshot().file(path) ?: return false
+        val hash = SemanticIds.hash(text).toULong().toString(16)
+        return file.languageId.lowercase(Locale.ROOT) in KOTLIN_LANGUAGE_IDS && file.contentHash == hash
     }
 
     private fun rebuildWorkspaceIndex(path: String, newDefs: List<SymbolDef>) {
@@ -840,21 +865,19 @@ class CodeIntelService(
         val snapshot = semanticIndex.snapshot()
         val file = snapshot.file(request.filePath) ?: return null
         if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return null
-        if (file.semanticVersion != request.version) return emptyList()
         val source = sourceFor(request.filePath, file.languageId) ?: return null
-        val sourceLines = source.text.split('\n')
-        val cached = synchronized(lock) {
-            semanticTokenCache[request.filePath]?.takeIf { it.version == file.semanticVersion }
-        }
-        val byLine = cached?.byLine ?: semanticTokenService.tokens(file.id, snapshot)
-            .flatMap { token ->
-                token.toEditorTokens(source.text, sourceLines, sourceLines.indices, snapshot)
-            }
-            .toList()
-            .groupBy { it.line }
-            .also { computed ->
-                synchronized(lock) {
-                    semanticTokenCache[request.filePath] = SemanticTokenCacheEntry(file.semanticVersion, computed)
+        val reusedVersion = synchronized(lock) { reusedSemanticVersions[request.filePath] }
+        if (file.semanticVersion != request.version && reusedVersion != request.version) return emptyList()
+        val requestedLines = request.startLine until (request.startLine + request.lines.size)
+        if (requestedLines.isEmpty()) return emptyList()
+        val cache = synchronized(lock) {
+            semanticTokenCache[request.filePath]
+                ?.takeIf { it.version == file.semanticVersion }
+                ?: SemanticTokenCacheEntry(
+                    version = file.semanticVersion,
+                    lineStarts = buildLineStarts(source.text)
+                ).also { created ->
+                    semanticTokenCache[request.filePath] = created
                     while (semanticTokenCache.size > HOT_SOURCE_CACHE_SIZE) {
                         val iterator = semanticTokenCache.entries.iterator()
                         if (iterator.hasNext()) {
@@ -863,19 +886,43 @@ class CodeIntelService(
                         }
                     }
                 }
+        }
+        val missing = synchronized(lock) {
+            requestedLines.filterNot(cache.computedLines::contains)
+        }
+        if (missing.isNotEmpty()) {
+            val startLine = missing.first()
+            val endLine = missing.last()
+            val startOffset = offsetForLine(cache.lineStarts, startLine, source.text.length)
+            val endOffset = offsetForLine(cache.lineStarts, endLine + 1, source.text.length)
+            val lineRange = startLine..endLine
+            val sourceLines = request.lines
+            val computed = semanticTokenService.tokens(
+                file.id,
+                snapshot,
+                SourceRange(startOffset, endOffset.coerceAtLeast(startOffset + 1))
+            ).flatMap { token ->
+                token.toEditorTokens(sourceLines, requestedLines, cache.lineStarts, snapshot)
+            }.toList().groupBy { it.line }
+            synchronized(lock) {
+                computed.forEach { (line, tokens) -> cache.byLine[line] = tokens }
+                lineRange.forEach { line ->
+                    cache.computedLines += line
+                    cache.byLine.putIfAbsent(line, emptyList())
+                }
             }
-        val requestedLines = request.startLine until (request.startLine + request.lines.size)
-        return requestedLines.flatMap { byLine[it].orEmpty() }
+        }
+        return synchronized(lock) { requestedLines.flatMap { cache.byLine[it].orEmpty() } }
     }
 
     private fun SemanticToken.toEditorTokens(
-        sourceText: String,
         sourceLines: List<String>,
         requestedLines: IntRange,
+        lineStarts: IntArray,
         snapshot: editor.codeintel.index.SemanticSnapshot
     ): Sequence<Token> = sequence {
-        val startPosition = positionAt(sourceText, range.startOffset)
-        val endPosition = positionAt(sourceText, range.endOffset)
+        val startPosition = linePositionAt(lineStarts, range.startOffset)
+        val endPosition = linePositionAt(lineStarts, range.endOffset)
         val scopes = mutableListOf<String>()
         occurrence?.let { occurrence ->
             scopes += if (occurrence.kind == OccurrenceKind.DECLARATION) DECL_SCOPE else USAGE_SCOPE
@@ -890,7 +937,7 @@ class CodeIntelService(
 
         for (line in startPosition.line..endPosition.line) {
             if (line !in requestedLines) continue
-            val lineText = sourceLines.getOrNull(line) ?: continue
+            val lineText = sourceLines.getOrNull(line - requestedLines.first) ?: continue
             val startColumn = if (line == startPosition.line) startPosition.column else 0
             val endColumn = if (line == endPosition.line) endPosition.column else lineText.length
             val clampedStart = startColumn.coerceIn(0, lineText.length)
@@ -980,6 +1027,37 @@ class CodeIntelService(
             cursor = text.indexOf('\n', cursor + 1)
         }
         return TextPosition(line, offset - lineStart)
+    }
+
+    private fun buildLineStarts(text: String): IntArray {
+        var starts = IntArray((text.length / 32).coerceAtLeast(16))
+        var count = 1
+        starts[0] = 0
+        text.forEachIndexed { index, character ->
+            if (character != '\n') return@forEachIndexed
+            if (count == starts.size) starts = starts.copyOf(starts.size * 2)
+            starts[count++] = index + 1
+        }
+        return starts.copyOf(count)
+    }
+
+    private fun offsetForLine(lineStarts: IntArray, line: Int, textLength: Int): Int =
+        lineStarts.getOrElse(line.coerceAtLeast(0)) { textLength }.coerceIn(0, textLength)
+
+    private fun linePositionAt(lineStarts: IntArray, requestedOffset: Int): TextPosition {
+        if (lineStarts.isEmpty()) return TextPosition(0, requestedOffset.coerceAtLeast(0))
+        var low = 0
+        var high = lineStarts.lastIndex
+        while (low <= high) {
+            val middle = (low + high) ushr 1
+            if (lineStarts[middle] <= requestedOffset) {
+                low = middle + 1
+            } else {
+                high = middle - 1
+            }
+        }
+        val line = high.coerceIn(0, lineStarts.lastIndex)
+        return TextPosition(line, requestedOffset - lineStarts[line])
     }
 
     private fun SemanticSymbolKind.toEditorKind(): SymbolKind = when (this) {

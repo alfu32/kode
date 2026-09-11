@@ -40,18 +40,24 @@ data class SemanticToken(
 )
 
 class SemanticTokenService {
-    fun tokens(fileId: FileId, snapshot: SemanticSnapshot): Sequence<SemanticToken> {
-        val lexical = snapshot.lexicalTokens(fileId).map { token ->
+    fun tokens(
+        fileId: FileId,
+        snapshot: SemanticSnapshot,
+        range: SourceRange? = null
+    ): Sequence<SemanticToken> {
+        val lexical = (range?.let { snapshot.lexicalTokens(fileId, it) } ?: snapshot.lexicalTokens(fileId))
+            .map { token ->
             SemanticToken(token.range, token.kind.toTokenKind())
         }
-        val semantic = snapshot.occurrences(fileId).map { occurrence ->
-            val symbolKind = occurrence.resolvedSymbolId?.let(snapshot::symbol)?.kind
-            SemanticToken(
-                range = occurrence.range,
-                kind = symbolKind.toTokenKind(occurrence.kind),
-                occurrence = occurrence
-            )
-        }
+        val semantic = (range?.let { snapshot.occurrences(fileId, it) } ?: snapshot.occurrences(fileId))
+            .map { occurrence ->
+                val symbolKind = occurrence.resolvedSymbolId?.let(snapshot::symbol)?.kind
+                SemanticToken(
+                    range = occurrence.range,
+                    kind = symbolKind.toTokenKind(occurrence.kind),
+                    occurrence = occurrence
+                )
+            }
         return (lexical + semantic).sortedWith(
             compareBy<SemanticToken> { it.range.startOffset }
                 .thenByDescending { it.range.endOffset }
