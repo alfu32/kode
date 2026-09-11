@@ -58,7 +58,6 @@ import editor.lsp.LspManager
 import editor.lsp.LspService
 
 interface StatusLineProvider {
-    val someString:String="coucou"
     fun statusRight(): String
 }
 
