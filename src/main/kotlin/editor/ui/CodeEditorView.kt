@@ -949,33 +949,13 @@ class CodeEditorView(
                 symbol = candidate.name
             )
         ).orEmpty()
-        val refs = codeIntel?.references(
-            ReferenceRequest(
-                filePath = filePath,
-                language = lang,
-                position = TextPosition(candidate.anchor.line, candidate.anchor.column),
-                symbol = candidate.name
-            )
-        ).orEmpty()
-        val entries = mutableListOf<Pair<String, String>>()
-        entries += "name" to candidate.name
         val def = defs.firstOrNull()
         val definitionPreview = def?.let(::loadDefinitionPreview)
-        def?.kind?.let { entries += "kind" to it.name.lowercase() }
-        def?.filePath?.let { entries += "file" to it }
-        def?.range?.start?.let { pos ->
-            entries += "line" to (pos.line + 1).toString()
-            entries += "column" to (pos.column + 1).toString()
-        }
-        def?.tsLanguage?.let { entries += "ts_language" to it }
-        def?.tsParent?.let { entries += "ts_parent" to it }
-        def?.tsKind?.let { entries += "ts_kind" to it }
-        def?.tsIsNamed?.let { entries += "ts_is_named" to it.toString() }
-        def?.tsFieldNames?.let { entries += "ts_field_names" to it }
-        def?.tsHierarchyKind?.let { entries += "ts_hierarchy_kind" to it }
-        if (refs.isNotEmpty()) entries += "usages" to refs.size.toString()
-        if (entries.size == 1 && definitionPreview == null) return null // only name, nothing useful
-        return InfoPopup(candidate.anchor, entries, definitionPreview)
+        // Hover is a source-definition preview, not a dump of index metadata.
+        // Keep the technical fields available to navigation internally, but do
+        // not expose them in the editor popup.
+        if (definitionPreview == null) return null
+        return InfoPopup(candidate.anchor, emptyList(), definitionPreview)
     }
 
     private fun loadDefinitionPreview(target: NavigationTarget): DefinitionPreview? {
