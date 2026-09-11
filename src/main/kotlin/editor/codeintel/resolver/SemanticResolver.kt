@@ -5,6 +5,7 @@ import editor.codeintel.model.FileDependencyKind
 import editor.codeintel.model.FileDependencyRecord
 import editor.codeintel.model.FileId
 import editor.codeintel.model.FileSemanticDelta
+import editor.codeintel.model.ExpressionTypeRecord
 import editor.codeintel.model.OccurrenceKind
 import editor.codeintel.model.OccurrenceRecord
 import editor.codeintel.model.RelationKind
@@ -14,6 +15,7 @@ import editor.codeintel.model.ScopeRecord
 import editor.codeintel.model.SemanticIds
 import editor.codeintel.model.SemanticSource
 import editor.codeintel.model.SymbolId
+import editor.codeintel.model.SymbolFlags
 import editor.codeintel.model.SymbolKind
 import editor.codeintel.model.SymbolRecord
 import editor.codeintel.model.TypeHintKind
@@ -30,6 +32,7 @@ data class ResolvedSemanticProject(
     val occurrences: List<OccurrenceRecord>,
     val relations: List<RelationRecord>,
     val types: Map<TypeId, TypeRecord>,
+    val expressionTypes: List<ExpressionTypeRecord> = emptyList(),
     val dependencies: List<FileDependencyRecord> = emptyList(),
     val resolutionGenerations: Map<FileId, Long> = emptyMap()
 )
@@ -73,13 +76,13 @@ class SemanticResolver {
             .flatMap { it.unresolvedTypes }
             .forEach { unresolved ->
                 val owner = symbolsById()[unresolved.ownerSymbolId] ?: return@forEach
-                val type = resolveNamedType(unresolved.name, unresolved.scopeId, owner.fileId, symbols, scopes)
-                    ?: primitiveType(unresolved.name)
+                val type = resolveTypeRef(unresolved.name, unresolved.scopeId, owner.fileId, symbols, scopes)
                 if (type == null) return@forEach
                 val typeId = typeId(type)
-                val level = if (
-                    type is TypeRef.Named && symbols.firstOrNull { it.id == type.symbolId }?.fileId != owner.fileId
-                ) {
+                val crossesFileBoundary = namedTypes(type).any { named ->
+                    symbols.firstOrNull { it.id == named.symbolId }?.fileId != owner.fileId
+                }
+                val level = if (crossesFileBoundary) {
                     TypeKnowledgeLevel.CROSS_FILE_RESOLVED
                 } else {
                     TypeKnowledgeLevel.SYNTACTICALLY_DECLARED
@@ -94,22 +97,26 @@ class SemanticResolver {
                         TypeRole.SUPER_TYPE -> symbol
                     }
                 }
-                if (type is TypeRef.Named) {
+                primaryNamedType(type)?.let { named ->
                     val relationKind = when (unresolved.role) {
                         TypeRole.DECLARED -> RelationKind.TYPE_OF
                         TypeRole.PARAMETER -> RelationKind.PARAMETER_TYPE
                         TypeRole.RETURN -> RelationKind.RETURNS
                         TypeRole.SUPER_TYPE -> RelationKind.EXTENDS
                     }
-                    relations += RelationRecord(owner.id, type.symbolId, relationKind, unresolved.confidence)
+                    relations += RelationRecord(owner.id, named.symbolId, relationKind, unresolved.confidence)
                 }
             }
 
-        deltas.asSequence()
+        val pendingTypeHints = deltas.asSequence()
             .filter { it.fileId in affectedFiles }
             .flatMap { it.typeHints }
-            .forEach { hint ->
+            .toList()
+        for (pass in 0..pendingTypeHints.size) {
+            var changed = false
+            pendingTypeHints.forEach { hint ->
                 val target = symbols.firstOrNull { it.id == hint.targetSymbolId } ?: return@forEach
+                if (target.declaredTypeId != null) return@forEach
                 val inferred = when (hint.kind) {
                     TypeHintKind.CONSTRUCTOR_CALL -> resolveNamedType(
                         hint.referencedName.substringAfterLast('.'),
@@ -118,8 +125,7 @@ class SemanticResolver {
                         symbols,
                         scopes
                     )
-                    TypeHintKind.INITIALIZER_CALL,
-                    TypeHintKind.ASSIGNMENT -> {
+                    TypeHintKind.INITIALIZER_CALL -> {
                         val callable = resolveSymbol(
                             hint.referencedName.substringAfterLast('.'),
                             hint.scopeId,
@@ -131,12 +137,35 @@ class SemanticResolver {
                         )
                         callable?.declaredTypeId?.let { types[it]?.ref }
                     }
+                    TypeHintKind.ASSIGNMENT -> resolveAssignedType(
+                        hint.referencedName,
+                        hint.scopeId,
+                        target.fileId,
+                        hint.expressionRange.startOffset,
+                        symbols,
+                        scopes,
+                        relations,
+                        types
+                    )
+                    TypeHintKind.CAST -> resolveTypeRef(
+                        hint.referencedName,
+                        hint.scopeId,
+                        target.fileId,
+                        symbols,
+                        scopes
+                    )
+                    TypeHintKind.LITERAL -> primitiveType(hint.referencedName)
                 }
                     ?: return@forEach
-                val typeId = typeId(inferred)
-                types.putIfAbsent(
+                val existingType = target.inferredTypeId?.let(types::get)?.ref
+                val mergedType = mergeInferredTypes(existingType, inferred)
+                val typeId = typeId(mergedType)
+                if (target.inferredTypeId == typeId) return@forEach
+                types[typeId] = TypeRecord(
                     typeId,
-                    TypeRecord(typeId, inferred, hint.confidence, TypeKnowledgeLevel.LOCALLY_INFERRED)
+                    mergedType,
+                    hint.confidence,
+                    TypeKnowledgeLevel.LOCALLY_INFERRED
                 )
                 symbols = symbols.map { symbol ->
                     if (symbol.id == target.id && symbol.declaredTypeId == null) {
@@ -145,10 +174,13 @@ class SemanticResolver {
                         symbol
                     }
                 }
-                if (inferred is TypeRef.Named) {
-                    relations += RelationRecord(target.id, inferred.symbolId, RelationKind.TYPE_OF, hint.confidence)
+                changed = true
+                namedTypes(mergedType).forEach { named ->
+                    relations += RelationRecord(target.id, named.symbolId, RelationKind.TYPE_OF, hint.confidence)
                 }
             }
+            if (!changed) break
+        }
 
         val occurrenceById = linkedMapOf<Long, OccurrenceRecord>()
         baseline?.occurrences.orEmpty()
@@ -210,6 +242,7 @@ class SemanticResolver {
             occurrences = finalOccurrences,
             relations = finalRelations,
             types = types,
+            expressionTypes = resolvedDeltas.values.flatMap { it.expressionTypes },
             dependencies = dependencies,
             resolutionGenerations = generations
         )
@@ -289,16 +322,29 @@ class SemanticResolver {
         relations: List<RelationRecord>,
         types: Map<TypeId, TypeRecord>
     ): SymbolRecord? {
+        if (occurrence.text == "this") {
+            return ownerTypeForScope(occurrence.scopeId, scopes, symbols)
+        }
+        if (occurrence.text == "super") {
+            val owner = ownerTypeForScope(occurrence.scopeId, scopes, symbols) ?: return null
+            val superId = relations.firstOrNull {
+                it.from == owner.id && it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS)
+            }?.to
+            return superId?.let { id -> symbols.firstOrNull { it.id == id } }
+        }
         if (occurrence.kind == OccurrenceKind.MEMBER_REFERENCE) {
             val receiver = occurrence.receiverOccurrenceId?.let(occurrenceById::get)
             val receiverSymbol = receiver?.resolvedSymbolId?.let { id -> symbols.firstOrNull { it.id == id } }
-            val receiverType = receiverSymbol?.let { symbol ->
-                (symbol.declaredTypeId ?: symbol.inferredTypeId)?.let(types::get)?.ref
+            val receiverType = receiverSymbol?.let { symbol -> typeOfOccurrence(receiver, symbol, types) }
+            val receiverTypeId = receiverType?.let(::primaryNamedType)?.symbolId
+            if (receiverTypeId != null) {
+                return memberSymbols(receiverTypeId, symbols, relations)
+                    .firstOrNull {
+                        it.name == occurrence.text &&
+                            isAccessibleMember(it, occurrence.fileId, occurrence.scopeId, scopes, symbols, relations)
+                    }
             }
-            if (receiverType is TypeRef.Named) {
-                return memberSymbols(receiverType.symbolId, symbols, relations)
-                    .firstOrNull { it.name == occurrence.text }
-            }
+            return null
         }
         val kinds = when (occurrence.kind) {
             OccurrenceKind.TYPE_REFERENCE -> TYPE_KINDS
@@ -337,6 +383,77 @@ class SemanticResolver {
         return symbol?.let { TypeRef.Named(it.id) }
     }
 
+    private fun resolveTypeRef(
+        raw: String,
+        scopeId: ScopeId,
+        fileId: FileId,
+        symbols: List<SymbolRecord>,
+        scopes: List<ScopeRecord>
+    ): TypeRef? {
+        val text = raw.trim()
+        if (text.isEmpty()) return null
+        if (text.endsWith('?')) {
+            return resolveTypeRef(text.dropLast(1), scopeId, fileId, symbols, scopes)?.let(TypeRef::Nullable)
+        }
+        val arrow = topLevelArrow(text)
+        if (arrow >= 0) {
+            val parameterText = text.substring(0, arrow).trim().removeSurrounding("(", ")")
+            val parameters = splitTopLevel(parameterText).mapNotNull {
+                resolveTypeRef(it, scopeId, fileId, symbols, scopes)
+            }
+            val returns = resolveTypeRef(text.substring(arrow + 2), scopeId, fileId, symbols, scopes)
+            return TypeRef.Function(parameters, returns)
+        }
+        val genericStart = text.indexOf('<')
+        if (genericStart > 0 && text.endsWith('>')) {
+            val baseName = text.substring(0, genericStart).trim()
+            val base = resolveNamedType(baseName, scopeId, fileId, symbols, scopes)
+                ?: primitiveType(baseName)
+                ?: TypeRef.Unknown
+            val arguments = splitTopLevel(text.substring(genericStart + 1, text.length - 1)).map { argument ->
+                val normalized = argument.trim().removePrefix("out ").removePrefix("in ")
+                if (normalized == "*") TypeRef.Unknown
+                else resolveTypeRef(normalized, scopeId, fileId, symbols, scopes) ?: TypeRef.Unknown
+            }
+            return TypeRef.Generic(base, arguments)
+        }
+        return resolveNamedType(text, scopeId, fileId, symbols, scopes) ?: primitiveType(text)
+    }
+
+    private fun resolveAssignedType(
+        name: String,
+        scopeId: ScopeId,
+        fileId: FileId,
+        offset: Int,
+        symbols: List<SymbolRecord>,
+        scopes: List<ScopeRecord>,
+        relations: List<RelationRecord>,
+        types: Map<TypeId, TypeRecord>
+    ): TypeRef? {
+        if (name == "this") return ownerTypeForScope(scopeId, scopes, symbols)?.let { TypeRef.Named(it.id) }
+        if (name == "super") {
+            val owner = ownerTypeForScope(scopeId, scopes, symbols) ?: return null
+            return relations.firstOrNull {
+                it.from == owner.id && it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS)
+            }?.to?.let(TypeRef::Named)
+        }
+        val source = resolveSymbol(name.substringAfterLast('.'), scopeId, fileId, offset, symbols, scopes)
+            ?: return null
+        if (source.kind in TYPE_KINDS) return TypeRef.Named(source.id)
+        return (source.declaredTypeId ?: source.inferredTypeId)?.let(types::get)?.ref
+    }
+
+    private fun typeOfOccurrence(
+        occurrence: OccurrenceRecord,
+        symbol: SymbolRecord,
+        types: Map<TypeId, TypeRecord>
+    ): TypeRef? {
+        if (symbol.kind in TYPE_KINDS && (occurrence.kind == OccurrenceKind.CALL || occurrence.text in setOf("this", "super"))) {
+            return TypeRef.Named(symbol.id)
+        }
+        return (symbol.declaredTypeId ?: symbol.inferredTypeId)?.let(types::get)?.ref
+    }
+
     private fun primitiveType(name: String): TypeRef.Primitive? {
         val normalized = name.removeSuffix("?").substringBefore('<')
         return normalized.takeIf { it in PRIMITIVES }?.let(TypeRef::Primitive)
@@ -354,6 +471,7 @@ class SemanticResolver {
         val chain = scopeChain(scopeId, scopes)
         return symbols.asSequence()
             .filter { it.name == name && (kinds == null || it.kind in kinds) }
+            .filter { it.flags and SymbolFlags.PRIVATE == 0L || it.fileId == fileId }
             .filter { symbol ->
                 symbol.kind !in LOCAL_KINDS || symbol.fileId != fileId || symbol.nameRange.startOffset <= offset
             }
@@ -390,6 +508,23 @@ class SemanticResolver {
         return null
     }
 
+    private fun ownerTypeForScope(
+        scopeId: ScopeId,
+        scopes: List<ScopeRecord>,
+        symbols: List<SymbolRecord>
+    ): SymbolRecord? {
+        val scopesById = scopes.associateBy { it.id }
+        val symbolsById = symbols.associateBy { it.id }
+        var cursor: ScopeId? = scopeId
+        while (cursor != null) {
+            val scope = scopesById[cursor] ?: break
+            val owner = scope.ownerSymbolId?.let(symbolsById::get)
+            if (owner?.kind in TYPE_KINDS) return owner
+            cursor = scope.parentId
+        }
+        return null
+    }
+
     private fun memberSymbols(
         typeSymbolId: SymbolId,
         symbols: List<SymbolRecord>,
@@ -412,10 +547,100 @@ class SemanticResolver {
         return result.distinctBy { it.name to it.kind }
     }
 
+    private fun isAccessibleMember(
+        symbol: SymbolRecord,
+        fileId: FileId,
+        scopeId: ScopeId,
+        scopes: List<ScopeRecord>,
+        symbols: List<SymbolRecord>,
+        relations: List<RelationRecord>
+    ): Boolean {
+        val visibility = symbol.flags and SymbolFlags.VISIBILITY_MASK
+        if (visibility == 0L || visibility == SymbolFlags.PUBLIC || visibility == SymbolFlags.INTERNAL) return true
+        val owner = symbol.ownerSymbolId ?: return symbol.fileId == fileId
+        val currentType = ownerTypeForScope(scopeId, scopes, symbols) ?: return false
+        if (visibility == SymbolFlags.PRIVATE) return currentType.id == owner
+        if (visibility != SymbolFlags.PROTECTED) return true
+
+        val visited = mutableSetOf<SymbolId>()
+        fun inherits(current: SymbolId): Boolean {
+            if (!visited.add(current)) return false
+            return relations.asSequence()
+                .filter { it.from == current && it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS) }
+                .any { it.to == owner || inherits(it.to) }
+        }
+        return currentType.id == owner || inherits(currentType.id)
+    }
+
     private fun typeId(type: TypeRef): TypeId = when (type) {
         is TypeRef.Named -> SemanticIds.type("named:${type.symbolId.value}")
         is TypeRef.Primitive -> SemanticIds.type("primitive:${type.name}")
         else -> SemanticIds.type(type.toString())
+    }
+
+    private fun mergeInferredTypes(existing: TypeRef?, inferred: TypeRef): TypeRef {
+        if (existing == null || existing == inferred) return inferred
+        val alternatives = buildList {
+            if (existing is TypeRef.Union) addAll(existing.alternatives) else add(existing)
+            if (inferred is TypeRef.Union) addAll(inferred.alternatives) else add(inferred)
+        }.distinct()
+        return TypeRef.Union(alternatives)
+    }
+
+    private fun primaryNamedType(type: TypeRef): TypeRef.Named? = when (type) {
+        is TypeRef.Named -> type
+        is TypeRef.Generic -> primaryNamedType(type.base)
+        is TypeRef.Nullable -> primaryNamedType(type.inner)
+        is TypeRef.Union -> type.alternatives.firstNotNullOfOrNull(::primaryNamedType)
+        else -> null
+    }
+
+    private fun namedTypes(type: TypeRef): Sequence<TypeRef.Named> = sequence {
+        when (type) {
+            is TypeRef.Named -> yield(type)
+            is TypeRef.Generic -> {
+                yieldAll(namedTypes(type.base))
+                type.arguments.forEach { yieldAll(namedTypes(it)) }
+            }
+            is TypeRef.Function -> {
+                type.parameters.forEach { yieldAll(namedTypes(it)) }
+                type.returns?.let { yieldAll(namedTypes(it)) }
+            }
+            is TypeRef.Union -> type.alternatives.forEach { yieldAll(namedTypes(it)) }
+            is TypeRef.Nullable -> yieldAll(namedTypes(type.inner))
+            else -> Unit
+        }
+    }
+
+    private fun topLevelArrow(text: String): Int {
+        var depth = 0
+        for (index in 0 until text.length - 1) {
+            when (text[index]) {
+                '<', '(' -> depth++
+                '>', ')' -> depth--
+                '-' -> if (depth == 0 && text[index + 1] == '>') return index
+            }
+        }
+        return -1
+    }
+
+    private fun splitTopLevel(text: String): List<String> {
+        if (text.isBlank()) return emptyList()
+        val result = mutableListOf<String>()
+        var start = 0
+        var depth = 0
+        text.forEachIndexed { index, character ->
+            when (character) {
+                '<', '(' -> depth++
+                '>', ')' -> depth--
+                ',' -> if (depth == 0) {
+                    result += text.substring(start, index).trim()
+                    start = index + 1
+                }
+            }
+        }
+        result += text.substring(start).trim()
+        return result
     }
 
     companion object {

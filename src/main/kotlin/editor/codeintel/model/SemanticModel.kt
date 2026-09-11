@@ -138,6 +138,15 @@ data class SymbolRecord(
     val confidence: Confidence = Confidence(SemanticSource.TREE_SITTER, 0.90f)
 )
 
+object SymbolFlags {
+    const val PUBLIC: Long = 1L
+    const val PROTECTED: Long = 1L shl 1
+    const val INTERNAL: Long = 1L shl 2
+    const val PRIVATE: Long = 1L shl 3
+
+    const val VISIBILITY_MASK: Long = PUBLIC or PROTECTED or INTERNAL or PRIVATE
+}
+
 data class ScopeRecord(
     val id: ScopeId,
     val fileId: FileId,
@@ -156,6 +165,13 @@ data class OccurrenceRecord(
     val scopeId: ScopeId,
     val resolvedSymbolId: SymbolId?,
     val receiverOccurrenceId: Long?,
+    val confidence: Confidence
+)
+
+data class ExpressionTypeRecord(
+    val fileId: FileId,
+    val range: SourceRange,
+    val type: TypeRef,
     val confidence: Confidence
 )
 
@@ -217,7 +233,9 @@ data class UnresolvedTypeRef(
 enum class TypeHintKind {
     INITIALIZER_CALL,
     CONSTRUCTOR_CALL,
-    ASSIGNMENT
+    ASSIGNMENT,
+    CAST,
+    LITERAL
 }
 
 data class TypeHint(
@@ -247,6 +265,7 @@ data class FileSemanticDelta(
     val unresolvedTypes: List<UnresolvedTypeRef>,
     val imports: List<ImportRecord>,
     val typeHints: List<TypeHint> = emptyList(),
+    val expressionTypes: List<ExpressionTypeRecord> = emptyList(),
     val exportedSurfaceHash: String
 ) {
     val fileId: FileId get() = file.id

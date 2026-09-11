@@ -75,7 +75,9 @@ class MemberCompletionProvider(
     override fun candidates(context: CompletionContext, snapshot: SemanticSnapshot): Sequence<CompletionCandidate> {
         val receiver = context.receiverRange ?: return emptySequence()
         val type = expressionTypeResolver.typeOf(context.fileId, receiver, snapshot)
-        return snapshot.members(type).map { symbol ->
+        return snapshot.members(type).filter { symbol ->
+            snapshot.isAccessible(symbol, context.fileId, context.offset)
+        }.map { symbol ->
             symbol.toCandidate("member", context, snapshot, scopeDistance = 0, member = true)
         }
     }
@@ -86,7 +88,7 @@ class TypeCompletionProvider : CompletionProvider {
 
     override fun candidates(context: CompletionContext, snapshot: SemanticSnapshot): Sequence<CompletionCandidate> =
         snapshot.workspaceSymbols()
-            .filter { it.kind in TYPE_KINDS }
+            .filter { it.kind in TYPE_KINDS && snapshot.isAccessible(it, context.fileId, context.offset) }
             .map { it.toCandidate(it.qualifiedName ?: "type", context, snapshot, scopeDistance = 4) }
 
     companion object {
@@ -105,7 +107,7 @@ class ImportCompletionProvider : CompletionProvider {
 
     override fun candidates(context: CompletionContext, snapshot: SemanticSnapshot): Sequence<CompletionCandidate> =
         snapshot.workspaceSymbols()
-            .filter { it.qualifiedName != null }
+            .filter { it.qualifiedName != null && snapshot.isAccessible(it, context.fileId, context.offset) }
             .map { it.toCandidate(it.qualifiedName ?: it.name, context, snapshot, scopeDistance = 8) }
 }
 
@@ -124,7 +126,9 @@ class WorkspaceSymbolCompletionProvider : CompletionProvider {
     override fun supports(context: CompletionContext): Boolean = !context.memberAccess && !context.importContext
 
     override fun candidates(context: CompletionContext, snapshot: SemanticSnapshot): Sequence<CompletionCandidate> =
-        snapshot.workspaceSymbols().map { it.toCandidate("workspace symbol", context, snapshot, scopeDistance = 10) }
+        snapshot.workspaceSymbols()
+            .filter { snapshot.isAccessible(it, context.fileId, context.offset) }
+            .map { it.toCandidate("workspace symbol", context, snapshot, scopeDistance = 10) }
 }
 
 class SnippetCompletionProvider : CompletionProvider {

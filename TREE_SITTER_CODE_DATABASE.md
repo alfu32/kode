@@ -26,14 +26,14 @@ source -> Tree-sitter CST -> language adapter -> FileSemanticDelta
 
 - `editor.codeintel.model/SemanticModel.kt`: stable IDs, ranges, file metadata, symbols, persisted scopes, occurrences, common types, imports, relations, confidence, unresolved types, inference hints, and the per-file delta contract.
 - `editor.codeintel.frontend/LanguageSemanticAdapter.kt`: syntax-only adapter boundary. Adapters emit deltas and cannot mutate the index.
-- `editor.codeintel.frontend/KotlinSemanticAdapter.kt`: first adapter vertical slice. It extracts Kotlin declarations, lexical scopes, declared/return/super types, imports, calls, member references, ownership, and initializer hints from Tree-sitter.
+- `editor.codeintel.frontend/KotlinSemanticAdapter.kt`: Kotlin adapter vertical slice. It extracts declarations, lexical scopes, structured declared/return/super types, imports, calls, chained member references, assignments, casts, literals, `this`/`super`, ownership, and visibility from Tree-sitter.
 - `editor.codeintel.frontend/LegacySemanticDeltaFactory.kt`: explicitly low-confidence bridge that pre-caches non-migrated language output in the normalized schema without making it authoritative for semantic queries.
 - `editor.codeintel.index/SemanticIndex.kt`: per-file replacement, progressive project resolution, atomic snapshot publication, and snapshot queries.
 - `editor.codeintel.index/DependencyGraph.kt`: indexed forward/reverse file edges and cycle-safe transitive dependent traversal.
 - `editor.codeintel.index/SemanticInvalidationPlanner.kt`: exported-surface comparison, unresolved-name wake-up, and minimal affected-file planning.
 - `editor.codeintel.index/H2SemanticStore.kt`: normalized transactional persistence using Kode's existing embedded project database lifecycle. The schema is independent from the temporary legacy tables.
-- `editor.codeintel.resolver/SemanticResolver.kt`: scope-aware symbol resolution, declared and inferred types, calls, ownership, and inheritance.
-- `editor.codeintel.resolver/ExpressionTypeResolver.kt`: conservative best-effort expression typing used by member completion.
+- `editor.codeintel.resolver/SemanticResolver.kt`: scope-aware symbol resolution, fixed-point local inference, structured types, calls, ownership, inheritance, receiver chains, and access checks.
+- `editor.codeintel.resolver/ExpressionTypeResolver.kt`: conservative best-effort expression typing for identifiers, literals, calls, casts, parenthesized expressions, chained members, `this`, and `super`.
 - `editor.codeintel.completion/CompletionPipeline.kt`: local, member, type, import, keyword, workspace, and snippet providers plus the candidate engine.
 - `editor.codeintel.ml/CompletionRanker.kt`: ranker seam and deterministic first implementation. An ONNX implementation may score candidates but may not generate facts or members.
 - `editor.codeintel.semantic/SemanticTokens.kt`: semantic token classification based on the same resolved occurrences.
@@ -48,6 +48,7 @@ semantic_files
 semantic_scopes
 semantic_symbols
 semantic_occurrences
+semantic_expression_types
 semantic_relations
 semantic_types
 semantic_unresolved_types
@@ -92,11 +93,14 @@ The first implemented slice supports:
 - file, package, type, function, and block scopes;
 - package/import records and ownership/member relations;
 - declared property/parameter/return types;
-- local inference from constructor calls and resolved function return types;
+- generic, nullable, function, union, and primitive type representations;
+- fixed-point local inference from literals, constructor/function calls, references, casts, initializers, and later assignments;
 - cross-file type resolution independent of indexing order;
 - class inheritance and inherited-member traversal;
 - definition/reference lookup by resolved symbol identity;
-- `receiver.` completion for identifiers and simple calls;
+- `receiver.` and `receiver?.` completion for identifiers, calls, parenthesized/cast expressions, chained members, `this`, and `super`;
+- private/protected/internal/public flags and scope/inheritance-aware access filtering for resolution and completion;
+- conservative union inference for conflicting assignments, with only members shared by every alternative offered;
 - deterministic completion scoring;
 - semantic token refinement from resolved occurrences;
 - persistent reload of extracted and resolved facts.
@@ -107,7 +111,7 @@ Unknown types and unresolved occurrences are retained as unknown. Resolution doe
 
 1. **Kotlin foundation (implemented):** emit symbols, scopes, occurrences, imports, unresolved types, and relations; persist per-file deltas; publish snapshots; route Kotlin compatibility queries through the semantic index.
 2. **Dependency invalidation (implemented):** persist typed file dependencies and resolution generations, compare `exportedSurfaceHash`, wake matching unresolved files for new definitions, and only re-resolve the transitive dependent closure when the public semantic surface changes.
-3. **Kotlin expression coverage:** add chained member access, `this`, `super`, casts, parenthesized expressions, assignment propagation, generic and nullable type decoding, and visibility rules.
+3. **Kotlin expression coverage (implemented):** support chained and safe member access, `this`, `super`, casts, parentheses, literals, assignment propagation, generic/nullable/function/union type decoding, fixed-point inference, and visibility-aware resolution/completion.
 4. **Semantic highlighting:** make the editor consume `SemanticTokenService` directly while retaining Tree-sitter lexical tokens for strings/comments/literals and unresolved identifiers.
 5. **Statistics and ranking:** persist completion selection history, same-function/same-file recency, and project frequency; keep deterministic candidate generation.
 6. **Additional adapters:** add Java, TypeScript/JavaScript, C/C++, Rust, and Python as grammar plus `LanguageSemanticAdapter` plus shared semantic scenarios. No adapter receives its own index, resolver, completion UI, or ranker.
@@ -129,7 +133,12 @@ The milestone fixtures cover:
 - implementation-only edits leaving dependent resolution generations unchanged;
 - exported-surface edits invalidating transitive dependents, including cyclic graphs;
 - new definitions waking unresolved files and removed definitions clearing stale bindings;
-- dependency edges and generations surviving persistent reload.
+- dependency edges and generations surviving persistent reload;
+- chained property, method-call, and top-level function-call receiver completion;
+- cast, parenthesized, `this`, `super`, and safe-call receiver typing;
+- direct-reference and later-assignment propagation, including conservative conflicting-type unions;
+- generic/nullable type shapes surviving persistence reload;
+- private and protected members being accepted in valid owner/subclass contexts and rejected elsewhere.
 
 ## Design constraints
 

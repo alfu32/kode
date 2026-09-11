@@ -5,6 +5,7 @@ import editor.codeintel.frontend.SourceFile
 import editor.codeintel.index.H2SemanticStore
 import editor.codeintel.index.SemanticIndex
 import editor.codeintel.model.FileDependencyKind
+import editor.codeintel.model.SourceRange
 import editor.codeintel.model.TypeRef
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -131,5 +132,40 @@ class H2SemanticStoreTest {
         val inferred = assertIs<TypeRef.Named>(reloaded.type(variable.inferredTypeId)?.ref)
 
         assertEquals(customer.id, inferred.symbolId)
+    }
+
+    @Test
+    fun rebuildsNullableGenericTypesFromPersistedSemanticFacts() {
+        val url = "jdbc:h2:mem:semantic-type-shapes-${System.nanoTime()};DB_CLOSE_DELAY=-1"
+        val store = H2SemanticStore { url }
+        val adapter = KotlinSemanticAdapter()
+        val sourceText = "class Box<T> { val size: Int = 0 }\nfun inspect(box: Box<String>?) {}"
+        SemanticIndex(store).apply(
+            adapter.extract(
+                SourceFile(
+                    "Types.kt",
+                    "kotlin",
+                    sourceText,
+                    1L
+                )
+            )
+        )
+
+        val snapshot = SemanticIndex(store).load()
+        val boxParameter = snapshot.workspaceSymbols().first { it.name == "box" }
+        val nullable = assertIs<TypeRef.Nullable>(snapshot.type(boxParameter.declaredTypeId)?.ref)
+        val generic = assertIs<TypeRef.Generic>(nullable.inner)
+
+        assertIs<TypeRef.Named>(generic.base)
+        assertEquals("String", assertIs<TypeRef.Primitive>(generic.arguments.single()).name)
+        assertEquals(setOf("size"), snapshot.members(nullable).map { it.name }.toSet())
+        val file = requireNotNull(snapshot.file("Types.kt"))
+        val literalOffset = sourceText.indexOf('0')
+        assertEquals(
+            "Int",
+            assertIs<TypeRef.Primitive>(
+                snapshot.expressionType(file.id, SourceRange(literalOffset, literalOffset + 1))
+            ).name
+        )
     }
 }

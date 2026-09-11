@@ -11,6 +11,7 @@ import editor.codeintel.model.ScopeId
 import editor.codeintel.model.ScopeRecord
 import editor.codeintel.model.SourceRange
 import editor.codeintel.model.SymbolId
+import editor.codeintel.model.SymbolFlags
 import editor.codeintel.model.SymbolKind
 import editor.codeintel.model.SymbolRecord
 import editor.codeintel.model.TypeId
@@ -31,12 +32,14 @@ interface SemanticSnapshot : AutoCloseable {
     fun occurrenceAt(fileId: FileId, offset: Int): OccurrenceRecord?
     fun occurrences(symbolId: SymbolId): Sequence<OccurrenceRecord>
     fun occurrences(fileId: FileId): Sequence<OccurrenceRecord>
+    fun expressionType(fileId: FileId, range: SourceRange): TypeRef?
     fun members(type: TypeRef): Sequence<SymbolRecord>
     fun visibleSymbols(fileId: FileId, offset: Int): Sequence<SymbolRecord>
     fun symbols(fileId: FileId): Sequence<SymbolRecord>
     fun workspaceSymbols(): Sequence<SymbolRecord>
     fun scopes(fileId: FileId): Sequence<ScopeRecord>
     fun relations(from: SymbolId, kind: RelationKind? = null): Sequence<RelationRecord>
+    fun isAccessible(symbol: SymbolRecord, fileId: FileId, offset: Int): Boolean
     fun dependencies(fileId: FileId): Sequence<FileDependencyRecord>
     fun dependents(fileId: FileId): Sequence<FileDependencyRecord>
     fun resolutionGeneration(fileId: FileId): Long
@@ -123,6 +126,7 @@ class SemanticIndex(
         private val occurrencesBySymbol = state.project.occurrences
             .filter { it.resolvedSymbolId != null }
             .groupBy { requireNotNull(it.resolvedSymbolId) }
+        private val expressionTypesByFile = state.project.expressionTypes.groupBy { it.fileId }
         private val relationsFrom = state.project.relations.groupBy { it.from }
         private val dependenciesFrom = state.project.dependencies.groupBy { it.fromFileId }
         private val dependenciesTo = state.project.dependencies.groupBy { it.toFileId }
@@ -148,8 +152,33 @@ class SemanticIndex(
         override fun occurrences(fileId: FileId): Sequence<OccurrenceRecord> =
             occurrencesByFile[fileId].orEmpty().asSequence()
 
+        override fun expressionType(fileId: FileId, range: SourceRange): TypeRef? =
+            expressionTypesByFile[fileId].orEmpty()
+                .filter {
+                    it.range.startOffset >= range.startOffset && it.range.endOffset <= range.endOffset
+                }
+                .minByOrNull { it.range.endOffset - it.range.startOffset }
+                ?.type
+
         override fun members(type: TypeRef): Sequence<SymbolRecord> {
-            if (type !is TypeRef.Named) return emptySequence()
+            val members = when (type) {
+                is TypeRef.Named -> membersOfNamedType(type.symbolId)
+                is TypeRef.Generic -> members(type.base).toList()
+                is TypeRef.Nullable -> members(type.inner).toList()
+                is TypeRef.Union -> {
+                    val alternatives = type.alternatives.map { members(it).toList() }
+                    val shared = alternatives.drop(1)
+                        .map { list -> list.mapTo(mutableSetOf()) { it.name to it.kind } }
+                    alternatives.firstOrNull().orEmpty().filter { candidate ->
+                        shared.all { (candidate.name to candidate.kind) in it }
+                    }
+                }
+                else -> emptyList()
+            }
+            return members.asSequence()
+        }
+
+        private fun membersOfNamedType(typeSymbolId: SymbolId): List<SymbolRecord> {
             val visited = mutableSetOf<SymbolId>()
             val result = mutableListOf<SymbolRecord>()
             fun collect(owner: SymbolId) {
@@ -162,8 +191,8 @@ class SemanticIndex(
                     .filter { it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS) }
                     .forEach { collect(it.to) }
             }
-            collect(type.symbolId)
-            return result.distinctBy { it.name to it.kind }.asSequence()
+            collect(typeSymbolId)
+            return result.distinctBy { it.name to it.kind }
         }
 
         override fun visibleSymbols(fileId: FileId, offset: Int): Sequence<SymbolRecord> {
@@ -192,9 +221,13 @@ class SemanticIndex(
                     }
                 }
                 .firstOrNull()
-            if (owningType != null) result += members(TypeRef.Named(owningType.id))
+            if (owningType != null) {
+                members(TypeRef.Named(owningType.id))
+                    .filter { isAccessible(it, fileId, offset) }
+                    .forEach(result::add)
+            }
             state.project.symbols
-                .filter { it.kind in GLOBAL_KINDS }
+                .filter { it.kind in GLOBAL_KINDS && isAccessible(it, fileId, offset) }
                 .forEach(result::add)
             return result.distinctBy { it.name }.asSequence()
         }
@@ -209,6 +242,18 @@ class SemanticIndex(
 
         override fun relations(from: SymbolId, kind: RelationKind?): Sequence<RelationRecord> =
             relationsFrom[from].orEmpty().asSequence().filter { kind == null || it.kind == kind }
+
+        override fun isAccessible(symbol: SymbolRecord, fileId: FileId, offset: Int): Boolean {
+            val visibility = symbol.flags and SymbolFlags.VISIBILITY_MASK
+            if (visibility == 0L || visibility == SymbolFlags.PUBLIC || visibility == SymbolFlags.INTERNAL) return true
+            if (symbol.ownerSymbolId == null) return symbol.fileId == fileId
+            val currentType = ownerTypeAt(fileId, offset) ?: return false
+            if (visibility == SymbolFlags.PRIVATE) return currentType.id == symbol.ownerSymbolId
+            if (visibility == SymbolFlags.PROTECTED) {
+                return currentType.id == symbol.ownerSymbolId || inheritsFrom(currentType.id, symbol.ownerSymbolId)
+            }
+            return true
+        }
 
         override fun dependencies(fileId: FileId): Sequence<FileDependencyRecord> =
             dependenciesFrom[fileId].orEmpty().asSequence()
@@ -229,6 +274,28 @@ class SemanticIndex(
                 cursor = scopesById[cursor]?.parentId
             }
             return result
+        }
+
+        private fun ownerTypeAt(fileId: FileId, offset: Int): SymbolRecord? {
+            val scope = state.project.scopes
+                .filter { it.fileId == fileId && (it.range.contains(offset) || it.range.endOffset == offset) }
+                .minByOrNull { it.range.endOffset - it.range.startOffset }
+            return scopeChain(scope?.id).asSequence()
+                .mapNotNull(scopesById::get)
+                .mapNotNull { it.ownerSymbolId }
+                .mapNotNull(symbolsById::get)
+                .firstOrNull { it.kind in TYPE_KINDS }
+        }
+
+        private fun inheritsFrom(type: SymbolId, expectedBase: SymbolId): Boolean {
+            val visited = mutableSetOf<SymbolId>()
+            fun visit(current: SymbolId): Boolean {
+                if (!visited.add(current)) return false
+                return relationsFrom[current].orEmpty()
+                    .filter { it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS) }
+                    .any { it.to == expectedBase || visit(it.to) }
+            }
+            return visit(type)
         }
 
         private fun isVisibleAt(symbol: SymbolRecord, fileId: FileId, offset: Int): Boolean =

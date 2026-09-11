@@ -1,6 +1,7 @@
 package editor.codeintel.frontend
 
 import editor.codeintel.model.Confidence
+import editor.codeintel.model.ExpressionTypeRecord
 import editor.codeintel.model.FileRecord
 import editor.codeintel.model.FileSemanticDelta
 import editor.codeintel.model.ImportRecord
@@ -15,10 +16,12 @@ import editor.codeintel.model.SemanticIds
 import editor.codeintel.model.SemanticSource
 import editor.codeintel.model.SourceRange
 import editor.codeintel.model.SymbolId
+import editor.codeintel.model.SymbolFlags
 import editor.codeintel.model.SymbolKind
 import editor.codeintel.model.SymbolRecord
 import editor.codeintel.model.TypeHint
 import editor.codeintel.model.TypeHintKind
+import editor.codeintel.model.TypeRef
 import editor.codeintel.model.TypeRole
 import editor.codeintel.model.UnresolvedTypeRef
 import editor.lang.TreeSitterParser
@@ -47,13 +50,18 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
 
     fun completionContext(file: SourceFile, offset: Int): LanguageCompletionContext {
         val before = file.text.substring(0, offset.coerceIn(0, file.text.length))
-        val match = MEMBER_ACCESS_AT_END.find(before)
-            ?: return LanguageCompletionContext(memberAccess = false, receiverRange = null, prefix = identifierPrefix(before))
-        val receiverGroup = match.groups[1] ?: return LanguageCompletionContext(false, null, identifierPrefix(before))
+        val prefix = identifierPrefix(before)
+        var cursor = before.length - prefix.length - 1
+        while (cursor >= 0 && before[cursor].isWhitespace()) cursor--
+        if (cursor < 0 || before[cursor] != '.') {
+            return LanguageCompletionContext(memberAccess = false, receiverRange = null, prefix = prefix)
+        }
+        val receiverRange = receiverRangeBeforeDot(before, cursor)
+            ?: return LanguageCompletionContext(memberAccess = false, receiverRange = null, prefix = prefix)
         return LanguageCompletionContext(
             memberAccess = true,
-            receiverRange = SourceRange(receiverGroup.range.first, receiverGroup.range.last + 1),
-            prefix = match.groups[2]?.value.orEmpty()
+            receiverRange = receiverRange,
+            prefix = prefix
         )
     }
 
@@ -69,6 +77,7 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
         private val unresolvedTypes = mutableListOf<UnresolvedTypeRef>()
         private val imports = mutableListOf<ImportRecord>()
         private val typeHints = mutableListOf<TypeHint>()
+        private val expressionTypes = mutableListOf<ExpressionTypeRecord>()
         private val declarationRanges = mutableMapOf<SourceRange, SymbolId>()
         private var packageName: String? = null
 
@@ -89,6 +98,7 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
                     visit(child, contentScope, ownerSymbolId = null, typeOwnerId = null)
                 }
             }
+            collectAssignmentHints()
             collectOccurrences(root)
 
             val exportedSymbols = symbols
@@ -138,6 +148,7 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
                 unresolvedTypes = unresolvedTypes.distinct(),
                 imports = imports.distinct(),
                 typeHints = typeHints.distinct(),
+                expressionTypes = expressionTypes.distinct(),
                 exportedSurfaceHash = SemanticIds.hash(exported).toULong().toString(16)
             )
         }
@@ -344,7 +355,7 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
                 ownerSymbolId = ownerSymbolId,
                 declaredTypeId = null,
                 inferredTypeId = null,
-                flags = 0L
+                flags = visibilityFlags(node)
             )
             symbols += record
             declarationRanges[nameRange] = id
@@ -376,19 +387,58 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
         }
 
         private fun declaredPropertyType(node: TsNode, symbol: SymbolRecord, scope: ScopeRecord) {
+            val variable = descendants(node).firstOrNull { it.type == "variable_declaration" }
+            val typeNode = variable?.let { declaration ->
+                descendants(declaration).firstOrNull { it.type in TYPE_CONTEXTS }
+            }
+            if (typeNode != null) {
+                addUnresolvedType(symbol, scope, typeNode, TypeRole.DECLARED)
+                return
+            }
             val match = DECLARED_TYPE.find(node.text.substringBefore('=')) ?: return
             addUnresolvedType(symbol, scope, match.groupValues[1], TypeRole.DECLARED, node, match.groups[1]?.range?.first ?: 0)
         }
 
         private fun declaredParameterType(node: TsNode, symbol: SymbolRecord, scope: ScopeRecord) {
+            val typeNode = descendants(node).firstOrNull { it.type in TYPE_CONTEXTS }
+            if (typeNode != null) {
+                addUnresolvedType(symbol, scope, typeNode, TypeRole.PARAMETER)
+                return
+            }
             val match = DECLARED_TYPE.find(node.text) ?: return
             addUnresolvedType(symbol, scope, match.groupValues[1], TypeRole.PARAMETER, node, match.groups[1]?.range?.first ?: 0)
         }
 
         private fun declaredFunctionReturn(node: TsNode, symbol: SymbolRecord, scope: ScopeRecord) {
+            val parametersEnd = node.children()
+                .firstOrNull { it.type == "function_value_parameters" }
+                ?.endByte
+                ?: symbol.nameRange.endOffset
+            val typeNode = node.children().firstOrNull {
+                it.startByte >= parametersEnd && it.type in TYPE_CONTEXTS
+            }
+            if (typeNode != null) {
+                addUnresolvedType(symbol, scope, typeNode, TypeRole.RETURN)
+                return
+            }
             val header = node.text.substringBefore('{').substringBefore('=')
             val match = RETURN_TYPE.find(header) ?: return
             addUnresolvedType(symbol, scope, match.groupValues[1], TypeRole.RETURN, node, match.groups[1]?.range?.first ?: 0)
+        }
+
+        private fun addUnresolvedType(
+            symbol: SymbolRecord,
+            scope: ScopeRecord,
+            typeNode: TsNode,
+            role: TypeRole
+        ) {
+            unresolvedTypes += UnresolvedTypeRef(
+                ownerSymbolId = symbol.id,
+                scopeId = scope.id,
+                name = typeNode.text.trim(),
+                role = role,
+                range = typeNode.range()
+            )
         }
 
         private fun addUnresolvedType(
@@ -399,7 +449,7 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
             node: TsNode,
             relativeOffset: Int
         ) {
-            val name = rawName.trim().removeSuffix("?").substringBefore('<')
+            val name = rawName.trim()
             val start = (node.startByte + relativeOffset).coerceIn(0, file.text.length)
             unresolvedTypes += UnresolvedTypeRef(
                 ownerSymbolId = symbol.id,
@@ -411,23 +461,128 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
         }
 
         private fun initializerHint(node: TsNode, symbol: SymbolRecord, scope: ScopeRecord) {
-            val equalsAt = node.text.indexOf('=')
-            if (equalsAt < 0) return
-            val initializer = node.text.substring(equalsAt + 1)
-            val call = CALL_EXPRESSION.find(initializer) ?: return
-            val name = call.groupValues[1]
-            val relative = equalsAt + 1 + (call.groups[1]?.range?.first ?: 0)
-            val start = (node.startByte + relative).coerceIn(0, file.text.length)
-            typeHints += TypeHint(
-                targetSymbolId = symbol.id,
-                scopeId = scope.id,
-                expressionRange = SourceRange(start, (start + name.length).coerceAtMost(file.text.length)),
-                referencedName = name,
-                kind = if (name.firstOrNull()?.isUpperCase() == true) TypeHintKind.CONSTRUCTOR_CALL else TypeHintKind.INITIALIZER_CALL
-            )
+            val initializer = node.children().lastOrNull { child ->
+                child.type !in DECLARATION_STRUCTURE_NODES && child.endByte > symbol.nameRange.endOffset
+            } ?: return
+            addExpressionTypeHint(symbol, scope, initializer)
+        }
+
+        private fun collectAssignmentHints() {
+            descendants(root)
+                .filter { it.type == "assignment" }
+                .forEach { assignment ->
+                    val children = assignment.children()
+                    val targetNode = children.firstOrNull() ?: return@forEach
+                    val expression = children.lastOrNull()?.takeUnless { it === targetNode } ?: return@forEach
+                    val targetName = descendantsIncluding(targetNode)
+                        .firstOrNull { it.type in IDENTIFIER_NODES }
+                        ?.text
+                        ?.unquote()
+                        ?: return@forEach
+                    val scope = smallestScope(targetNode.startByte)
+                    val target = symbols.asSequence()
+                        .filter { it.name == targetName && it.nameRange.startOffset <= targetNode.startByte }
+                        .minByOrNull { scopeDistance(scope.id, it.scopeId) }
+                        ?: return@forEach
+                    addExpressionTypeHint(target, scope, expression)
+                }
+        }
+
+        private fun addExpressionTypeHint(symbol: SymbolRecord, scope: ScopeRecord, rawExpression: TsNode) {
+            val expression = unwrapParentheses(rawExpression)
+            val castType = if (expression.type == "as_expression") {
+                expression.children().lastOrNull { child -> child.type in TYPE_CONTEXTS }
+            } else {
+                null
+            }
+            if (castType != null) {
+                typeHints += TypeHint(
+                    targetSymbolId = symbol.id,
+                    scopeId = scope.id,
+                    expressionRange = expression.range(),
+                    referencedName = castType.text,
+                    kind = TypeHintKind.CAST
+                )
+                return
+            }
+
+            // Navigation expressions require receiver-aware occurrence resolution.
+            // Do not turn their first identifier into a confidently wrong assignment type.
+            if (expression.type == "navigation_expression") return
+
+            val callable = descendantsIncluding(expression).firstOrNull {
+                it.type in setOf("call_expression", "constructor_invocation")
+            }
+            if (callable != null) {
+                val name = descendantsIncluding(callable)
+                    .firstOrNull { it.type in IDENTIFIER_NODES }
+                    ?.text
+                    ?.unquote()
+                    ?: return
+                typeHints += TypeHint(
+                    targetSymbolId = symbol.id,
+                    scopeId = scope.id,
+                    expressionRange = callable.range(),
+                    referencedName = name,
+                    kind = if (name.firstOrNull()?.isUpperCase() == true) {
+                        TypeHintKind.CONSTRUCTOR_CALL
+                    } else {
+                        TypeHintKind.INITIALIZER_CALL
+                    }
+                )
+                return
+            }
+
+            val reference = descendantsIncluding(expression).firstOrNull {
+                it.type in IDENTIFIER_NODES || it.type in setOf("this_expression", "super_expression")
+            }
+            if (reference != null) {
+                typeHints += TypeHint(
+                    targetSymbolId = symbol.id,
+                    scopeId = scope.id,
+                    expressionRange = expression.range(),
+                    referencedName = reference.text.unquote(),
+                    kind = TypeHintKind.ASSIGNMENT
+                )
+                return
+            }
+
+            literalType(expression)?.let { primitive ->
+                typeHints += TypeHint(
+                    targetSymbolId = symbol.id,
+                    scopeId = scope.id,
+                    expressionRange = expression.range(),
+                    referencedName = primitive,
+                    kind = TypeHintKind.LITERAL
+                )
+            }
         }
 
         private fun collectOccurrences(node: TsNode) {
+            if (node.type in setOf("this_expression", "super_expression")) {
+                val range = node.range()
+                occurrences += OccurrenceRecord(
+                    id = SemanticIds.occurrence(fileId, range.startOffset, range.endOffset),
+                    fileId = fileId,
+                    range = range,
+                    text = node.text,
+                    kind = OccurrenceKind.READ,
+                    scopeId = smallestScope(range.startOffset).id,
+                    resolvedSymbolId = null,
+                    receiverOccurrenceId = null,
+                    confidence = Confidence(SemanticSource.TREE_SITTER, 0.90f)
+                )
+            }
+            if (node.type in LITERAL_NODES && node.parent()?.type !in LITERAL_NODES) {
+                val range = node.range()
+                val primitive = literalType(node)
+                if (primitive != null) expressionTypes += ExpressionTypeRecord(
+                    fileId = fileId,
+                    range = range,
+                    type = TypeRef.Primitive(primitive),
+                    confidence = Confidence(SemanticSource.TREE_SITTER, 0.90f)
+                )
+            }
             if (node.type in IDENTIFIER_NODES && node.children().none { it.type in IDENTIFIER_NODES }) {
                 val range = node.range()
                 val text = node.text.unquote()
@@ -439,10 +594,14 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
                         node.ancestors().any { it.type in setOf("import_header", "import_directive") } -> OccurrenceKind.IMPORT
                         node.ancestors().any { it.type in TYPE_CONTEXTS } -> OccurrenceKind.TYPE_REFERENCE
                         isMemberReference(range.startOffset) -> OccurrenceKind.MEMBER_REFERENCE
-                        node.ancestors().any { it.type == "call_expression" } -> OccurrenceKind.CALL
+                        isCallReference(range.endOffset) -> OccurrenceKind.CALL
                         else -> OccurrenceKind.READ
                     }
-                    val receiverId = if (kind == OccurrenceKind.MEMBER_REFERENCE) receiverBefore(range.startOffset) else null
+                    val receiverId = if (kind == OccurrenceKind.MEMBER_REFERENCE) {
+                        receiverOccurrence(node) ?: receiverBefore(range.startOffset)
+                    } else {
+                        null
+                    }
                     occurrences += OccurrenceRecord(
                         id = SemanticIds.occurrence(fileId, range.startOffset, range.endOffset),
                         fileId = fileId,
@@ -457,6 +616,18 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
                 }
             }
             node.children().forEach(::collectOccurrences)
+        }
+
+        private fun receiverOccurrence(memberNode: TsNode): Long? {
+            val suffix = memberNode.ancestors().firstOrNull { it.type == "navigation_suffix" } ?: return null
+            val navigation = suffix.parent()?.takeIf { it.type == "navigation_expression" } ?: return null
+            return occurrences.asSequence()
+                .filter {
+                    it.range.startOffset >= navigation.startByte &&
+                        it.range.endOffset <= suffix.startByte
+                }
+                .maxByOrNull { it.range.endOffset }
+                ?.id
         }
 
         private fun receiverBefore(memberStart: Int): Long? {
@@ -478,12 +649,60 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
             return cursor >= 0 && file.text[cursor] == '.'
         }
 
+        private fun isCallReference(end: Int): Boolean {
+            var cursor = end
+            while (cursor < file.text.length && file.text[cursor].isWhitespace()) cursor++
+            return cursor < file.text.length && file.text[cursor] == '('
+        }
+
         private fun smallestScope(offset: Int): ScopeRecord = scopes
             .filter { it.range.contains(offset) }
             .minByOrNull { it.range.endOffset - it.range.startOffset }
             ?: scopes.first()
 
         private fun nearestScope(scope: ScopeRecord): ScopeRecord = scope
+
+        private fun scopeDistance(from: ScopeId, target: ScopeId): Int {
+            val byId = scopes.associateBy { it.id }
+            var cursor: ScopeId? = from
+            var distance = 0
+            while (cursor != null) {
+                if (cursor == target) return distance
+                cursor = byId[cursor]?.parentId
+                distance++
+            }
+            return Int.MAX_VALUE
+        }
+
+        private fun visibilityFlags(node: TsNode): Long {
+            val modifiers = node.children().firstOrNull { it.type == "modifiers" }?.text.orEmpty()
+            return when {
+                Regex("\\bprivate\\b").containsMatchIn(modifiers) -> SymbolFlags.PRIVATE
+                Regex("\\bprotected\\b").containsMatchIn(modifiers) -> SymbolFlags.PROTECTED
+                Regex("\\binternal\\b").containsMatchIn(modifiers) -> SymbolFlags.INTERNAL
+                else -> SymbolFlags.PUBLIC
+            }
+        }
+
+        private fun unwrapParentheses(node: TsNode): TsNode {
+            var current = node
+            while (current.type == "parenthesized_expression") {
+                current = current.children().singleOrNull() ?: break
+            }
+            return current
+        }
+
+        private fun literalType(node: TsNode): String? = when (node.type) {
+            "string_literal", "line_string_literal", "multi_line_string_literal" -> "String"
+            "character_literal" -> "Char"
+            "boolean_literal" -> "Boolean"
+            "integer_literal" -> if (node.text.endsWith("L", ignoreCase = true)) "Long" else "Int"
+            "real_literal" -> if (node.text.endsWith("f", ignoreCase = true)) "Float" else "Double"
+            else -> when (node.text.trim()) {
+                "true", "false" -> "Boolean"
+                else -> null
+            }
+        }
 
         private fun declarationNameNode(node: TsNode): TsNode? {
             node.children().firstOrNull { it.fieldName() == "name" && it.type in IDENTIFIER_NODES }?.let { return it }
@@ -505,6 +724,11 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
                 yield(child)
                 yieldAll(descendants(child))
             }
+        }
+
+        private fun descendantsIncluding(node: TsNode): Sequence<TsNode> = sequence {
+            yield(node)
+            yieldAll(descendants(node))
         }
 
         private fun TsNode.ancestors(): Sequence<TsNode> = sequence {
@@ -551,15 +775,59 @@ class KotlinSemanticAdapter : LanguageSemanticAdapter {
             "type_constraint",
             "supertype"
         )
+        private val DECLARATION_STRUCTURE_NODES = setOf(
+            "modifiers",
+            "binding_pattern_kind",
+            "variable_declaration",
+            "type_parameters",
+            "function_value_parameters"
+        )
+        private val LITERAL_NODES = setOf(
+            "string_literal",
+            "line_string_literal",
+            "multi_line_string_literal",
+            "character_literal",
+            "boolean_literal",
+            "integer_literal",
+            "real_literal"
+        )
         private val DECLARED_TYPE = Regex(":\\s*([A-Za-z_][A-Za-z0-9_.]*(?:<[^>]+>)?\\??)")
         private val RETURN_TYPE = Regex("\\)\\s*:\\s*([A-Za-z_][A-Za-z0-9_.]*(?:<[^>]+>)?\\??)")
         private val SUPER_TYPE = Regex(":\\s*([^\\n{]+)")
-        private val CALL_EXPRESSION = Regex("([A-Za-z_][A-Za-z0-9_.]*)\\s*\\(")
         private val PARAMETER_PROPERTY = Regex("\\b(?:val|var)\\b")
-        private val MEMBER_ACCESS_AT_END = Regex("([A-Za-z_][A-Za-z0-9_]*(?:\\s*\\([^()]*\\))?)\\s*\\.\\s*([A-Za-z_][A-Za-z0-9_]*)?$")
 
         private fun identifierPrefix(text: String): String =
             text.takeLastWhile { it.isLetterOrDigit() || it == '_' }
+
+        private fun receiverRangeBeforeDot(text: String, dotOffset: Int): SourceRange? {
+            var end = dotOffset
+            while (end > 0 && text[end - 1].isWhitespace()) end--
+            if (end > 0 && text[end - 1] == '?') end--
+            while (end > 0 && text[end - 1].isWhitespace()) end--
+            if (end <= 0) return null
+
+            var cursor = end - 1
+            var parentheses = 0
+            var brackets = 0
+            while (cursor >= 0) {
+                when (val character = text[cursor]) {
+                    ')' -> parentheses++
+                    '(' -> if (parentheses > 0) parentheses-- else break
+                    ']' -> brackets++
+                    '[' -> if (brackets > 0) brackets-- else break
+                    '\n', '\r', ';', ',', '=', '{', '}' -> if (parentheses == 0 && brackets == 0) break
+                    '+', '-', '*', '/', '%', '&', '|', '!' -> if (parentheses == 0 && brackets == 0) break
+                    else -> Unit
+                }
+                cursor--
+            }
+            val start = (cursor + 1).let { raw ->
+                var trimmed = raw
+                while (trimmed < end && text[trimmed].isWhitespace()) trimmed++
+                trimmed
+            }
+            return if (start < end) SourceRange(start, end) else null
+        }
 
         private fun String.unquote(): String =
             if (startsWith('`') && endsWith('`') && length > 1) substring(1, length - 1) else this

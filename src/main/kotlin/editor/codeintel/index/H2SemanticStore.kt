@@ -1,6 +1,7 @@
 package editor.codeintel.index
 
 import editor.codeintel.model.Confidence
+import editor.codeintel.model.ExpressionTypeRecord
 import editor.codeintel.model.FileDependencyKind
 import editor.codeintel.model.FileDependencyRecord
 import editor.codeintel.model.FileId
@@ -72,13 +73,13 @@ class H2SemanticStore(
         insertUnresolvedTypes(connection, delta.fileId, delta.unresolvedTypes)
         insertImports(connection, delta.imports)
         insertTypeHints(connection, delta.fileId, delta.typeHints)
+        insertExpressionTypes(connection, delta.expressionTypes)
         insertDependencies(
             connection,
             delta.fileId,
             resolved.dependencies.filter { it.fromFileId == delta.fileId }
         )
     }
-
     override fun loadFiles(): List<FileSemanticDelta> {
         val connection = connection() ?: return emptyList()
         connection.use { conn ->
@@ -117,6 +118,7 @@ class H2SemanticStore(
             val unresolved = loadUnresolvedTypes(conn).groupBy { it.first }.mapValues { entry -> entry.value.map { it.second } }
             val imports = loadImports(conn).groupBy { it.fileId }
             val hints = loadTypeHints(conn).groupBy { it.first }.mapValues { entry -> entry.value.map { it.second } }
+            val expressionTypes = loadExpressionTypes(conn).groupBy { it.fileId }
             val relationsByFile = loadRelations(conn)
                 .filter { it.second.kind in setOf(RelationKind.CONTAINS, RelationKind.MEMBER_OF) }
                 .groupBy { it.first }
@@ -131,6 +133,7 @@ class H2SemanticStore(
                     unresolvedTypes = unresolved[file.id].orEmpty(),
                     imports = imports[file.id].orEmpty(),
                     typeHints = hints[file.id].orEmpty(),
+                    expressionTypes = expressionTypes[file.id].orEmpty(),
                     exportedSurfaceHash = loadedExportHashes[file.id] ?: file.contentHash
                 )
             }
@@ -394,6 +397,25 @@ class H2SemanticStore(
         }
     }
 
+    private fun insertExpressionTypes(connection: Connection, records: List<ExpressionTypeRecord>) {
+        connection.prepareStatement(
+            "INSERT INTO semantic_expression_types(file_id,start_offset,end_offset,type_kind,type_name,type_symbol_id,confidence_source,confidence_value) VALUES(?,?,?,?,?,?,?,?)"
+        ).use { statement ->
+            records.forEach { record ->
+                statement.setLong(1, record.fileId.value)
+                statement.setInt(2, record.range.startOffset)
+                statement.setInt(3, record.range.endOffset)
+                statement.setString(4, record.type.javaClass.simpleName.uppercase())
+                statement.setString(5, (record.type as? TypeRef.Primitive)?.name)
+                statement.setNullableLong(6, (record.type as? TypeRef.Named)?.symbolId?.value)
+                statement.setString(7, record.confidence.source.name)
+                statement.setFloat(8, record.confidence.value)
+                statement.addBatch()
+            }
+            statement.executeBatch()
+        }
+    }
+
     private fun insertDependencies(
         connection: Connection,
         fileId: FileId,
@@ -485,6 +507,23 @@ class H2SemanticStore(
         )
     }
 
+    private fun loadExpressionTypes(connection: Connection): List<ExpressionTypeRecord> = query(
+        connection,
+        "SELECT file_id,start_offset,end_offset,type_kind,type_name,type_symbol_id,confidence_source,confidence_value FROM semantic_expression_types"
+    ) { result ->
+        val type = when (result.getString(4)) {
+            "PRIMITIVE" -> TypeRef.Primitive(result.getString(5))
+            "NAMED" -> result.nullableLong(6)?.let { TypeRef.Named(SymbolId(it)) } ?: TypeRef.Unknown
+            else -> TypeRef.Unknown
+        }
+        ExpressionTypeRecord(
+            fileId = FileId(result.getLong(1)),
+            range = SourceRange(result.getInt(2), result.getInt(3)),
+            type = type,
+            confidence = result.confidence(7, 8)
+        )
+    }
+
     private fun <T> query(connection: Connection, sql: String, mapper: (ResultSet) -> T): List<T> {
         val result = mutableListOf<T>()
         connection.createStatement().use { statement ->
@@ -510,7 +549,8 @@ class H2SemanticStore(
         private const val DB_PASS = "sa"
         private val CHILD_TABLES = listOf(
             "semantic_scopes", "semantic_symbols", "semantic_occurrences", "semantic_relations", "semantic_types",
-            "semantic_unresolved_types", "semantic_imports", "semantic_type_hints", "semantic_file_dependencies"
+            "semantic_unresolved_types", "semantic_imports", "semantic_type_hints", "semantic_expression_types",
+            "semantic_file_dependencies"
         )
         private val SCHEMA = listOf(
             "CREATE TABLE IF NOT EXISTS semantic_files(file_id BIGINT PRIMARY KEY,path VARCHAR(2048) UNIQUE,language_id VARCHAR(64),content_hash VARCHAR(64),parse_version BIGINT,semantic_version BIGINT,dependency_generation BIGINT,exported_surface_hash VARCHAR(64))",
@@ -522,6 +562,7 @@ class H2SemanticStore(
             "CREATE TABLE IF NOT EXISTS semantic_unresolved_types(file_id BIGINT,owner_symbol_id BIGINT,scope_id BIGINT,name VARCHAR(1024),role VARCHAR(32),start_offset INT,end_offset INT,confidence_source VARCHAR(32),confidence_value REAL)",
             "CREATE TABLE IF NOT EXISTS semantic_imports(file_id BIGINT,scope_id BIGINT,path VARCHAR(2048),alias VARCHAR(512),wildcard BOOLEAN,start_offset INT,end_offset INT)",
             "CREATE TABLE IF NOT EXISTS semantic_type_hints(file_id BIGINT,target_symbol_id BIGINT,scope_id BIGINT,start_offset INT,end_offset INT,referenced_name VARCHAR(1024),kind VARCHAR(32),confidence_source VARCHAR(32),confidence_value REAL)",
+            "CREATE TABLE IF NOT EXISTS semantic_expression_types(file_id BIGINT,start_offset INT,end_offset INT,type_kind VARCHAR(32),type_name VARCHAR(512),type_symbol_id BIGINT,confidence_source VARCHAR(32),confidence_value REAL,PRIMARY KEY(file_id,start_offset,end_offset))",
             "CREATE TABLE IF NOT EXISTS semantic_file_dependencies(file_id BIGINT,from_file_id BIGINT,to_file_id BIGINT,kind VARCHAR(32),generation BIGINT,PRIMARY KEY(file_id,to_file_id,kind))",
             "CREATE INDEX IF NOT EXISTS semantic_symbols_name_idx ON semantic_symbols(name)",
             "CREATE INDEX IF NOT EXISTS semantic_symbols_qualified_name_idx ON semantic_symbols(qualified_name)",
@@ -529,6 +570,7 @@ class H2SemanticStore(
             "CREATE INDEX IF NOT EXISTS semantic_symbols_scope_idx ON semantic_symbols(scope_id)",
             "CREATE INDEX IF NOT EXISTS semantic_occurrences_file_offset_idx ON semantic_occurrences(file_id,start_offset)",
             "CREATE INDEX IF NOT EXISTS semantic_occurrences_symbol_idx ON semantic_occurrences(resolved_symbol_id)",
+            "CREATE INDEX IF NOT EXISTS semantic_expression_types_range_idx ON semantic_expression_types(file_id,start_offset,end_offset)",
             "CREATE INDEX IF NOT EXISTS semantic_relations_from_idx ON semantic_relations(from_symbol,kind)",
             "CREATE INDEX IF NOT EXISTS semantic_relations_to_idx ON semantic_relations(to_symbol,kind)",
             "CREATE INDEX IF NOT EXISTS semantic_scopes_range_idx ON semantic_scopes(file_id,start_offset,end_offset)",
