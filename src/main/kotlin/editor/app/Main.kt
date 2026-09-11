@@ -58,6 +58,7 @@ import editor.lsp.LspManager
 import editor.lsp.LspService
 
 interface StatusLineProvider {
+    val someString:String="coucou"
     fun statusRight(): String
 }
 
@@ -79,7 +80,6 @@ interface RenderInvalidator {
 
 fun runApp(app: Component, renderer: CanvasRenderer = AnsiCanvasRenderer(), idleSleepMillis: Long = 8L) {
     val perf = PerformanceTracker()
-    // Cap rendering to avoid excessive redraws; default ~125 FPS (8ms). Allow tuning via env.
     val frameIntervalMs = System.getenv("KODE_FRAME_MS")?.toLongOrNull()
         ?.coerceIn(8L, 200L) // 8ms ~125fps, 200ms ~5fps
         ?: 8L
@@ -2068,3 +2068,4 @@ private fun drawStatusLine(
         drawText(1, row, padded.take(textWidth))
     }
 }
+
