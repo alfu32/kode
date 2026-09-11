@@ -1,5 +1,24 @@
 package editor.codeintel
 
+import editor.codeintel.completion.CompletionCandidateEngine
+import editor.codeintel.completion.CompletionContext
+import editor.codeintel.completion.ImportCompletionProvider
+import editor.codeintel.completion.KeywordCompletionProvider
+import editor.codeintel.completion.LocalScopeCompletionProvider
+import editor.codeintel.completion.MemberCompletionProvider
+import editor.codeintel.completion.SnippetCompletionProvider
+import editor.codeintel.completion.TypeCompletionProvider
+import editor.codeintel.completion.WorkspaceSymbolCompletionProvider
+import editor.codeintel.frontend.KotlinSemanticAdapter
+import editor.codeintel.frontend.LegacySemanticDeltaFactory
+import editor.codeintel.frontend.SourceFile
+import editor.codeintel.index.SemanticIndex
+import editor.codeintel.ml.HeuristicCompletionRanker
+import editor.codeintel.model.FileId
+import editor.codeintel.model.OccurrenceKind
+import editor.codeintel.model.SemanticIds
+import editor.codeintel.model.SymbolKind as SemanticSymbolKind
+import editor.codeintel.resolver.BestEffortExpressionTypeResolver
 import editor.grammars.KeywordSyntaxProvider
 import editor.grammars.Token
 import editor.lang.IdentifierOccurrence
@@ -132,7 +151,24 @@ class CodeIntelService(
     private val defsByPath = mutableMapOf<String, List<SymbolDef>>()
     private val workspaceIndex = mutableMapOf<String, MutableList<SymbolDef>>()
     private val usagesIndex = mutableMapOf<String, MutableList<IdentifierToken>>()
+    private val semanticSources = java.util.LinkedHashMap<String, SourceFile>(HOT_SOURCE_CACHE_SIZE, 0.75f, true)
+    private val pendingSemanticDeltas = linkedMapOf<FileId, editor.codeintel.model.FileSemanticDelta>()
+    private var semanticBatchDepth = 0
     private val lock = Any()
+    private val kotlinSemanticAdapter = KotlinSemanticAdapter()
+    private val semanticIndex = SemanticIndex(store?.semanticStore())
+    private val completionEngine = CompletionCandidateEngine(
+        providers = listOf(
+            LocalScopeCompletionProvider(),
+            MemberCompletionProvider(BestEffortExpressionTypeResolver()),
+            TypeCompletionProvider(),
+            ImportCompletionProvider(),
+            KeywordCompletionProvider { language -> KeywordSyntaxProvider.keywords(language) },
+            WorkspaceSymbolCompletionProvider(),
+            SnippetCompletionProvider()
+        ),
+        ranker = HeuristicCompletionRanker()
+    )
 
     fun indexDocument(path: String, language: String?, text: String, version: Long) {
         if (language.isNullOrBlank()) return
@@ -157,8 +193,23 @@ class CodeIntelService(
         performIndex(path, language, text, version)
     }
 
+    fun beginSemanticBatch() {
+        synchronized(lock) { semanticBatchDepth++ }
+    }
+
+    fun endSemanticBatch() {
+        val updates = synchronized(lock) {
+            if (semanticBatchDepth > 0) semanticBatchDepth--
+            if (semanticBatchDepth > 0 || pendingSemanticDeltas.isEmpty()) return
+            pendingSemanticDeltas.values.toList().also { pendingSemanticDeltas.clear() }
+        }
+        runCatching { semanticIndex.applyAll(updates) }
+            .onFailure { error -> System.err.println("Semantic batch publication failed: ${error.message}") }
+    }
+
     override fun definitions(request: DefinitionRequest): List<NavigationTarget> {
         if (request.symbol.isBlank()) return emptyList()
+        semanticDefinition(request)?.let { return listOf(it) }
         val doc = synchronized(lock) { documents[request.filePath] }
         val defAtCursor = definitionAt(doc, request.position)
         if (defAtCursor != null) {
@@ -210,6 +261,7 @@ class CodeIntelService(
 
     override fun references(request: ReferenceRequest): List<NavigationTarget> {
         if (request.symbol.isBlank()) return emptyList()
+        semanticReferences(request).takeIf { it.isNotEmpty() }?.let { return it }
         val results = mutableListOf<NavigationTarget>()
         val doc = synchronized(lock) { documents[request.filePath] }
         val clickedDef = definitionAt(doc, request.position)
@@ -246,6 +298,7 @@ class CodeIntelService(
     }
 
     override fun completions(request: CompletionRequest): List<CompletionItem> {
+        semanticCompletions(request)?.let { return it }
         val trimmed = request.prefix.trim()
         val items = linkedSetOf<CompletionItem>()
 
@@ -292,6 +345,7 @@ class CodeIntelService(
     }
 
     override fun documentSymbols(path: String): List<Symbol> {
+        semanticDocumentSymbols(path).takeIf { it.isNotEmpty() }?.let { return it }
         val doc = synchronized(lock) { documents[path] } ?: return emptyList()
         return doc.definitions.mapNotNull { def ->
             val line = def.line ?: return@mapNotNull null
@@ -309,7 +363,7 @@ class CodeIntelService(
     }
 
     fun documentOutline(path: String): List<SymbolDef> =
-        synchronized(lock) { documents[path]?.definitions.orEmpty() }
+        semanticOutline(path).ifEmpty { synchronized(lock) { documents[path]?.definitions.orEmpty() } }
 
     data class IndexStats(val files: Int, val symbols: Int, val usages: Int)
 
@@ -322,6 +376,8 @@ class CodeIntelService(
 
     fun workspaceSymbols(query: String, limit: Int = 64): List<Symbol> {
         if (query.isBlank()) return emptyList()
+        val semanticMatches = semanticWorkspaceSymbols(query, limit)
+        if (semanticMatches.isNotEmpty()) return semanticMatches
         val lower = query.lowercase(Locale.ROOT)
         val matches = mutableListOf<Symbol>()
         synchronized(lock) {
@@ -336,6 +392,7 @@ class CodeIntelService(
     }
 
     override fun tokens(request: TokensRequest): List<Token> {
+        semanticTokens(request)?.let { return it }
         val doc = synchronized(lock) { documents[request.filePath] }
         if (doc == null || doc.version != request.version) return emptyList()
         val tokens = mutableListOf<Token>()
@@ -375,10 +432,16 @@ class CodeIntelService(
             documents.clear()
             defsByPath.clear()
             workspaceIndex.clear()
+            usagesIndex.clear()
+            semanticSources.clear()
+            pendingSemanticDeltas.clear()
+            semanticBatchDepth = 0
         }
+        semanticIndex.clearMemory()
     }
 
     fun loadFromStore() {
+        semanticIndex.load()
         val loaded = store?.loadAll() ?: return
         synchronized(lock) {
             defsByPath.clear()
@@ -400,7 +463,7 @@ class CodeIntelService(
         }
     }
 
-    fun hasPersistentData(): Boolean = store?.hasData() ?: false
+    fun hasPersistentData(): Boolean = store != null && semanticIndex.hasPersistentData()
 
     fun waitForIdle(timeoutMs: Long = 1000L) {
         val jobs = synchronized(lock) { pendingJobs.values.toList() }
@@ -417,6 +480,16 @@ class CodeIntelService(
         if (language.isNullOrBlank()) return
         val latestVersion = synchronized(lock) { latestVersionByPath[path] }
         if (latestVersion != version) return
+        if (language.lowercase(Locale.ROOT) in KOTLIN_LANGUAGE_IDS) {
+            val source = SourceFile(path, "kotlin", text, version)
+            runCatching {
+                submitSemanticDelta(kotlinSemanticAdapter.extract(source))
+                cacheSemanticSource(source)
+            }
+                .onFailure { error ->
+                    System.err.println("Semantic indexing failed for $path: ${error.message}")
+                }
+        }
         val knownNames = synchronized(lock) { workspaceIndex.keys.toSet() }
         val extracted = extractor.extract(path, text, language)
         val defs = extracted.symbols.map {
@@ -454,6 +527,15 @@ class CodeIntelService(
             definitions = defs.sortedBy { it.range.first },
             identifiersByLine = filteredIdents
         )
+        if (language.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) {
+            runCatching {
+                submitSemanticDelta(
+                    LegacySemanticDeltaFactory.create(path, language, text, version, defs, filteredIdents)
+                )
+            }.onFailure { error ->
+                System.err.println("Heuristic semantic persistence failed for $path: ${error.message}")
+            }
+        }
         synchronized(lock) {
             pendingJobs.remove(path)
             documents[path] = docIndex
@@ -461,6 +543,18 @@ class CodeIntelService(
             rebuildUsagesIndex(path, docIndex.identifiersByLine)
         }
         store?.storeFile(path, language, defs, docIndex.identifiersByLine)
+    }
+
+    private fun submitSemanticDelta(delta: editor.codeintel.model.FileSemanticDelta) {
+        val applyNow = synchronized(lock) {
+            if (semanticBatchDepth > 0) {
+                pendingSemanticDeltas[delta.fileId] = delta
+                false
+            } else {
+                true
+            }
+        }
+        if (applyNow) semanticIndex.apply(delta)
     }
 
     private fun rebuildWorkspaceIndex(path: String, newDefs: List<SymbolDef>) {
@@ -589,6 +683,264 @@ class CodeIntelService(
         }
     }
 
+    private fun semanticDefinition(request: DefinitionRequest): NavigationTarget? {
+        val snapshot = semanticIndex.snapshot()
+        val file = snapshot.file(request.filePath) ?: return null
+        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return null
+        val source = sourceFor(request.filePath, file.languageId) ?: return null
+        val offset = offsetAt(source.text, request.position)
+        val symbol = snapshot.symbolAt(file.id, offset)
+            ?.takeIf { it.name == request.symbol || it.qualifiedName == request.symbol }
+            ?: snapshot.workspaceSymbols().firstOrNull {
+                it.name == request.symbol &&
+                    (it.fileId == file.id || it.qualifiedName == request.symbol)
+            }
+            ?: return null
+        return symbol.toNavigationTarget(snapshot.file(symbol.fileId)?.path ?: return null)
+    }
+
+    private fun semanticReferences(request: ReferenceRequest): List<NavigationTarget> {
+        val snapshot = semanticIndex.snapshot()
+        val file = snapshot.file(request.filePath) ?: return emptyList()
+        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return emptyList()
+        val source = sourceFor(request.filePath, file.languageId)
+        val atCursor = source?.let { snapshot.symbolAt(file.id, offsetAt(it.text, request.position)) }
+        val symbol = atCursor?.takeIf { it.name == request.symbol || it.qualifiedName == request.symbol }
+            ?: snapshot.workspaceSymbols().firstOrNull {
+                it.name == request.symbol && it.fileId == file.id
+            }
+            ?: snapshot.workspaceSymbols().firstOrNull { it.name == request.symbol }
+            ?: return emptyList()
+        return snapshot.occurrences(symbol.id).mapNotNull { occurrence ->
+            val occurrenceFile = snapshot.file(occurrence.fileId) ?: return@mapNotNull null
+            val occurrenceSource = sourceFor(occurrenceFile.path, occurrenceFile.languageId) ?: return@mapNotNull null
+            val start = positionAt(occurrenceSource.text, occurrence.range.startOffset)
+            val end = positionAt(occurrenceSource.text, occurrence.range.endOffset)
+            NavigationTarget(
+                filePath = occurrenceFile.path,
+                range = TextRange(start, end),
+                kind = symbol.kind.toEditorKind(),
+                name = symbol.name,
+                tsLanguage = occurrenceFile.languageId,
+                tsKind = symbol.kind.name.lowercase(Locale.ROOT),
+                tsIsNamed = true
+            )
+        }.toList()
+    }
+
+    private fun semanticCompletions(request: CompletionRequest): List<CompletionItem>? {
+        val snapshot = semanticIndex.snapshot()
+        val file = snapshot.file(request.filePath) ?: return null
+        if (file.languageId !in KOTLIN_LANGUAGE_IDS) return null
+        val source = sourceFor(request.filePath, file.languageId) ?: return null
+        val offset = offsetAt(source.text, request.position)
+        val languageContext = kotlinSemanticAdapter.completionContext(source, offset)
+        val lineStart = source.text.lastIndexOf('\n', (offset - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
+        val importContext = source.text.substring(lineStart, offset).trimStart().startsWith("import ")
+        val context = CompletionContext(
+            fileId = file.id,
+            languageId = file.languageId,
+            offset = offset,
+            prefix = languageContext.prefix.ifBlank { request.prefix.trim() },
+            memberAccess = languageContext.memberAccess,
+            receiverRange = languageContext.receiverRange,
+            importContext = importContext
+        )
+        val candidates = completionEngine.complete(context, snapshot)
+        if (candidates.isEmpty() && !context.memberAccess) return null
+        return candidates.map { candidate ->
+            CompletionItem(
+                label = candidate.label,
+                detail = candidate.detail,
+                kind = if (candidate.detail == "keyword") SymbolKind.KEYWORD else candidate.kind.toEditorKind()
+            )
+        }
+    }
+
+    private fun semanticDocumentSymbols(path: String): List<Symbol> {
+        val snapshot = semanticIndex.snapshot()
+        val file = snapshot.file(path) ?: return emptyList()
+        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return emptyList()
+        val source = sourceFor(path, file.languageId) ?: return emptyList()
+        return snapshot.symbols(file.id).map { symbol ->
+            Symbol(
+                name = symbol.name,
+                kind = symbol.kind.toEditorKind(),
+                language = file.languageId,
+                filePath = path,
+                range = TextRange(
+                    positionAt(source.text, symbol.nameRange.startOffset),
+                    positionAt(source.text, symbol.nameRange.endOffset)
+                ),
+                container = symbol.ownerSymbolId?.let(snapshot::symbol)?.qualifiedName
+            )
+        }.toList()
+    }
+
+    private fun semanticOutline(path: String): List<SymbolDef> {
+        val snapshot = semanticIndex.snapshot()
+        val file = snapshot.file(path) ?: return emptyList()
+        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return emptyList()
+        val source = sourceFor(path, file.languageId) ?: return emptyList()
+        return snapshot.symbols(file.id).map { symbol ->
+            val start = positionAt(source.text, symbol.nameRange.startOffset)
+            SymbolDef(
+                name = symbol.name,
+                kind = symbol.kind.toEditorKind(),
+                filePath = path,
+                range = symbol.nameRange.startOffset until symbol.nameRange.endOffset,
+                container = symbol.ownerSymbolId?.let(snapshot::symbol)?.qualifiedName,
+                line = start.line,
+                startColumn = start.column,
+                language = file.languageId,
+                tsLanguage = file.languageId,
+                tsKind = symbol.kind.name.lowercase(Locale.ROOT),
+                tsIsNamed = true
+            )
+        }.toList()
+    }
+
+    private fun semanticWorkspaceSymbols(query: String, limit: Int): List<Symbol> {
+        val snapshot = semanticIndex.snapshot()
+        val lower = query.lowercase(Locale.ROOT)
+        return snapshot.workspaceSymbols()
+            .filter { it.name.lowercase(Locale.ROOT).contains(lower) }
+            .mapNotNull { symbol ->
+                val file = snapshot.file(symbol.fileId) ?: return@mapNotNull null
+                val source = sourceFor(file.path, file.languageId) ?: return@mapNotNull null
+                Symbol(
+                    name = symbol.name,
+                    kind = symbol.kind.toEditorKind(),
+                    language = file.languageId,
+                    filePath = file.path,
+                    range = TextRange(
+                        positionAt(source.text, symbol.nameRange.startOffset),
+                        positionAt(source.text, symbol.nameRange.endOffset)
+                    ),
+                    container = symbol.ownerSymbolId?.let(snapshot::symbol)?.qualifiedName
+                )
+            }
+            .take(limit)
+            .toList()
+    }
+
+    private fun semanticTokens(request: TokensRequest): List<Token>? {
+        val snapshot = semanticIndex.snapshot()
+        val file = snapshot.file(request.filePath) ?: return null
+        if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return null
+        if (file.semanticVersion != request.version) return emptyList()
+        val source = sourceFor(request.filePath, file.languageId) ?: return null
+        val requestedLines = request.startLine until (request.startLine + request.lines.size)
+        return snapshot.occurrences(file.id).mapNotNull { occurrence ->
+            val start = positionAt(source.text, occurrence.range.startOffset)
+            val end = positionAt(source.text, occurrence.range.endOffset)
+            if (start.line !in requestedLines || end.line != start.line) return@mapNotNull null
+            val symbol = occurrence.resolvedSymbolId?.let(snapshot::symbol)
+            val scopes = mutableListOf(
+                if (occurrence.kind == OccurrenceKind.DECLARATION) DECL_SCOPE else USAGE_SCOPE
+            )
+            when (symbol?.kind) {
+                SemanticSymbolKind.METHOD -> scopes += "codeintel.method"
+                SemanticSymbolKind.FIELD,
+                SemanticSymbolKind.PROPERTY -> scopes += "codeintel.field"
+                else -> Unit
+            }
+            Token(
+                start = start.column,
+                end = end.column,
+                scopes = scopes,
+                line = start.line,
+                text = occurrence.text,
+                fg = null
+            )
+        }.toList()
+    }
+
+    private fun editor.codeintel.model.SymbolRecord.toNavigationTarget(path: String): NavigationTarget {
+        val file = semanticIndex.snapshot().file(fileId)
+        val source = file?.let { sourceFor(it.path, it.languageId) }
+        val start = source?.let { positionAt(it.text, nameRange.startOffset) } ?: TextPosition(0, 0)
+        val end = source?.let { positionAt(it.text, nameRange.endOffset) }
+            ?: TextPosition(start.line, start.column + name.length)
+        return NavigationTarget(
+            filePath = path,
+            range = TextRange(start, end),
+            kind = kind.toEditorKind(),
+            name = name,
+            tsLanguage = file?.languageId,
+            tsKind = kind.name.lowercase(Locale.ROOT),
+            tsIsNamed = true
+        )
+    }
+
+    private fun sourceFor(path: String, languageId: String): SourceFile? {
+        synchronized(lock) { semanticSources[path] }?.let { return it }
+        val text = runCatching { Files.readString(Paths.get(path)) }.getOrNull() ?: return null
+        val snapshotVersion = semanticIndex.snapshot().file(path)?.semanticVersion ?: 0L
+        return SourceFile(path, languageId, text, snapshotVersion).also { source ->
+            cacheSemanticSource(source)
+        }
+    }
+
+    private fun cacheSemanticSource(source: SourceFile) {
+        synchronized(lock) {
+            semanticSources[source.path] = source
+            while (semanticSources.size > HOT_SOURCE_CACHE_SIZE) {
+                val eldest = semanticSources.entries.iterator()
+                if (eldest.hasNext()) {
+                    eldest.next()
+                    eldest.remove()
+                }
+            }
+        }
+    }
+
+    private fun offsetAt(text: String, position: TextPosition): Int {
+        if (position.line <= 0) return position.column.coerceIn(0, text.substringBefore('\n').length)
+        var line = 0
+        var offset = 0
+        while (line < position.line && offset < text.length) {
+            val next = text.indexOf('\n', offset)
+            if (next < 0) return text.length
+            offset = next + 1
+            line++
+        }
+        val lineEnd = text.indexOf('\n', offset).let { if (it < 0) text.length else it }
+        return (offset + position.column).coerceIn(offset, lineEnd)
+    }
+
+    private fun positionAt(text: String, requestedOffset: Int): TextPosition {
+        val offset = requestedOffset.coerceIn(0, text.length)
+        var line = 0
+        var lineStart = 0
+        var cursor = text.indexOf('\n')
+        while (cursor >= 0 && cursor < offset) {
+            line++
+            lineStart = cursor + 1
+            cursor = text.indexOf('\n', cursor + 1)
+        }
+        return TextPosition(line, offset - lineStart)
+    }
+
+    private fun SemanticSymbolKind.toEditorKind(): SymbolKind = when (this) {
+        SemanticSymbolKind.CLASS,
+        SemanticSymbolKind.STRUCT,
+        SemanticSymbolKind.TYPE_ALIAS -> SymbolKind.CLASS
+        SemanticSymbolKind.INTERFACE -> SymbolKind.INTERFACE
+        SemanticSymbolKind.ENUM -> SymbolKind.ENUM
+        SemanticSymbolKind.FUNCTION,
+        SemanticSymbolKind.CONSTRUCTOR -> SymbolKind.FUNCTION
+        SemanticSymbolKind.METHOD -> SymbolKind.METHOD
+        SemanticSymbolKind.FIELD,
+        SemanticSymbolKind.PROPERTY,
+        SemanticSymbolKind.ENUM_MEMBER,
+        SemanticSymbolKind.CONSTANT -> SymbolKind.FIELD
+        SemanticSymbolKind.MODULE,
+        SemanticSymbolKind.NAMESPACE -> SymbolKind.MODULE
+        SemanticSymbolKind.PACKAGE -> SymbolKind.PACKAGE
+        else -> SymbolKind.VARIABLE
+    }
+
     private fun separatorTarget(label: String): NavigationTarget =
         NavigationTarget(
             filePath = "",
@@ -607,6 +959,8 @@ class CodeIntelService(
     companion object {
         private const val DECL_SCOPE = "codeintel.declaration"
         private const val USAGE_SCOPE = "codeintel.usage"
+        private const val HOT_SOURCE_CACHE_SIZE = 32
+        private val KOTLIN_LANGUAGE_IDS = setOf("kotlin", "kt")
     }
 }
 
@@ -634,7 +988,8 @@ private class OccurrenceDefinitionExtractor(
             else -> return fallback.extract(path, text, language)
         }
         if (occurrences.isEmpty()) return fallback.extract(path, text, language)
-        return convertOccurrences(occurrences, path, text, langKey)
+        val converted = convertOccurrences(occurrences, path, text, langKey)
+        return if (converted.symbols.isEmpty()) fallback.extract(path, text, language) else converted
     }
 
     private fun convertOccurrences(

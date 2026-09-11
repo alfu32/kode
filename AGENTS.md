@@ -66,7 +66,10 @@ additionally the body should be structured as follows:
 implementation details:
 - bulleted list of technical/functional modifications or planning steps ( what you print out by default in the summary )
 
-
+(NOT IMPLEMENTED:)
+ - summary of not implemented features/parts of the request
+ - features/requests remaining to be implemented/researched
+ - eventual steps/tests to be taken by the user before proceeding
 
 ### Examples
 
@@ -85,6 +88,10 @@ IMPLEMENTATION:
   - The status bar now shows:
     generated-file:line:column -> node section source-line:column
 
+NOT IMPLEMENTED:
+  - colorisation and retrieval of code artifacts
+  - research solution through local / embedded small LM.
+    - we need CUDA working on this machine otherwise we'll not be able to test
 ```
 
 ```text

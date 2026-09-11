@@ -1,234 +1,111 @@
-Below is a **complete, minimal, and coherent base package** plus the **authoritative design document** you asked for.
+# Semantic Code Database
 
-the base entities and contracts are in the file `src/main/kotlin/editor/lang/base.kt`
+Kode's code-intelligence source of truth is a persistent, incremental semantic database. Tree-sitter CSTs remain transient syntax inputs; LSP, compiler, SCIP, and ML integrations are optional enrichers.
 
-# Tree-Sitter Code Intelligence Database
-
-## 1. Purpose
-
-This system extracts **project-wide code intelligence** from Tree-sitter parse trees
-and produces a **flat, ordered list of identifier occurrences**.
-
-Each occurrence records:
-- identifier (fully-qualified)
-- kind (what it is)
-- type (declaration or usage)
-- file name
-- 0-based line number
-- 0-based character position
-
-The output is precise, deterministic, and free of false hits by construction.
-
----
-
-## 2. Final Output Contract
-
-The **only persisted artifact** is:
-
-```
-IdentifierOccurrence {
-    identifier: String
-    kind: SymbolKind
-    type: SymbolType
-    language: String?
-    parentIdentifier: String?
-    parentKey: String?
-    fileName: String
-    lineNumber: Int
-    charPosition: Int
-}
-
+```text
+source -> Tree-sitter CST -> language adapter -> FileSemanticDelta
+                                                   |
+                                                   v
+                                      persistent semantic database
+                                                   |
+                                                   v
+                                         immutable snapshot
+                                                   |
+                     +-----------------------------+------------------------+
+                     |                             |                        |
+               symbol resolver              type resolver          member resolver
+                     |                             |                        |
+                     +-----------------------------+------------------------+
+                                                   |
+                                         completion providers
+                                                   |
+                                      deterministic/optional ML ranker
 ```
 
-No trees, graphs, or symbol tables are stored.
-All richer structures are transient.
+## Package and file map
 
----
+- `editor.codeintel.model/SemanticModel.kt`: stable IDs, ranges, file metadata, symbols, persisted scopes, occurrences, common types, imports, relations, confidence, unresolved types, inference hints, and the per-file delta contract.
+- `editor.codeintel.frontend/LanguageSemanticAdapter.kt`: syntax-only adapter boundary. Adapters emit deltas and cannot mutate the index.
+- `editor.codeintel.frontend/KotlinSemanticAdapter.kt`: first adapter vertical slice. It extracts Kotlin declarations, lexical scopes, declared/return/super types, imports, calls, member references, ownership, and initializer hints from Tree-sitter.
+- `editor.codeintel.frontend/LegacySemanticDeltaFactory.kt`: explicitly low-confidence bridge that pre-caches non-migrated language output in the normalized schema without making it authoritative for semantic queries.
+- `editor.codeintel.index/SemanticIndex.kt`: per-file replacement, progressive project resolution, atomic snapshot publication, and snapshot queries.
+- `editor.codeintel.index/H2SemanticStore.kt`: normalized transactional persistence using Kode's existing embedded project database lifecycle. The schema is independent from the temporary legacy tables.
+- `editor.codeintel.resolver/SemanticResolver.kt`: scope-aware symbol resolution, declared and inferred types, calls, ownership, and inheritance.
+- `editor.codeintel.resolver/ExpressionTypeResolver.kt`: conservative best-effort expression typing used by member completion.
+- `editor.codeintel.completion/CompletionPipeline.kt`: local, member, type, import, keyword, workspace, and snippet providers plus the candidate engine.
+- `editor.codeintel.ml/CompletionRanker.kt`: ranker seam and deterministic first implementation. An ONNX implementation may score candidates but may not generate facts or members.
+- `editor.codeintel.semantic/SemanticTokens.kt`: semantic token classification based on the same resolved occurrences.
+- `editor.codeintel/CodeIntelService.kt`: compatibility facade used by the existing editor and pre-index scan. Kotlin is served from semantic snapshots; legacy extraction remains a low-confidence fallback for languages not migrated yet.
 
-## 3. Core Constraints
+## Persisted model
 
-- Tree-sitter provides syntax, not semantics
-- Node meaning is context-dependent
-- Language differences are unavoidable
-- False positives are unacceptable
-- Identifier resolution must be scope-aware
+The semantic schema stores project facts separately:
 
----
-
-## 4. High-Level Architecture
-
+```text
+semantic_files
+semantic_scopes
+semantic_symbols
+semantic_occurrences
+semantic_relations
+semantic_types
+semantic_unresolved_types
+semantic_imports
+semantic_type_hints
 ```
 
-Tree-sitter CST
-↓
-Linearization (path-aware, ordered)
-↓
-Language Adapter (node classification)
-↓
-Scoped Aggregation (temporary)
-↓
-FLAT LIST<IdentifierOccurrence>
+Indexes cover symbol names and qualified names, symbol file/scope ownership, occurrence file offsets and resolved symbols, relation directions, and scope ranges. Tree-sitter trees and editor buffer text are not stored in these tables.
 
-```
+Every update replaces one file's records in one transaction. Full-project pre-indexing batches deltas, resolves the workspace once, and publishes one snapshot rather than exposing partially scanned state. Interactive edits replace one file immediately. Resolution completes before an immutable snapshot is atomically published, so readers continue using the preceding snapshot during extraction and persistence. Stable IDs are derived from file identity and declaration/source locations; occurrences point to resolved `SymbolId` values instead of relying on text equality.
 
----
+## Current Kotlin vertical slice
 
-## 5. Responsibilities Breakdown
+The first implemented slice supports:
 
-### 5.1 Tree-sitter Layer
-- Parse source files
-- Provide concrete syntax trees
-- Supply byte offsets and point locations
+- class, interface, object, enum, function, method, property, local, and parameter symbols;
+- file, package, type, function, and block scopes;
+- package/import records and ownership/member relations;
+- declared property/parameter/return types;
+- local inference from constructor calls and resolved function return types;
+- cross-file type resolution independent of indexing order;
+- class inheritance and inherited-member traversal;
+- definition/reference lookup by resolved symbol identity;
+- `receiver.` completion for identifiers and simple calls;
+- deterministic completion scoring;
+- semantic token refinement from resolved occurrences;
+- persistent reload of extracted and resolved facts.
 
-### 5.2 Linearization
-- DFS traversal
-- Record CST path and order
-- Preserve full context for later interpretation
+Unknown types and unresolved occurrences are retained as unknown. Resolution does not invent a confident answer.
 
-### 5.3 Language Adapters
-Language-specific, syntax-aware logic only.
+## Incremental migration plan
 
-They must:
-- classify nodes into (Kind, Type)
-- decide whether a declaration opens a scope
-- extract identifier text
+1. **Kotlin foundation (implemented):** emit symbols, scopes, occurrences, imports, unresolved types, and relations; persist per-file deltas; publish snapshots; route Kotlin compatibility queries through the semantic index.
+2. **Dependency invalidation:** persist file dependencies and compare `exportedSurfaceHash`; only re-resolve dependent files when the public semantic surface changes.
+3. **Kotlin expression coverage:** add chained member access, `this`, `super`, casts, parenthesized expressions, assignment propagation, generic and nullable type decoding, and visibility rules.
+4. **Semantic highlighting:** make the editor consume `SemanticTokenService` directly while retaining Tree-sitter lexical tokens for strings/comments/literals and unresolved identifiers.
+5. **Statistics and ranking:** persist completion selection history, same-function/same-file recency, and project frequency; keep deterministic candidate generation.
+6. **Additional adapters:** add Java, TypeScript/JavaScript, C/C++, Rust, and Python as grammar plus `LanguageSemanticAdapter` plus shared semantic scenarios. No adapter receives its own index, resolver, completion UI, or ranker.
+7. **Optional enrichment:** merge LSP/compiler/SCIP facts by confidence without making any provider mandatory or allowing lower-confidence facts to overwrite deterministic facts.
+8. **Optional ONNX scoring:** implement a small CPU ranker behind `CompletionRanker`; generative completion, if added, remains a separate provider.
+9. **Legacy removal:** delete flat declaration/usage persistence and regex extraction only after migrated adapters reach equivalent coverage.
 
-They must NOT:
-- resolve symbols globally
-- track imports across files
-- infer types beyond syntax
+## Test contract
 
----
+`SemanticTestHarness` accepts annotated source containing `/*caret*/` and asserts language-neutral outcomes: symbols, types, definitions, references, and completion candidates. Adapter tests should describe semantic scenarios rather than Tree-sitter node names.
 
-## 6. Symbol Kinds
+The milestone fixtures cover:
 
-```
+- `val customer = getCustomer()` inferring `Customer` and completing `id`, `name`, and `save`;
+- `Customer.kt` plus `Service.kt`, including reverse indexing order;
+- `Customer : Entity()` exposing both declared and inherited members;
+- stable old snapshots while a new file version is published;
+- semantic facts surviving a database reload.
 
-PACKAGE
-CLASS
-TYPE
-ANONYMOUS_OBJECT
-FUNCTION
-METHOD
-FIELD
-CONSTANT
-VARIABLE
+## Design constraints
 
-```
-
----
-
-## 7. Symbol Types
-
-```
-
-DECLARATION
-USAGE
-
-```
-
----
-
-## 8. Scope Handling
-
-Scopes are tracked **temporarily** using a stack:
-
-- Packages
-- Classes
-- Functions / methods
-- Anonymous objects (language-dependent)
-
-Fully-qualified identifiers are constructed by joining scope names.
-
----
-
-## 9. Why a Flat List
-
-A flat list:
-- avoids semantic over-commitment
-- is trivially indexable
-- supports incremental rebuilds
-- allows multiple interpretations later
-- scales across languages uniformly
-
-Advanced queries (find usages, implementations, renames)
-are derived **from the list**, not embedded into it.
-
----
-
-## 10. Incremental Parsing Rule
-
-If a file is reparsed:
-- discard all previous occurrences from that file
-- regenerate occurrences from scratch
-
-Location stability is guaranteed only per parse.
-
----
-
-## 11. Adapter Research Checklist (per language)
-
-For each language, determine:
-- declaration node types
-- usage node types
-- identifier node forms
-- scope-opening constructs
-- anonymous scope semantics
-
-Adapters are expected to evolve incrementally.
-
----
-
-## 12. Non-Goals
-
-This system does NOT:
-- perform full type inference
-- build a complete symbol graph
-- replace a compiler front-end
-- guarantee semantic correctness beyond syntax
-
----
-
-## 13. Summary
-
-This architecture:
-- accepts Tree-sitter’s limitations
-- avoids false hits by design
-- scales across languages
-- keeps storage minimal
-- keeps semantics explicit and auditable
-
----
-
-## Notes / Annex
-
-### TypeScript Corpus (Tree-sitter Adapter Research)
-- Source: `https://github.com/microsoft/TypeScript`
-- Local path: `samples/.corpus/typescript`
-- Purpose: provide a large, real-world TypeScript codebase for deriving identifier path formulas.
-- Method:
-  1) `mkdir -p samples/.corpus`
-  2) `git clone https://github.com/microsoft/TypeScript samples/.corpus/typescript`
-  3) Scan files under `samples/.corpus/typescript` when generating path/occurrence reports.
-
-It is intentionally conservative, explicit, and correct.
-```
-
----
-
-## State of completion
-
-You now have:
-
-* a **clean base package**
-* a **hard output contract**
-* a **language-agnostic core**
-* a **clear adapter boundary**
-* a **precise requirements document**
-
-Next logical steps (when you want them):
-
-* Kotlin adapter deep-spec
-* identifier canonicalization rules
-* import / using resolution strategy
-* query patterns over the flat list
+- Pre-indexing remains fundamental; disk is the project pre-cache and memory is the hot query layer.
+- CSTs are transient and never persisted; retaining edited trees in a bounded open-file incremental-parse cache is the next parser milestone.
+- Language-specific syntax stays in adapters.
+- Candidate generation and member discovery are deterministic.
+- ML never owns symbol identity, type truth, definitions, or accessible-member discovery.
+- LSP is an optional precision overlay, not the editor architecture.
+- A file text change does not imply a workspace reindex.

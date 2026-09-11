@@ -799,14 +799,25 @@ class CodeEditorView(
         ).orEmpty()
         completions.forEach { add(it.label, it.detail) }
 
-        val locals = buffer.text()
-        val regex = Regex("\\b([A-Za-z_][A-Za-z0-9_]*)\\b")
-        regex.findAll(locals).forEach { mr ->
-            val name = mr.groupValues[1]
-            if (prefix.isEmpty() || name.startsWith(prefix)) add(name, "local")
+        // A provider result is authoritative for its context (notably receiver
+        // completion). Text scanning remains only as a compatibility fallback.
+        if (completions.isEmpty() && !isMemberAccessAtCursor(prefix)) {
+            val locals = buffer.text()
+            val regex = Regex("\\b([A-Za-z_][A-Za-z0-9_]*)\\b")
+            regex.findAll(locals).forEach { mr ->
+                val name = mr.groupValues[1]
+                if (prefix.isEmpty() || name.startsWith(prefix)) add(name, "local")
+            }
         }
 
         return results.take(50)
+    }
+
+    private fun isMemberAccessAtCursor(prefix: String): Boolean {
+        val cursor = buffer.cursorPosition()
+        val line = buffer.text().split("\n").getOrElse(cursor.line) { return false }
+        val beforePrefix = line.take((cursor.column - prefix.length).coerceAtLeast(0)).trimEnd()
+        return beforePrefix.endsWith('.')
     }
 
     private fun updatePopupHover(event: UIEvent): Boolean {

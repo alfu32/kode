@@ -1622,19 +1622,24 @@ private class SplitPanelsApp(
         progress?.invoke("Indexing: 0/${files.size}")
         progressFile?.invoke("Preparing file list...")
         var indexed = 0
-        files.forEachIndexed { idx, path ->
-            val detected = mimeDetector.detectFile(path)
-            val lang = detected?.language
-            val rel = projectRoot.relativize(path).toString()
-            progressFile?.invoke(rel)
-            if (!lang.isNullOrBlank()) {
-                val text = runCatching { Files.readString(path) }.getOrNull()
-                if (text != null) {
-                    codeIntelIndexer.indexDocumentNow(path.toString(), lang, text, version = 0L)
-                    indexed++
+        codeIntelIndexer.beginSemanticBatch()
+        try {
+            files.forEachIndexed { idx, path ->
+                val detected = mimeDetector.detectFile(path)
+                val lang = detected?.language
+                val rel = projectRoot.relativize(path).toString()
+                progressFile?.invoke(rel)
+                if (!lang.isNullOrBlank()) {
+                    val text = runCatching { Files.readString(path) }.getOrNull()
+                    if (text != null) {
+                        codeIntelIndexer.indexDocumentNow(path.toString(), lang, text, version = 0L)
+                        indexed++
+                    }
                 }
+                progress?.invoke("Indexing: ${idx + 1}/${files.size}")
             }
-            progress?.invoke("Indexing: ${idx + 1}/${files.size}")
+        } finally {
+            codeIntelIndexer.endSemanticBatch()
         }
         indexSdkSources()
         val elapsed = System.currentTimeMillis() - startMs

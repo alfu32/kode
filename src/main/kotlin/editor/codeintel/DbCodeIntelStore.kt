@@ -1,5 +1,7 @@
 package editor.codeintel
 
+import editor.codeintel.index.H2SemanticStore
+import editor.codeintel.index.SemanticStore
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.Types
@@ -274,6 +276,12 @@ class DbCodeIntelStore(
         }
         return hasDataCache
     }
+
+    /**
+     * Semantic persistence shares the existing project database lifecycle while
+     * keeping its normalized schema independent from the legacy compatibility tables.
+     */
+    fun semanticStore(): SemanticStore = H2SemanticStore(urlProvider)
 
     companion object {
         private const val DB_USER = "sa"

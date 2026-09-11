@@ -15,6 +15,42 @@ import kotlin.io.path.writeText
 class CodeIntelServiceTest {
 
     @Test
+    fun completesMembersThroughEditorCompatibilityFacade() {
+        val service = CodeIntelService(debounceMs = 0L)
+        try {
+            val path = "Customer.kt"
+            val text = """
+                class Customer {
+                    val id: Long = 0
+                    val name: String = ""
+                    fun save() {}
+                }
+                fun getCustomer(): Customer = Customer()
+                fun test() {
+                    val customer = getCustomer()
+                    customer.
+                }
+            """.trimIndent()
+            service.indexDocumentNow(path, "kotlin", text, version = 1L)
+            val lines = text.split('\n')
+            val line = lines.indexOfFirst { it.trim() == "customer." }
+
+            val completions = service.completions(
+                CompletionRequest(
+                    filePath = path,
+                    language = "kotlin",
+                    position = TextPosition(line, lines[line].length),
+                    prefix = ""
+                )
+            )
+
+            assertEquals(setOf("id", "name", "save"), completions.map { it.label }.toSet())
+        } finally {
+            service.shutdown()
+        }
+    }
+
+    @Test
     fun indexesDeclarationsAndUsagesPerLine() {
         val service = CodeIntelService(debounceMs = 0L)
         try {
