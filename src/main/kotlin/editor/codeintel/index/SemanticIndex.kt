@@ -67,12 +67,13 @@ class SemanticIndex(
 ) {
     private val revision = AtomicLong(0L)
     private val state = AtomicReference(SnapshotState.empty())
+    private val publishedSnapshot = AtomicReference<Snapshot?>(null)
     private val updateLock = Any()
 
     fun apply(delta: FileSemanticDelta): SemanticSnapshot = applyAll(listOf(delta))
 
     fun applyAll(updates: Collection<FileSemanticDelta>): SemanticSnapshot = synchronized(updateLock) {
-        if (updates.isEmpty()) return@synchronized Snapshot(state.get())
+        if (updates.isEmpty()) return@synchronized snapshot()
         val previous = state.get().project
         val deltas = previous.deltas.toMutableMap()
         updates.forEach { delta -> deltas[delta.fileId] = delta }
@@ -85,22 +86,33 @@ class SemanticIndex(
         val affectedDeltas = plan.affectedFiles.mapNotNull(resolved.deltas::get)
         store?.replaceFiles(affectedDeltas, resolved)
         val next = SnapshotState(revision.incrementAndGet(), resolved)
-        state.set(next)
-        Snapshot(next)
+        publish(next)
     }
 
     fun load(): SemanticSnapshot = synchronized(updateLock) {
         val resolved = resolver.resolve(store?.loadFiles().orEmpty())
         val next = SnapshotState(revision.incrementAndGet(), resolved)
-        state.set(next)
-        Snapshot(next)
+        publish(next)
     }
 
-    fun snapshot(): SemanticSnapshot = Snapshot(state.get())
+    fun snapshot(): SemanticSnapshot {
+        val current = state.get()
+        publishedSnapshot.get()?.takeIf { it.belongsTo(current) }?.let { return it }
+        val created = Snapshot(current)
+        publishedSnapshot.set(created)
+        return if (state.get() === current) created else snapshot()
+    }
+
+    private fun publish(next: SnapshotState): Snapshot {
+        state.set(next)
+        val snapshot = Snapshot(next)
+        publishedSnapshot.set(snapshot)
+        return snapshot
+    }
 
     fun clearMemory() {
         synchronized(updateLock) {
-            state.set(SnapshotState.empty(revision.incrementAndGet()))
+            publish(SnapshotState.empty(revision.incrementAndGet()))
         }
     }
 
@@ -119,6 +131,7 @@ class SemanticIndex(
     }
 
     private class Snapshot(private val state: SnapshotState) : SemanticSnapshot {
+        internal fun belongsTo(candidate: SnapshotState): Boolean = state === candidate
         override val version: Long = state.version
         private val filesById = state.project.deltas.values.associate { it.fileId to it.file }
         private val filesByPath = filesById.values.associateBy { it.path }

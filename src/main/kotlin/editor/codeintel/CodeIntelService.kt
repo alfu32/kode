@@ -154,6 +154,11 @@ class CodeIntelService(
     private val workspaceIndex = mutableMapOf<String, MutableList<SymbolDef>>()
     private val usagesIndex = mutableMapOf<String, MutableList<IdentifierToken>>()
     private val semanticSources = java.util.LinkedHashMap<String, SourceFile>(HOT_SOURCE_CACHE_SIZE, 0.75f, true)
+    private data class SemanticTokenCacheEntry(
+        val version: Long,
+        val byLine: Map<Int, List<Token>>
+    )
+    private val semanticTokenCache = java.util.LinkedHashMap<String, SemanticTokenCacheEntry>(16, 0.75f, true)
     private val pendingSemanticDeltas = linkedMapOf<FileId, editor.codeintel.model.FileSemanticDelta>()
     private var semanticBatchDepth = 0
     private val lock = Any()
@@ -437,6 +442,7 @@ class CodeIntelService(
             workspaceIndex.clear()
             usagesIndex.clear()
             semanticSources.clear()
+            semanticTokenCache.clear()
             pendingSemanticDeltas.clear()
             semanticBatchDepth = 0
         }
@@ -447,6 +453,7 @@ class CodeIntelService(
         semanticIndex.load()
         val loaded = store?.loadAll() ?: return
         synchronized(lock) {
+            semanticTokenCache.clear()
             defsByPath.clear()
             workspaceIndex.clear()
             usagesIndex.clear()
@@ -835,11 +842,30 @@ class CodeIntelService(
         if (file.languageId.lowercase(Locale.ROOT) !in KOTLIN_LANGUAGE_IDS) return null
         if (file.semanticVersion != request.version) return emptyList()
         val source = sourceFor(request.filePath, file.languageId) ?: return null
-        val requestedLines = request.startLine until (request.startLine + request.lines.size)
         val sourceLines = source.text.split('\n')
-        return semanticTokenService.tokens(file.id, snapshot)
-            .flatMap { token -> token.toEditorTokens(source.text, sourceLines, requestedLines, snapshot) }
+        val cached = synchronized(lock) {
+            semanticTokenCache[request.filePath]?.takeIf { it.version == file.semanticVersion }
+        }
+        val byLine = cached?.byLine ?: semanticTokenService.tokens(file.id, snapshot)
+            .flatMap { token ->
+                token.toEditorTokens(source.text, sourceLines, sourceLines.indices, snapshot)
+            }
             .toList()
+            .groupBy { it.line }
+            .also { computed ->
+                synchronized(lock) {
+                    semanticTokenCache[request.filePath] = SemanticTokenCacheEntry(file.semanticVersion, computed)
+                    while (semanticTokenCache.size > HOT_SOURCE_CACHE_SIZE) {
+                        val iterator = semanticTokenCache.entries.iterator()
+                        if (iterator.hasNext()) {
+                            iterator.next()
+                            iterator.remove()
+                        }
+                    }
+                }
+            }
+        val requestedLines = request.startLine until (request.startLine + request.lines.size)
+        return requestedLines.flatMap { byLine[it].orEmpty() }
     }
 
     private fun SemanticToken.toEditorTokens(

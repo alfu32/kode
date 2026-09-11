@@ -14,9 +14,17 @@ import editor.codeintel.model.TypeRef
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class H2SemanticStoreTest {
+    @Test
+    fun reusesSnapshotUntilSemanticRevisionChanges() {
+        val index = SemanticIndex()
+
+        assertSame(index.snapshot(), index.snapshot())
+    }
+
     @Test
     fun reloadsPreindexedSemanticFacts() {
         val url = "jdbc:h2:mem:semantic-store-${System.nanoTime()};DB_CLOSE_DELAY=-1"
