@@ -4,6 +4,8 @@ import org.treesitter.TSLanguage
 import org.treesitter.TSNode
 import org.treesitter.TSParser
 import org.treesitter.TSPoint
+import org.treesitter.TSInputEdit
+import org.treesitter.TSTree
 
 class TreeSitterNode(
     private val node: TSNode,
@@ -67,14 +69,31 @@ class TreeSitterNode(
 
 class TreeSitterParser(private val language: TSLanguage) {
     fun parse(text: String): TsNode? {
+        return parseTree(text)?.rootNode()
+    }
+
+    fun parseTree(
+        text: String,
+        previous: TreeSitterParsedTree? = null,
+        edit: TSInputEdit? = null
+    ): TreeSitterParsedTree? {
         val parser = TSParser()
         val setOk = runCatching { parser.setLanguage(language) }.getOrDefault(false)
         if (!setOk) return null
-        val tree = runCatching { parser.parseString(null, text) }.getOrNull() ?: return null
+        val oldTree = previous?.tree?.copy()
+        if (oldTree != null && edit != null) oldTree.edit(edit)
+        val tree = runCatching { parser.parseString(oldTree, text) }.getOrNull() ?: return null
         val root = tree.rootNode
         if (root.isNull) return null
-        return TreeSitterNode(root, text)
+        return TreeSitterParsedTree(tree, text)
     }
+}
+
+class TreeSitterParsedTree internal constructor(
+    internal val tree: TSTree,
+    private val source: String
+) {
+    internal fun rootNode(): TsNode = TreeSitterNode(tree.rootNode, source)
 }
 
 object TreeSitterLinearizer {

@@ -510,10 +510,13 @@ class CodeIntelService(
         if (language.isNullOrBlank()) return
         val latestVersion = synchronized(lock) { latestVersionByPath[path] }
         if (latestVersion != version) return
+        var kotlinDelta: editor.codeintel.model.FileSemanticDelta? = null
         if (language.lowercase(Locale.ROOT) in KOTLIN_LANGUAGE_IDS) {
             val source = SourceFile(path, "kotlin", text, version)
             runCatching {
-                submitSemanticDelta(kotlinSemanticAdapter.extract(source))
+                val delta = kotlinSemanticAdapter.extract(source)
+                kotlinDelta = delta
+                submitSemanticDelta(delta)
                 cacheSemanticSource(source)
             }
                 .onFailure { error ->
@@ -521,7 +524,10 @@ class CodeIntelService(
                 }
         }
         val knownNames = synchronized(lock) { workspaceIndex.keys.toSet() }
-        val extracted = extractor.extract(path, text, language)
+        // The Kotlin semantic adapter already traversed this tree. Reuse its
+        // facts for the compatibility index instead of parsing the file again.
+        val extracted = kotlinDelta?.let { compatibilityExtraction(it, text, language) }
+            ?: extractor.extract(path, text, language)
         val defs = extracted.symbols.map {
             SymbolDef(
                 name = it.name,
@@ -573,6 +579,51 @@ class CodeIntelService(
             rebuildUsagesIndex(path, docIndex.identifiersByLine)
         }
         store?.storeFile(path, language, defs, docIndex.identifiersByLine)
+    }
+
+    private fun compatibilityExtraction(
+        delta: editor.codeintel.model.FileSemanticDelta,
+        text: String,
+        language: String
+    ): ExtractedSymbols {
+        val lineStarts = buildLineStarts(text)
+        val ownerNames = delta.symbols.associate { it.id to it.qualifiedName }
+        val symbols = delta.symbols.map { symbol ->
+            val start = linePositionAt(lineStarts, symbol.nameRange.startOffset)
+            val end = linePositionAt(lineStarts, symbol.nameRange.endOffset)
+            LocalSymbol(
+                name = symbol.name,
+                kind = symbol.kind.toEditorKind(),
+                startOffset = symbol.nameRange.startOffset,
+                endOffset = symbol.nameRange.endOffset,
+                line = start.line,
+                startColumn = start.column,
+                endColumn = if (end.line == start.line) end.column else start.column + symbol.name.length,
+                filePath = delta.file.path,
+                container = symbol.ownerSymbolId?.let(ownerNames::get),
+                tsLanguage = language,
+                tsParent = symbol.ownerSymbolId?.let(ownerNames::get),
+                tsKind = symbol.kind.name.lowercase(Locale.ROOT),
+                tsIsNamed = true
+            )
+        }
+        val identifiers = delta.occurrences.mapNotNull { occurrence ->
+            val start = linePositionAt(lineStarts, occurrence.range.startOffset)
+            val end = linePositionAt(lineStarts, occurrence.range.endOffset)
+            if (start.line != end.line || occurrence.text.isBlank()) return@mapNotNull null
+            start.line to IdentifierToken(
+                line = start.line,
+                start = start.column,
+                end = end.column,
+                declaration = occurrence.kind == OccurrenceKind.DECLARATION,
+                name = occurrence.text,
+                filePath = delta.file.path,
+                tsLanguage = language,
+                tsKind = occurrence.kind.name.lowercase(Locale.ROOT),
+                tsIsNamed = true
+            )
+        }.groupBy({ it.first }, { it.second })
+        return ExtractedSymbols(symbols, identifiers)
     }
 
     private fun submitSemanticDelta(delta: editor.codeintel.model.FileSemanticDelta) {

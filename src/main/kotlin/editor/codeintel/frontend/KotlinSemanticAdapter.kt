@@ -27,18 +27,87 @@ import editor.codeintel.model.TypeRef
 import editor.codeintel.model.TypeRole
 import editor.codeintel.model.UnresolvedTypeRef
 import editor.lang.TreeSitterParser
+import editor.lang.TreeSitterParsedTree
 import editor.lang.TsNode
+import org.treesitter.TSInputEdit
+import org.treesitter.TSPoint
 import org.treesitter.TreeSitterKotlin
+import java.nio.charset.StandardCharsets
 
 class KotlinSemanticAdapter : LanguageSemanticAdapter {
     override val languageId: String = "kotlin"
 
     private val parser = TreeSitterParser(TreeSitterKotlin())
+    private data class ParseState(
+        val text: String,
+        val version: Long,
+        val tree: TreeSitterParsedTree
+    )
+    private val parseStates = LinkedHashMap<String, ParseState>(32, 0.75f, true)
 
     fun extract(file: SourceFile): FileSemanticDelta {
-        val root = parser.parse(file.text)
+        val root = parseIncrementally(file)
             ?: error("Tree-sitter Kotlin parser could not parse ${file.path}")
         return extract(file, SyntaxTree(root))
+    }
+
+    private fun parseIncrementally(file: SourceFile): TsNode? {
+        val previous = synchronized(parseStates) { parseStates[file.path] }
+        val edit = previous?.let { computeEdit(it.text, file.text) }
+        val parsed = parser.parseTree(file.text, previous?.tree, edit)
+            ?: parser.parseTree(file.text)
+            ?: return null
+        synchronized(parseStates) {
+            val current = parseStates[file.path]
+            // An immediate reindex can overlap a debounced job. Never let an
+            // older parse result replace a newer tree in the reuse cache.
+            if (current == null || current.version <= file.version) {
+                parseStates[file.path] = ParseState(file.text, file.version, parsed)
+            }
+            while (parseStates.size > 32) {
+                val iterator = parseStates.entries.iterator()
+                if (!iterator.hasNext()) break
+                iterator.next()
+                iterator.remove()
+            }
+        }
+        return parsed.rootNode()
+    }
+
+    private fun computeEdit(oldText: String, newText: String): TSInputEdit? {
+        if (oldText == newText) return null
+        var prefix = 0
+        val commonLength = minOf(oldText.length, newText.length)
+        while (prefix < commonLength && oldText[prefix] == newText[prefix]) prefix++
+        var suffix = 0
+        while (
+            suffix < oldText.length - prefix &&
+            suffix < newText.length - prefix &&
+            oldText[oldText.length - suffix - 1] == newText[newText.length - suffix - 1]
+        ) {
+            suffix++
+        }
+        val oldEnd = oldText.length - suffix
+        val newEnd = newText.length - suffix
+        return TSInputEdit(
+            byteOffset(oldText, prefix),
+            byteOffset(oldText, oldEnd),
+            byteOffset(newText, newEnd),
+            pointAt(oldText, prefix),
+            pointAt(oldText, oldEnd),
+            pointAt(newText, newEnd)
+        )
+    }
+
+    private fun byteOffset(text: String, offset: Int): Int =
+        text.substring(0, offset).toByteArray(StandardCharsets.UTF_8).size
+
+    private fun pointAt(text: String, offset: Int): TSPoint {
+        val safeOffset = offset.coerceIn(0, text.length)
+        val line = text.asSequence().take(safeOffset).count { it == '\n' }
+        val lineStart = text.lastIndexOf('\n', safeOffset - 1).let { if (it < 0) 0 else it + 1 }
+        val column = text.substring(lineStart, safeOffset).toByteArray(StandardCharsets.UTF_8).size
+        return TSPoint(line, column)
     }
 
     override fun extract(file: SourceFile, tree: SyntaxTree): FileSemanticDelta =

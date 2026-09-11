@@ -85,5 +85,30 @@ class SemanticHighlightingTest {
         }
     }
 
+    @Test
+    fun reusesKotlinParserStateAcrossEditedDocumentVersions() {
+        val adapter = KotlinSemanticAdapter()
+        val first = adapter.extract(
+            SourceFile(
+                "Incremental.kt",
+                "kotlin",
+                "class Customer { val id: Long = 1 }",
+                1L
+            )
+        )
+        val second = adapter.extract(
+            SourceFile(
+                "Incremental.kt",
+                "kotlin",
+                "class Customer { val id: Long = 42 }",
+                2L
+            )
+        )
+
+        assertTrue(first.symbols.any { it.name == "Customer" })
+        assertTrue(second.symbols.any { it.name == "Customer" })
+        assertTrue(second.lexicalTokens.any { it.text == "42" })
+    }
+
     private fun SourceFile.fileId() = editor.codeintel.model.SemanticIds.file(path)
 }
