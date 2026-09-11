@@ -101,6 +101,33 @@ class CodeEditorViewTest {
     }
 
     @Test
+    fun tabsRenderAtFourColumnStopsWithoutShiftingTokens() {
+        val source = "\tfor (i = 0; i < len; i++) {\n\t\treturn i;"
+        val view = CodeEditorView(StyleSheet(), syntaxProvider = KeywordSyntaxProvider)
+        view.loadVirtualContent("test.c", source, "c")
+        val renderer = StringSnapshotRenderer(cols = 100, rows = 8)
+
+        view.render(renderer)
+
+        val rendered = renderer.snapshot().lines().drop(1).take(2).map { it.drop(3) }
+        assertTrue(rendered[0].startsWith("    for (i = 0; i < len; i++) {"))
+        assertTrue(rendered[1].startsWith("        return i;"))
+    }
+
+    @Test
+    fun controlCharactersUseSingleCursorStepEscapes() {
+        val ctor = Class.forName("editor.ui.CodeEditorView\$VisualLine").getDeclaredConstructor(String::class.java)
+        ctor.isAccessible = true
+        val line = ctor.newInstance("a\u0001b")
+        val visualText = line.javaClass.getDeclaredField("visualText").apply { isAccessible = true }.get(line) as String
+        assertEquals("a\\x01b", visualText)
+        val visualColumn = line.javaClass.getDeclaredMethod("visualColumn", Int::class.javaPrimitiveType!!)
+        visualColumn.isAccessible = true
+        assertEquals(1, visualColumn.invoke(line, 1))
+        assertEquals(5, visualColumn.invoke(line, 2))
+    }
+
+    @Test
     fun cSemanticTokensStayWithinIdentifierSpans() {
         val source = "for (i = 0; i < len; i++) {\n    printf(\"%d\\n\", v[i]);\n}"
         val service = editor.codeintel.CodeIntelService(debounceMs = 0L)

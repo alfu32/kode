@@ -62,6 +62,12 @@ class ProjectSessionManager(
         }.getOrElse { ProjectSession() }
     }
 
+    fun hasConfig(): Boolean = Files.isRegularFile(stateFile)
+
+    fun defaultSourceRoots(): List<String> =
+        listOf("src", "lib", "include")
+            .filter { Files.isDirectory(root.resolve(it)) }
+
     fun save(session: ProjectSession) {
         val content = json.encodeToString(session)
         Files.writeString(stateFile, content)

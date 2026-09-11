@@ -47,6 +47,7 @@ class CodeEditorView(
         private const val HOVER_INFO_DELAY_MS = 500L
         private const val MAX_DEFINITION_PREVIEW_LINES = 24
         private const val MAX_USAGE_PATH_LENGTH = 48
+        private const val TAB_WIDTH = 4
     }
 
     private var localStyleSheet: StyleSheet = styleSheet
@@ -258,7 +259,8 @@ class CodeEditorView(
         val gutterWidth = computeGutterWidth()
         val contentCols = (cols - gutterWidth).coerceAtLeast(0)
         val layout = cachedLayout(contentCols)
-        val lines = layout.lines
+        val lines = layout.rawLines
+        val visualLines = layout.visualLines
 
         val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
         scrollTop = scrollTop.coerceIn(0, maxOffset)
@@ -318,6 +320,7 @@ class CodeEditorView(
                 val lineNumber = wrapped.lineIndex
                 val y = bodyStartRow + idx
                 val lineText = lines.getOrElse(lineNumber) { "" }
+                val visualLine = visualLines.getOrElse(lineNumber) { VisualLine("") }
 
                 canvas.withStyle(gutterStyle) {
                     val g = if (wrapped.startColumn == 0) {
@@ -329,20 +332,29 @@ class CodeEditorView(
                 }
 
                 if (contentCols <= 0) return@forEachIndexed
-                val chunkText = lineText.substring(wrapped.startColumn, wrapped.endColumn)
+                val visualStart = visualLine.visualColumn(wrapped.startColumn)
+                val visualEnd = visualLine.visualColumn(wrapped.endColumn)
+                val chunkText = visualLine.visualText.substring(
+                    visualStart.coerceIn(0, visualLine.visualText.length),
+                    visualEnd.coerceIn(visualStart, visualLine.visualText.length)
+                )
                 val tokens = tokensByLine[lineNumber] ?: emptyList()
-                val chunkTokens = sliceTokens(tokens, wrapped.startColumn, wrapped.endColumn)
+                val chunkTokens = sliceVisualTokens(tokens, visualLine, wrapped.startColumn, wrapped.endColumn)
                 val intelTokens = codeIntelTokensByLine[lineNumber] ?: emptyList()
-                val chunkIntelTokens = sliceTokens(intelTokens, wrapped.startColumn, wrapped.endColumn)
+                val chunkIntelTokens = sliceVisualTokens(intelTokens, visualLine, wrapped.startColumn, wrapped.endColumn)
                 val selectionCols = selectionRangeForLine(selection, lineNumber, lineText)
-                val chunkSelection = selectionCols?.let { trimSelectionToChunk(it, wrapped.startColumn, wrapped.endColumn) }
+                val chunkSelection = selectionCols?.let {
+                    trimVisualRangeToChunk(it, visualLine, wrapped.startColumn, wrapped.endColumn)
+                }
                 val highlights = searchTokensByLine[lineNumber]?.mapNotNull {
-                    trimHighlightToChunk(it, wrapped.startColumn, wrapped.endColumn)
+                    trimVisualHighlightToChunk(it, visualLine, wrapped.startColumn, wrapped.endColumn)
                 } ?: emptyList()
                 val hoveredUsageRange = hoveredUsage?.takeIf { it.line == lineNumber }?.let { hu ->
                     val start = maxOf(hu.startColumn, wrapped.startColumn)
                     val end = minOf(hu.endColumn, wrapped.endColumn)
-                    if (start < end) start - wrapped.startColumn until end - wrapped.startColumn else null
+                    if (start < end) {
+                        visualLine.visualColumn(start) - visualStart until visualLine.visualColumn(end) - visualStart
+                    } else null
                 }
                 renderLineWithTokens(
                     canvas = this,
@@ -368,10 +380,12 @@ class CodeEditorView(
         val cursorChunk = chunkForPosition(cursor, layout)
         val cy = bodyStartRow + (cursorRow - scrollTop)
         if (cursorChunk != null && cy in bodyStartRow until rows) {
-            val cursorCol = (cursor.column - cursorChunk.startColumn).coerceAtLeast(0)
+            val cursorLine = layout.visualLines.getOrElse(cursorChunk.lineIndex) { VisualLine("") }
+            val cursorCol = (cursorLine.visualColumn(cursor.column) - cursorLine.visualColumn(cursorChunk.startColumn))
+                .coerceAtLeast(0)
             val cx = (gutterWidth + cursorCol).coerceAtMost(cols - 1)
-            val lineText = lines.getOrElse(cursorChunk.lineIndex) { "" }
-            val ch = lineText.getOrNull(cursor.column)?.toString() ?: " "
+            val visualColumn = cursorLine.visualColumn(cursor.column)
+            val ch = cursorLine.visualText.getOrNull(visualColumn)?.toString() ?: " "
             canvas.withStyle(cursorStyle) {
                 drawText(cx, cy, ch)
             }
@@ -659,8 +673,9 @@ class CodeEditorView(
         val visualIndex = (scrollTop + relY).coerceAtLeast(0)
         val wrapped = layout.wrapped.getOrNull(visualIndex) ?: return false
         val line = wrapped.lineIndex
-        val lineText = layout.lines.getOrElse(line) { "" }
-        val col = (ex - gutterWidth + wrapped.startColumn).coerceAtMost(lineText.length)
+        val lineText = layout.rawLines.getOrElse(line) { "" }
+        val visualLine = layout.visualLines.getOrElse(line) { VisualLine(lineText) }
+        val col = visualLine.rawColumn(visualLine.visualColumn(wrapped.startColumn) + (ex - gutterWidth).coerceAtLeast(0))
         val token = identifyCodeIntelToken(line, col, lineText) ?: return false
 
         usagePopup = null
@@ -888,9 +903,10 @@ class CodeEditorView(
         val relY = ey - bodyStartRow
         val visualIndex = (scrollTop + relY).coerceAtLeast(0)
         val wrapped = layout.wrapped.getOrNull(visualIndex) ?: return clearHoveredUsage()
-        val lineText = layout.lines.getOrElse(wrapped.lineIndex) { "" }
+        val lineText = layout.rawLines.getOrElse(wrapped.lineIndex) { "" }
+        val visualLine = layout.visualLines.getOrElse(wrapped.lineIndex) { VisualLine(lineText) }
         val relX = (ex - gutterWidth).coerceAtLeast(0)
-        val col = (wrapped.startColumn + relX).coerceAtMost(lineText.length)
+        val col = visualLine.rawColumn(visualLine.visualColumn(wrapped.startColumn) + relX)
         val token = identifyCodeIntelToken(wrapped.lineIndex, col, lineText)
         val usageToken = token?.takeIf { t -> t.scopes.any { scope -> scope.contains("codeintel.usage") } }
         val newHover = usageToken?.let { HoveredUsage(wrapped.lineIndex, it.start, it.end) }
@@ -920,9 +936,10 @@ class CodeEditorView(
         val relY = ey - bodyStartRow
         val visualIndex = (scrollTop + relY).coerceAtLeast(0)
         val wrapped = layout.wrapped.getOrNull(visualIndex) ?: return clearHoverInfo()
-        val lineText = layout.lines.getOrElse(wrapped.lineIndex) { "" }
+        val lineText = layout.rawLines.getOrElse(wrapped.lineIndex) { "" }
+        val visualLine = layout.visualLines.getOrElse(wrapped.lineIndex) { VisualLine(lineText) }
         val relX = (ex - gutterWidth).coerceAtLeast(0)
-        val col = (wrapped.startColumn + relX).coerceAtMost(lineText.length)
+        val col = visualLine.rawColumn(visualLine.visualColumn(wrapped.startColumn) + relX)
         val token = identifyCodeIntelToken(wrapped.lineIndex, col, lineText) ?: return clearHoverInfo()
         val key = Triple(wrapped.lineIndex, token.start, token.end)
         val now = event.timeMs ?: System.currentTimeMillis()
@@ -1107,8 +1124,9 @@ class CodeEditorView(
         val relY = ey - bodyStartRow
         val visualIndex = (scrollTop + relY).coerceAtLeast(0)
         val wrapped = layout.wrapped.getOrNull(visualIndex) ?: layout.wrapped.last()
-        val lineText = layout.lines.getOrElse(wrapped.lineIndex) { "" }
-        val targetCol = (wrapped.startColumn + relX).coerceAtMost(lineText.length)
+        val lineText = layout.rawLines.getOrElse(wrapped.lineIndex) { "" }
+        val visualLine = layout.visualLines.getOrElse(wrapped.lineIndex) { VisualLine(lineText) }
+        val targetCol = visualLine.rawColumn(visualLine.visualColumn(wrapped.startColumn) + relX)
         val pos = Position(wrapped.lineIndex, targetCol)
         if (startSelection) {
             buffer.startSelection(pos)
@@ -1187,7 +1205,7 @@ class CodeEditorView(
         val rows = lastRows.coerceAtLeast(1)
         val gutterWidth = computeGutterWidth()
         val layout = cachedLayout((cols - gutterWidth).coerceAtLeast(0))
-        val lines = layout.lines
+        val lines = layout.rawLines
         val line = cursor.line.coerceIn(0, (lines.size - 1).coerceAtLeast(0))
         val col = cursor.column.coerceIn(0, lines.getOrElse(line) { "" }.length)
         val pos = Position(line, col)
@@ -1510,41 +1528,74 @@ class CodeEditorView(
         return selStart - chunkStart until selEndExclusive - chunkStart
     }
 
-    private fun sliceTokens(
+    private fun sliceVisualTokens(
         tokens: List<editor.grammars.Token>,
+        line: VisualLine,
         chunkStart: Int,
         chunkEnd: Int
-    ): List<editor.grammars.Token> =
-        tokens.mapNotNull { token ->
+    ): List<editor.grammars.Token> {
+        val visualStart = line.visualColumn(chunkStart)
+        val visualEnd = line.visualColumn(chunkEnd)
+        return tokens.mapNotNull { token ->
             val start = maxOf(token.start, chunkStart)
             val end = minOf(token.end, chunkEnd)
             if (start >= end) return@mapNotNull null
-            token.copy(start = start - chunkStart, end = end - chunkStart)
-        }
+            token.copy(
+                start = line.visualColumn(start) - visualStart,
+                end = line.visualColumn(end) - visualStart
+            )
+        }.filter { it.start < it.end && it.start < visualEnd - visualStart }
+    }
 
-    private fun trimHighlightToChunk(token: FoundToken, chunkStart: Int, chunkEnd: Int): FoundToken? {
+    private fun trimVisualRangeToChunk(
+        range: IntRange,
+        line: VisualLine,
+        chunkStart: Int,
+        chunkEnd: Int
+    ): IntRange? {
+        val start = maxOf(range.first, chunkStart)
+        val end = minOf(range.last + 1, chunkEnd)
+        if (start >= end) return null
+        val visualStart = line.visualColumn(chunkStart)
+        return line.visualColumn(start) - visualStart until line.visualColumn(end) - visualStart
+    }
+
+    private fun trimVisualHighlightToChunk(
+        token: FoundToken,
+        line: VisualLine,
+        chunkStart: Int,
+        chunkEnd: Int
+    ): FoundToken? {
         val start = maxOf(token.startColumn, chunkStart)
         val end = minOf(token.endColumn, chunkEnd)
         if (start >= end) return null
-        return token.copy(startColumn = start - chunkStart, endColumn = end - chunkStart)
+        val visualStart = line.visualColumn(chunkStart)
+        return token.copy(
+            startColumn = line.visualColumn(start) - visualStart,
+            endColumn = line.visualColumn(end) - visualStart
+        )
     }
 
     private fun buildLayout(lines: List<String>, contentCols: Int): VisualLayout {
         val width = contentCols.coerceAtLeast(1)
         val wrapped = mutableListOf<WrappedLine>()
+        val visualLines = lines.map { VisualLine(it) }
         val lineOffsets = IntArray(lines.size)
         val wrapCounts = IntArray(lines.size)
-        lines.forEachIndexed { idx, line ->
+        visualLines.forEachIndexed { idx, line ->
             lineOffsets[idx] = wrapped.size
-            val len = line.length
-            if (len == 0) {
+            val len = line.rawText.length
+            if (line.visualText.isEmpty()) {
                 wrapped.add(WrappedLine(idx, 0, 0))
                 wrapCounts[idx] = 1
             } else {
                 var start = 0
                 var count = 0
                 while (start < len) {
-                    val end = (start + width).coerceAtMost(len)
+                    val visualStart = line.visualColumn(start)
+                    val targetVisualEnd = minOf(visualStart + width, line.visualText.length)
+                    var end = start + 1
+                    while (end < len && line.visualColumn(end) <= targetVisualEnd) end++
                     wrapped.add(WrappedLine(idx, start, end))
                     start = end
                     count++
@@ -1555,28 +1606,35 @@ class CodeEditorView(
         if (lines.isEmpty()) {
             wrapped.add(WrappedLine(0, 0, 0))
         }
-        return VisualLayout(lines, wrapped, lineOffsets, wrapCounts, width)
+        return VisualLayout(lines, visualLines, wrapped, lineOffsets, wrapCounts, width)
     }
 
     private fun visualRowForPosition(pos: Position, layout: VisualLayout): Int {
         if (layout.wrapped.isEmpty()) return 0
-        val line = pos.line.coerceIn(0, layout.lines.lastIndex)
+        val line = pos.line.coerceIn(0, layout.rawLines.lastIndex)
         val offset = layout.lineOffsets.getOrElse(line) { 0 }
         val width = layout.contentWidth.coerceAtLeast(1)
-        val lineLength = layout.lines.getOrElse(line) { "" }.length
+        val lineLength = layout.visualLines.getOrElse(line) { VisualLine("") }.visualText.length
         val wraps = layout.wrapCounts.getOrElse(line) { 1 }.coerceAtLeast(1)
-        val chunkIndex = (pos.column.coerceAtMost(lineLength) / width).coerceAtMost(wraps - 1)
+        val visualColumn = layout.visualLines.getOrElse(line) { VisualLine("") }.visualColumn(pos.column)
+        val chunkIndex = (visualColumn / width).coerceAtMost(wraps - 1)
         return offset + chunkIndex
+    }
+
+    private fun visualColumnAt(pos: Position, layout: VisualLayout): Int {
+        val line = pos.line.coerceIn(0, (layout.rawLines.size - 1).coerceAtLeast(0))
+        return layout.visualLines.getOrElse(line) { VisualLine("") }.visualColumn(pos.column)
     }
 
     private fun chunkForPosition(pos: Position, layout: VisualLayout): WrappedLine? {
         if (layout.wrapped.isEmpty()) return null
-        val line = pos.line.coerceIn(0, layout.lines.lastIndex)
+        val line = pos.line.coerceIn(0, layout.rawLines.lastIndex)
         val offset = layout.lineOffsets.getOrElse(line) { 0 }
         val width = layout.contentWidth.coerceAtLeast(1)
-        val lineLength = layout.lines.getOrElse(line) { "" }.length
+        val lineLength = layout.rawLines.getOrElse(line) { "" }.length
         val wraps = layout.wrapCounts.getOrElse(line) { 1 }.coerceAtLeast(1)
-        val idxInLine = (pos.column.coerceAtMost(lineLength) / width).coerceAtMost(wraps - 1)
+        val visualColumn = layout.visualLines.getOrElse(line) { VisualLine("") }.visualColumn(pos.column)
+        val idxInLine = (visualColumn / width).coerceAtMost(wraps - 1)
         val index = offset + idxInLine
         return layout.wrapped.getOrNull(index)
     }
@@ -1608,7 +1666,7 @@ class CodeEditorView(
         }
         val anchorRow = visualRowForPosition(popup.anchor, layout)
         val screenRow = bodyStartRow + (anchorRow - scrollTop)
-        val x = (gutterWidth + popup.anchor.column).coerceAtLeast(gutterWidth)
+        val x = (gutterWidth + visualColumnAt(popup.anchor, layout)).coerceAtLeast(gutterWidth)
         val maxLabel = popup.entries.take(10).maxOfOrNull { it.label.length } ?: 0
         val width = (maxLabel + 2).coerceAtMost((cols - x).coerceAtLeast(12))
         val height = (popup.entries.size + 1).coerceAtMost((rows - screenRow - 1).coerceAtLeast(2))
@@ -1648,7 +1706,7 @@ class CodeEditorView(
         }
         val anchorRow = visualRowForPosition(popup.anchor, layout)
         val screenRow = bodyStartRow + (anchorRow - scrollTop)
-        val x = (gutterWidth + popup.anchor.column).coerceAtLeast(gutterWidth)
+        val x = (gutterWidth + visualColumnAt(popup.anchor, layout)).coerceAtLeast(gutterWidth)
         val maxLabel = popup.entries.take(10).maxOfOrNull { it.name.length + (it.detail?.length ?: 0) + 3 } ?: 0
         val width = (maxLabel + 2).coerceAtMost((cols - x).coerceAtLeast(12))
         val height = (popup.entries.size + 1).coerceAtMost((rows - screenRow - 1).coerceAtLeast(2))
@@ -1701,7 +1759,7 @@ class CodeEditorView(
         val width = (maxLabel + 2).coerceAtMost((cols - gutterWidth).coerceAtLeast(16))
         val contentRows = popup.entries.size + (preview?.let { it.lines.size + 1 } ?: 0)
         val height = (contentRows + 1).coerceAtMost(rows.coerceAtLeast(2))
-        val x = (gutterWidth + popup.anchor.column).coerceIn(0, (cols - width).coerceAtLeast(0))
+        val x = (gutterWidth + visualColumnAt(popup.anchor, layout)).coerceIn(0, (cols - width).coerceAtLeast(0))
         var finalY = (screenRow - height).coerceAtLeast(bodyStartRow)
         if (finalY + height > rows) finalY = (rows - height).coerceAtLeast(bodyStartRow)
         val style = localStyleSheet.getStyle("code-search-bar").withDefaults()
@@ -1731,14 +1789,27 @@ class CodeEditorView(
                 }
                 preview.lines.forEachIndexed { index, lineText ->
                     if (row >= height) return@forEachIndexed
+                    val visualLine = VisualLine(lineText)
+                    val previewTokens = sliceVisualTokens(
+                        previewSyntax[preview.startLine + index].orEmpty(),
+                        visualLine,
+                        0,
+                        lineText.length
+                    )
+                    val previewSemanticTokens = sliceVisualTokens(
+                        previewSemantic[preview.startLine + index].orEmpty(),
+                        visualLine,
+                        0,
+                        lineText.length
+                    )
                     renderLineWithTokens(
                         canvas = this,
-                        text = lineText,
+                        text = visualLine.visualText,
                         y = finalY + row,
                         startX = x + 1,
                         maxCols = width - 2,
-                        tokens = previewSyntax[preview.startLine + index].orEmpty(),
-                        overlayTokens = previewSemantic[preview.startLine + index].orEmpty(),
+                        tokens = previewTokens,
+                        overlayTokens = previewSemanticTokens,
                         baseStyle = style,
                         selection = null,
                         selectionStyle = style,
@@ -1831,9 +1902,55 @@ class CodeEditorView(
         return prefix + lineText.substring(start, end).trim() + suffix
     }
 
+    private data class VisualLine(val rawText: String) {
+        val visualText: String
+        private val rawToVisual: IntArray
+
+        init {
+            val out = StringBuilder(rawText.length)
+            rawToVisual = IntArray(rawText.length + 1)
+            var column = 0
+            rawText.forEachIndexed { index, ch ->
+                rawToVisual[index] = column
+                if (ch == '\t') {
+                    val spaces = TAB_WIDTH - (column % TAB_WIDTH)
+                    repeat(spaces) { out.append(' ') }
+                    column += spaces
+                } else if (ch.isISOControl()) {
+                    val escaped = if (ch.code <= 0xFF) {
+                        "\\x%02X".format(ch.code)
+                    } else {
+                        "\\x%04X".format(ch.code)
+                    }
+                    out.append(escaped)
+                    column += escaped.length
+                } else {
+                    out.append(ch)
+                    column++
+                }
+            }
+            rawToVisual[rawText.length] = column
+            visualText = out.toString()
+        }
+
+        fun visualColumn(rawColumn: Int): Int = rawToVisual[rawColumn.coerceIn(0, rawText.length)]
+
+        fun rawColumn(visualColumn: Int): Int {
+            val target = visualColumn.coerceIn(0, visualText.length)
+            var low = 0
+            var high = rawText.length
+            while (low < high) {
+                val mid = (low + high) ushr 1
+                if (visualColumn(mid) < target) low = mid + 1 else high = mid
+            }
+            return low.coerceIn(0, rawText.length)
+        }
+    }
+
     private data class WrappedLine(val lineIndex: Int, val startColumn: Int, val endColumn: Int)
     private data class VisualLayout(
-        val lines: List<String>,
+        val rawLines: List<String>,
+        val visualLines: List<VisualLine>,
         val wrapped: List<WrappedLine>,
         val lineOffsets: IntArray,
         val wrapCounts: IntArray,

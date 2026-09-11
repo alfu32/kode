@@ -646,6 +646,8 @@ private class SplashApp(
     private var helpMaxScroll = 0
     private var helpStartY = 0
 
+    private val sourceRootNotice = app.startupSourceRootNotice()
+
     private fun startScan() {
         if (app.hasPersistentIndex()) {
             app.loadCodeIntelFromStore()
@@ -787,6 +789,7 @@ private class SplashApp(
             "File:",
             fileText
         )
+        sourceRootNotice?.let { footerLines += it }
         if (scanDone.get()) {
             footerLines.add("Scan complete. Press Enter to begin.")
         }
@@ -884,6 +887,7 @@ private class SplitPanelsApp(
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
     private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
     private var sourceRoots: MutableList<String> = mutableListOf()
+    private var sourceRootSetupNotice: String? = null
     private var scanExclusions: MutableList<String> = mutableListOf()
     private var lastPersistMs: Long = 0L
     private var pendingPersist: Boolean = false
@@ -992,6 +996,7 @@ private class SplitPanelsApp(
     private var activeDiff: GitDiff? = null
     init {
         dbManager.start(projectRoot)
+        val hasProjectConfig = sessionManager.hasConfig()
         val loaded = sessionManager.load()
         recentFiles = loaded.recentFiles.map { entry ->
             entry.copy(
@@ -1002,7 +1007,15 @@ private class SplitPanelsApp(
         savedEditors = loaded.openEditors.associateBy { sessionManager.toAbsolute(it.path) }
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
-        sourceRoots = loadSourceRoots(loaded.sourceRoots)
+        sourceRoots = if (hasProjectConfig) {
+            loadSourceRoots(loaded.sourceRoots)
+        } else {
+            defaultSourceRoots()
+        }
+        if (!hasProjectConfig) {
+            sourceRootSetupNotice = defaultSourceRootNotice()
+            persistSession(force = true)
+        }
         scanExclusions = loadScanExclusions(loaded.scanExclusions)
         filesTabView.refreshFileTree()
         restoreLastSession()
@@ -1424,7 +1437,9 @@ private class SplitPanelsApp(
         savedEditors = loaded.openEditors.associateBy { sessionManager.toAbsolute(it.path) }
             .mapValues { it.value.copy(path = sessionManager.toAbsolute(it.value.path)) }
             .toMutableMap()
-        sourceRoots = loadSourceRoots(loaded.sourceRoots)
+        val hasProjectConfig = sessionManager.hasConfig()
+        sourceRoots = if (hasProjectConfig) loadSourceRoots(loaded.sourceRoots) else defaultSourceRoots()
+        sourceRootSetupNotice = if (hasProjectConfig) null else defaultSourceRootNotice()
         scanExclusions = loadScanExclusions(loaded.scanExclusions)
         codeIntelIndexer.loadFromStore()
 
@@ -1449,9 +1464,18 @@ private class SplitPanelsApp(
         persistSession(force = true)
     }
 
+    fun startupSourceRootNotice(): String? = sourceRootSetupNotice
+
     private fun loadSourceRoots(roots: List<String>): MutableList<String> {
-        val normalized = roots.mapNotNull { normalizeSourceRoot(it) }.distinct().toMutableList()
-        return if (normalized.isEmpty()) mutableListOf(".") else normalized
+        return roots.mapNotNull { normalizeSourceRoot(it) }.distinct().toMutableList()
+    }
+
+    private fun defaultSourceRoots(): MutableList<String> =
+        sessionManager.defaultSourceRoots().toMutableList()
+
+    private fun defaultSourceRootNotice(): String {
+        val selected = defaultSourceRoots().joinToString(", ").ifBlank { "none" }
+        return "New project: source roots $selected. Add more in the Project panel."
     }
 
     private fun loadScanExclusions(exclusions: List<String>): MutableList<String> =
@@ -2067,4 +2091,3 @@ private fun drawStatusLine(
         drawText(1, row, padded.take(textWidth))
     }
 }
-
