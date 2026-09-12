@@ -51,6 +51,8 @@ bin/
 .kode.log.json
 .kode/db
 .kode.old
+*/.kode/**
+*/.kode.json
 
 hs_err_pid*.log
 *.snap

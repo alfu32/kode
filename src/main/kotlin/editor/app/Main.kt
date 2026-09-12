@@ -29,6 +29,8 @@ import editor.ui.SettingsView
 import editor.ui.HelpView
 import editor.ui.ProjectSettingsView
 import editor.ui.SourceFolderPickerDialog
+import editor.ui.RescanProgress
+import editor.ui.RescanProgressDialog
 import editor.db.DbServerManager
 import editor.db.DbStatus
 import editor.codeintel.DbCodeIntelStore
@@ -985,6 +987,13 @@ private class SplitPanelsApp(
         exclusionsProvider = { scanExclusions.toList() },
         onRequestAddExclusion = { showScanExclusionPicker() },
         onRemoveExclusion = { exclusion -> removeScanExclusion(exclusion) },
+        onRequestRescan = { startExplicitRescan() },
+    )
+    private val rescanDialog = RescanProgressDialog(
+        styleSheet,
+        progressProvider = { rescanStatus.get() },
+        onAbort = { rescanCancelRequested.set(true) },
+        onDismiss = { rescanVisible = false }
     )
     private val helpView = HelpView(styleSheet)
     private var currentOpenPath: String = ""
@@ -993,6 +1002,9 @@ private class SplitPanelsApp(
     private var workspacePicker: WorkspacePickerDialog? = null
     private var sourcePickerVisible = false
     private var sourcePicker: SourceFolderPickerDialog? = null
+    private var rescanVisible = false
+    private val rescanCancelRequested = AtomicBoolean(false)
+    private val rescanStatus = AtomicReference(RescanProgress("Rescan: preparing", "", done = false))
     private var activeDiff: GitDiff? = null
     init {
         dbManager.start(projectRoot)
@@ -1094,6 +1106,9 @@ private class SplitPanelsApp(
         if (sourcePickerVisible) {
             sourcePicker?.render(canvas)
         }
+        if (rescanVisible) {
+            rescanDialog.render(canvas)
+        }
 
         lastCols = cols
         leftRatio = splitterX.toDouble() / cols.toDouble().coerceAtLeast(1.0)
@@ -1103,6 +1118,9 @@ private class SplitPanelsApp(
         if (event.kind == "key_down" && event.ctrl && event.key?.equals("q", ignoreCase = true) == true) {
             onQuit()
             return true
+        }
+        if (rescanVisible) {
+            return rescanDialog.dispatch(event)
         }
         if (event.kind == "animation_frame") {
             var handled = false
@@ -1496,12 +1514,8 @@ private class SplitPanelsApp(
         }
         sourceRoots.add(normalized)
         filesTabView.refreshFileTree()
-        val reindexed = applySourceRootsChanged()
-        return if (reindexed) {
-            "Added source root: ${formatSourceRoot(normalized)}"
-        } else {
-            "Added source root, but failed to clear index."
-        }
+        persistSession(force = true)
+        return "Added source root: ${formatSourceRoot(normalized)}. Press rescan to index it."
     }
 
     private fun removeSourceRoot(root: String): String? {
@@ -1509,12 +1523,8 @@ private class SplitPanelsApp(
         val removed = sourceRoots.removeIf { normalizeSourceRoot(it) == normalized }
         if (!removed) return "Source root not found."
         filesTabView.refreshFileTree()
-        val reindexed = applySourceRootsChanged()
-        return if (reindexed) {
-            "Removed source root: ${formatSourceRoot(normalized)}"
-        } else {
-            "Removed source root, but failed to clear index."
-        }
+        persistSession(force = true)
+        return "Removed source root: ${formatSourceRoot(normalized)}. Press rescan to update the index."
     }
 
     private fun showScanExclusionPicker() {
@@ -1548,9 +1558,8 @@ private class SplitPanelsApp(
         }
         scanExclusions.add(normalized)
         filesTabView.refreshFileTree()
-        val reindexed = applyScanExclusionsChanged()
-        return if (reindexed) "Added scan exclusion: $normalized"
-        else "Added scan exclusion, but failed to clear index."
+        persistSession(force = true)
+        return "Added scan exclusion: $normalized. Press rescan to apply it."
     }
 
     private fun removeScanExclusion(exclusion: String): String? {
@@ -1558,9 +1567,8 @@ private class SplitPanelsApp(
         val removed = scanExclusions.removeIf { normalizeScanExclusion(it) == normalized }
         if (!removed) return "Scan exclusion not found."
         filesTabView.refreshFileTree()
-        val reindexed = applyScanExclusionsChanged()
-        return if (reindexed) "Removed scan exclusion: $normalized"
-        else "Removed scan exclusion, but failed to clear index."
+        persistSession(force = true)
+        return "Removed scan exclusion: $normalized. Press rescan to update the index."
     }
 
     private fun normalizeScanExclusion(value: String?): String? {
@@ -1569,30 +1577,6 @@ private class SplitPanelsApp(
         val normalized = trimmed.removePrefix("./").trim('/').replace(Regex("/+"), "/")
         if (normalized.isEmpty() || normalized == "." || normalized.split('/').any { it == ".." }) return null
         return normalized
-    }
-
-    private fun applyScanExclusionsChanged(): Boolean {
-        val cleared = dbManager.clearIndex()
-        codeIntelIndexer.clear()
-        if (!cleared) {
-            persistSession(force = true)
-            return false
-        }
-        triggerFreshScan()
-        persistSession(force = true)
-        return true
-    }
-
-    private fun applySourceRootsChanged(): Boolean {
-        val cleared = dbManager.clearIndex()
-        codeIntelIndexer.clear()
-        if (!cleared) {
-            persistSession(force = true)
-            return false
-        }
-        triggerFreshScan()
-        persistSession(force = true)
-        return true
     }
 
     private fun resolveSourceRoots(): List<Path> {
@@ -1652,6 +1636,7 @@ private class SplitPanelsApp(
     fun fullReindex(
         progress: ((String) -> Unit)? = null,
         progressFile: ((String) -> Unit)? = null,
+        shouldAbort: (() -> Boolean)? = null,
     ) {
         progress?.invoke("Indexing: preparing")
         val startMs = System.currentTimeMillis()
@@ -1661,7 +1646,11 @@ private class SplitPanelsApp(
         var indexed = 0
         codeIntelIndexer.beginSemanticBatch()
         try {
-            files.forEachIndexed { idx, path ->
+            for ((idx, path) in files.withIndex()) {
+                if (shouldAbort?.invoke() == true) {
+                    progress?.invoke("Indexing: aborted")
+                    return
+                }
                 val detected = mimeDetector.detectFile(path)
                 val lang = detected?.language
                 val rel = projectRoot.relativize(path).toString()
@@ -1681,6 +1670,50 @@ private class SplitPanelsApp(
         indexSdkSources()
         val elapsed = System.currentTimeMillis() - startMs
         progress?.invoke("Indexing: complete ($indexed/${files.size}) in ${elapsed}ms")
+    }
+
+    private fun startExplicitRescan() {
+        if (rescanVisible) return
+        rescanCancelRequested.set(false)
+        rescanStatus.set(RescanProgress("Rescan: clearing semantic database", "", done = false))
+        rescanVisible = true
+        Thread({
+            var aborted = false
+            try {
+                val cleared = dbManager.clearIndex()
+                codeIntelIndexer.clear()
+                if (!cleared) {
+                    rescanStatus.set(RescanProgress("Rescan failed: database could not be cleared", "", done = true))
+                    return@Thread
+                }
+                if (rescanCancelRequested.get()) {
+                    aborted = true
+                } else {
+                    fullReindex(
+                        progress = { status ->
+                            rescanStatus.updateAndGet { current ->
+                                current.copy(status = status, aborted = status.endsWith("aborted"))
+                            }
+                        },
+                        progressFile = { file ->
+                            rescanStatus.updateAndGet { current -> current.copy(file = file) }
+                        },
+                        shouldAbort = { rescanCancelRequested.get() }
+                    )
+                    aborted = rescanCancelRequested.get()
+                }
+            } catch (error: Throwable) {
+                rescanStatus.set(RescanProgress("Rescan failed: ${error.message ?: error::class.java.simpleName}", "", done = true))
+                return@Thread
+            } finally {
+                val current = rescanStatus.get()
+                if (aborted || rescanCancelRequested.get()) {
+                    rescanStatus.set(current.copy(status = "Rescan: aborted", done = true, aborted = true))
+                } else if (!current.done) {
+                    rescanStatus.set(current.copy(status = "Rescan: complete", done = true))
+                }
+            }
+        }, "codeintel-explicit-rescan").apply { isDaemon = true }.start()
     }
 
     private fun triggerFreshScan() {

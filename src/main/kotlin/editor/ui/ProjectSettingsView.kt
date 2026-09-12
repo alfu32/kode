@@ -16,11 +16,12 @@ class ProjectSettingsView(
     private val exclusionsProvider: () -> List<String> = { emptyList() },
     private val onRequestAddExclusion: () -> Unit = {},
     private val onRemoveExclusion: (String) -> String? = { null },
+    private val onRequestRescan: () -> Unit = {},
 ) : BaseComponent(styleSheet) {
 
     private data class SettingEntry(val value: String, val exclusion: Boolean)
     private data class ButtonHit(val range: IntRange, val action: ButtonAction)
-    private enum class ButtonAction { ADD_SOURCE, ADD_EXCLUSION, REMOVE }
+    private enum class ButtonAction { ADD_SOURCE, ADD_EXCLUSION, REMOVE, RESCAN }
 
     private var selectedIdx: Int = 0
     private var scrollTop: Int = 0
@@ -94,6 +95,10 @@ class ProjectSettingsView(
                 onRequestAddExclusion()
                 true
             }
+            "r" -> {
+                onRequestRescan()
+                true
+            }
             "d", "backspace", "delete" -> {
                 removeSelected(entries)
                 true
@@ -157,6 +162,7 @@ class ProjectSettingsView(
         if (y < 0) return
         val baseStyle = styleSheet.getStyle("content")
         val buttons = listOf(
+            "[rescan(r)]" to ButtonAction.RESCAN,
             "[source(a)]" to ButtonAction.ADD_SOURCE,
             "[exclude(x)]" to ButtonAction.ADD_EXCLUSION,
             "[remove(d)]" to ButtonAction.REMOVE,
@@ -202,6 +208,7 @@ class ProjectSettingsView(
             ButtonAction.ADD_SOURCE -> onRequestAdd()
             ButtonAction.ADD_EXCLUSION -> onRequestAddExclusion()
             ButtonAction.REMOVE -> removeSelected(entries)
+            ButtonAction.RESCAN -> onRequestRescan()
         }
     }
 
