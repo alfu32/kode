@@ -11,6 +11,27 @@ import kotlin.test.assertTrue
 
 class SemanticHighlightingTest {
     @Test
+    fun refreshesCachedTokensWhenOnlyAReferencedFileChanges() {
+        val service = CodeIntelService(debounceMs = 0L)
+        try {
+            val consumer = "fun test(customer: Customer) { customer.value }"
+            service.indexDocumentNow("Model.kt", "kotlin", "class Customer { val value: Long = 0 }", 1L)
+            service.indexDocumentNow("Use.kt", "kotlin", consumer, 1L)
+            val request = TokensRequest("Use.kt", "kotlin", 0, consumer.lines(), 1L)
+            assertTrue(service.tokens(request).any { it.text == "value" && "semantic.property" in it.scopes })
+            val revision = service.semanticRevision("Use.kt")
+
+            service.indexDocumentNow("Model.kt", "kotlin", "class Customer { fun value(): Long = 0 }", 2L)
+
+            assertTrue(service.semanticRevision("Use.kt") != revision)
+            assertEquals(1L, service.semanticVersion("Use.kt"))
+            assertTrue(service.tokens(request).any { it.text == "value" && "semantic.method" in it.scopes })
+        } finally {
+            service.shutdown()
+        }
+    }
+
+    @Test
     fun combinesTreeSitterLexicalTokensWithResolvedSymbolKinds() {
         val text = """
             // customer model

@@ -71,7 +71,7 @@ class SemanticIndex(
 ) {
     private val revision = AtomicLong(0L)
     private val state = AtomicReference(SnapshotState.empty())
-    private val publishedSnapshot = AtomicReference<Snapshot?>(null)
+    private val publishedSnapshot = AtomicReference(Snapshot(state.get()))
     private val updateLock = Any()
 
     fun apply(delta: FileSemanticDelta): SemanticSnapshot = applyAll(listOf(delta))
@@ -99,17 +99,13 @@ class SemanticIndex(
         publish(next)
     }
 
-    fun snapshot(): SemanticSnapshot {
-        val current = state.get()
-        publishedSnapshot.get()?.takeIf { it.belongsTo(current) }?.let { return it }
-        val created = Snapshot(current)
-        publishedSnapshot.set(created)
-        return if (state.get() === current) created else snapshot()
-    }
+    fun snapshot(): SemanticSnapshot = publishedSnapshot.get()
 
     private fun publish(next: SnapshotState): Snapshot {
-        state.set(next)
+        // Build all query tables on the indexing thread. Readers keep the old
+        // snapshot until this atomic swap, never building workspace indexes themselves.
         val snapshot = Snapshot(next)
+        state.set(next)
         publishedSnapshot.set(snapshot)
         return snapshot
     }
@@ -135,7 +131,6 @@ class SemanticIndex(
     }
 
     private class Snapshot(private val state: SnapshotState) : SemanticSnapshot {
-        internal fun belongsTo(candidate: SnapshotState): Boolean = state === candidate
         override val version: Long = state.version
         private val filesById = state.project.deltas.values.associate { it.fileId to it.file }
         private val filesByPath = filesById.values.associateBy { it.path }
@@ -219,7 +214,7 @@ class SemanticIndex(
                     .mapNotNull { symbolsById[it.to] }
                     .forEach(result::add)
                 relationsFrom[owner].orEmpty()
-                    .filter { it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS) }
+                    .filter { it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS, RelationKind.ALIAS_OF) }
                     .forEach { collect(it.to) }
             }
             collect(typeSymbolId)

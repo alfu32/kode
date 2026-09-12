@@ -1,7 +1,6 @@
 package editor.codeintel.frontend
 
 import java.util.Locale
-import org.treesitter.TreeSitterC
 import org.treesitter.TreeSitterCpp
 import org.treesitter.TreeSitterCss
 import org.treesitter.TreeSitterGo
@@ -18,7 +17,7 @@ import org.treesitter.TreeSitterBash
 /** Registry for the Tree-sitter-backed non-Kotlin adapter batches. */
 object TreeSitterSemanticAdapters {
     private val factories: Map<String, () -> LanguageSemanticAdapter?> = mapOf(
-        "c" to { create("c") { TreeSitterC() } },
+        "c" to { CSemanticAdapter() },
         "cpp" to { create("cpp") { TreeSitterCpp() } },
         "c++" to { create("cpp") { TreeSitterCpp() } },
         "cc" to { create("cpp") { TreeSitterCpp() } },

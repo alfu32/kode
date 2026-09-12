@@ -13,6 +13,51 @@ import react.renderer.StringSnapshotRenderer
 import editor.grammars.KeywordSyntaxProvider
 
 class CodeEditorViewTest {
+    @Test
+    fun pageKeysTraverseWrappedRowsWithinOneLogicalLine() {
+        val buffer = TextBuffer().apply { loadText("\t".repeat(100)) }
+        val view = CodeEditorView(StyleSheet(), buffer)
+        val renderer = StringSnapshotRenderer(cols = 23, rows = 4)
+        view.render(renderer)
+        view.dispatch(UIEvent(kind = "key_down", key = "PageDown", shift = true))
+        // Twenty content cells per row fit five tabs; three rows make one page.
+        assertEquals(Position(0, 15), buffer.cursorPosition())
+        assertEquals("\t".repeat(15), buffer.selectionText())
+        view.dispatch(UIEvent(kind = "key_down", key = "PageUp"))
+        assertEquals(Position(0, 0), buffer.cursorPosition())
+    }
+
+
+    @Test
+    fun pageKeysMoveCursorAndViewportByVisibleRows() {
+        val buffer = TextBuffer().apply { loadText((0..99).joinToString("\n") { "line $it" }) }
+        val view = CodeEditorView(StyleSheet(), buffer)
+        val renderer = StringSnapshotRenderer(cols = 35, rows = 11)
+        view.render(renderer)
+        assertTrue(view.dispatch(UIEvent(kind = "key_down", key = "PageDown")))
+        assertEquals(Position(10, 0), buffer.cursorPosition())
+        view.render(renderer)
+        assertTrue(renderer.snapshot().lines()[1].contains("line 10"))
+        view.dispatch(UIEvent(kind = "key_down", key = "PageUp"))
+        assertEquals(Position(0, 0), buffer.cursorPosition())
+        view.render(renderer)
+        assertTrue(renderer.snapshot().lines()[1].contains("line 0"))
+    }
+
+    @Test
+    fun wheelMovesThreeRowsAndAltWheelMovesNine() {
+        val buffer = TextBuffer().apply { loadText((0..99).joinToString("\n") { "line $it" }) }
+        val view = CodeEditorView(StyleSheet(), buffer)
+        val renderer = StringSnapshotRenderer(cols = 35, rows = 11)
+        view.render(renderer)
+        view.dispatch(UIEvent(kind = "mouse_scroll", scrollDelta = -1))
+        view.render(renderer)
+        assertTrue(renderer.snapshot().lines()[1].contains("line 3"))
+        view.dispatch(UIEvent(kind = "mouse_scroll", scrollDelta = -1, alt = true))
+        view.render(renderer)
+        assertTrue(renderer.snapshot().lines()[1].contains("line 12"))
+        assertEquals(Position(0, 0), buffer.cursorPosition())
+    }
 
     @Test
     fun ctrlFPrefillsSearchWithEscapedSelection() {
@@ -148,7 +193,10 @@ class CodeEditorViewTest {
             service.indexDocumentNow("test.c", "c", source, 1L)
             val tokens = service.tokens(editor.codeintel.TokensRequest("test.c", "c", 0, source.split("\n"), 1L))
             tokens.forEach { token ->
-                assertTrue(token.text.all { it.isLetterOrDigit() || it == '_' })
+                assertEquals(token.text, source.lines()[token.line].substring(token.start, token.end))
+                if (token.scopes.any { it == "codeintel.declaration" || it == "codeintel.usage" }) {
+                    assertTrue(token.text.all { it.isLetterOrDigit() || it == '_' })
+                }
             }
         } finally {
             service.shutdown()

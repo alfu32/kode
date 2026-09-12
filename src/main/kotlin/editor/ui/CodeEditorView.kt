@@ -84,6 +84,8 @@ class CodeEditorView(
     private val previewLineNumbers: MutableList<Int> = mutableListOf()
     private var cachedCodeIntelTokensByLine: Map<Int, List<editor.grammars.Token>> = emptyMap()
     private var cachedCodeIntelTokenVersion: Long = -1L
+    private var paintedText: String = ""
+    private var observedSemanticRevision: Long? = null
 
     fun textContent(): String = buffer.text()
 
@@ -269,6 +271,13 @@ class CodeEditorView(
         val layout = cachedLayout(contentCols)
         val lines = layout.rawLines
         val visualLines = layout.visualLines
+        val currentText = buffer.text()
+        if (paintedText != currentText) {
+            cachedCodeIntelTokensByLine = remapHighlightTokens(
+                paintedText, currentText, cachedCodeIntelTokensByLine.values.flatten()
+            ).groupBy { it.line }
+            paintedText = currentText
+        }
 
         val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
         scrollTop = scrollTop.coerceIn(0, maxOffset)
@@ -467,8 +476,11 @@ class CodeEditorView(
             if (rerenderOnce) {
                 rerenderOnce = false
                 lastLayout = null
-                // Re-run code intel to ensure tokens are ready before the redraw.
-                triggerCodeIntel(force = true, immediate = true)
+                return true
+            }
+            val semanticRevision = codeIntelIndexer?.semanticRevision(filePath)
+            if (semanticRevision != observedSemanticRevision) {
+                observedSemanticRevision = semanticRevision
                 return true
             }
             if (infoShown) return true
@@ -537,7 +549,7 @@ class CodeEditorView(
         when (event.kind) {
             "mouse_scroll" -> {
                 val delta = event.scrollDelta ?: return false
-                val multiplier = if (event.alt) 3 else 1
+                val multiplier = if (event.alt) 9 else 3
                 val scrollDelta = delta * multiplier
                 val maxOffset = (layout.wrapped.size - bodyRows).coerceAtLeast(0)
                 val prev = scrollTop
@@ -634,8 +646,17 @@ class CodeEditorView(
                 }
                 if (key == "pageup" || key == "pagedown") {
                     val delta = if (key == "pageup") -bodyRows else bodyRows
-                    val newLine = (buffer.cursorPosition().line + delta).coerceIn(0, buffer.totalLines().coerceAtLeast(1) - 1)
-                    buffer.moveCursorTo(Position(newLine, buffer.cursorPosition().column), expand = event.shift)
+                    val cursor = buffer.cursorPosition()
+                    val currentRow = visualRowForPosition(cursor, layout)
+                    val chunk = chunkForPosition(cursor, layout) ?: return true
+                    val column = layout.visualLines[cursor.line].visualColumn(cursor.column) -
+                        layout.visualLines[cursor.line].visualColumn(chunk.startColumn)
+                    val target = layout.wrapped[(currentRow + delta).coerceIn(layout.wrapped.indices)]
+                    val targetLine = layout.visualLines[target.lineIndex]
+                    buffer.moveCursorTo(Position(target.lineIndex, targetLine.rawColumn(
+                        targetLine.visualColumn(target.startColumn) + column
+                    ).coerceAtMost(target.endColumn)), expand = event.shift)
+                    scrollTop = (scrollTop + delta).coerceIn(0, (layout.wrapped.size - bodyRows).coerceAtLeast(0))
                     ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
                     return true
                 }
@@ -1624,7 +1645,7 @@ class CodeEditorView(
                     val visualStart = line.visualColumn(start)
                     val targetVisualEnd = minOf(visualStart + width, line.visualText.length)
                     var end = start + 1
-                    while (end < len && line.visualColumn(end) <= targetVisualEnd) end++
+                    while (end < len && line.visualColumn(end + 1) <= targetVisualEnd) end++
                     wrapped.add(WrappedLine(idx, start, end))
                     start = end
                     count++
@@ -1642,11 +1663,14 @@ class CodeEditorView(
         if (layout.wrapped.isEmpty()) return 0
         val line = pos.line.coerceIn(0, layout.rawLines.lastIndex)
         val offset = layout.lineOffsets.getOrElse(line) { 0 }
-        val width = layout.contentWidth.coerceAtLeast(1)
-        val lineLength = layout.visualLines.getOrElse(line) { VisualLine("") }.visualText.length
         val wraps = layout.wrapCounts.getOrElse(line) { 1 }.coerceAtLeast(1)
-        val visualColumn = layout.visualLines.getOrElse(line) { VisualLine("") }.visualColumn(pos.column)
-        val chunkIndex = (visualColumn / width).coerceAtMost(wraps - 1)
+        var low = 0
+        var high = wraps - 1
+        while (low < high) {
+            val mid = (low + high + 1) / 2
+            if (layout.wrapped[offset + mid].startColumn <= pos.column) low = mid else high = mid - 1
+        }
+        val chunkIndex = low
         return offset + chunkIndex
     }
 
@@ -1656,16 +1680,7 @@ class CodeEditorView(
     }
 
     private fun chunkForPosition(pos: Position, layout: VisualLayout): WrappedLine? {
-        if (layout.wrapped.isEmpty()) return null
-        val line = pos.line.coerceIn(0, layout.rawLines.lastIndex)
-        val offset = layout.lineOffsets.getOrElse(line) { 0 }
-        val width = layout.contentWidth.coerceAtLeast(1)
-        val lineLength = layout.rawLines.getOrElse(line) { "" }.length
-        val wraps = layout.wrapCounts.getOrElse(line) { 1 }.coerceAtLeast(1)
-        val visualColumn = layout.visualLines.getOrElse(line) { VisualLine("") }.visualColumn(pos.column)
-        val idxInLine = (visualColumn / width).coerceAtMost(wraps - 1)
-        val index = offset + idxInLine
-        return layout.wrapped.getOrNull(index)
+        return layout.wrapped.getOrNull(visualRowForPosition(pos, layout))
     }
 
     private fun cachedLayout(contentCols: Int): VisualLayout {

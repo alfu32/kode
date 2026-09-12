@@ -38,6 +38,35 @@ data class ResolvedSemanticProject(
 )
 
 class SemanticResolver {
+    private class SymbolTable(records: List<SymbolRecord>) : AbstractList<SymbolRecord>() {
+        private val records = records.toMutableList()
+        private val positions = records.withIndex().associate { it.value.id to it.index }
+        val names = records.groupBy { it.name }.mapValues { (_, values) -> values.map { it.id } }
+        override val size get() = records.size
+        override fun get(index: Int) = records[index]
+        fun byId(id: SymbolId): SymbolRecord? = positions[id]?.let(records::get)
+        fun replace(symbol: SymbolRecord) { records[positions.getValue(symbol.id)] = symbol }
+    }
+    private class ScopeTable(val records: List<ScopeRecord>) : List<ScopeRecord> by records {
+        val byId = records.associateBy { it.id }
+    }
+    private class RelationTable(initial: List<RelationRecord>) : AbstractList<RelationRecord>() {
+        private val records = initial.toMutableList()
+        val outgoing = initial.groupBy { it.from }.mapValues { it.value.toMutableList() }.toMutableMap()
+        override val size get() = records.size
+        override fun get(index: Int) = records[index]
+        operator fun plusAssign(relation: RelationRecord) {
+            records += relation
+            outgoing.getOrPut(relation.from) { mutableListOf() } += relation
+        }
+    }
+    private fun List<SymbolRecord>.lookup(id: SymbolId) =
+        (this as? SymbolTable)?.byId(id) ?: firstOrNull { it.id == id }
+    private fun List<SymbolRecord>.named(name: String): List<SymbolRecord> =
+        if (this is SymbolTable) names[name].orEmpty().mapNotNull(::byId) else filter { it.name == name }
+    private fun List<ScopeRecord>.indexed() = (this as? ScopeTable)?.byId ?: associateBy { it.id }
+    private fun List<RelationRecord>.outgoing(id: SymbolId): List<RelationRecord> =
+        if (this is RelationTable) outgoing[id].orEmpty() else filter { it.from == id }
     fun resolve(deltas: Collection<FileSemanticDelta>): ResolvedSemanticProject =
         resolveInternal(deltas, baseline = null, affectedFiles = deltas.mapTo(linkedSetOf()) { it.fileId })
 
@@ -53,37 +82,40 @@ class SemanticResolver {
         affectedFiles: Set<FileId>
     ): ResolvedSemanticProject {
         val deltaMap = deltas.associateBy { it.fileId }
-        val scopes = deltas.flatMap { it.scopes }.distinctBy { it.id }
+        val scopes = ScopeTable(deltas.flatMap { it.scopes }.distinctBy { it.id })
         // A frontend may report the same stable declaration more than once while
         // recovering from an incomplete tree. Stable identity makes the duplicate
         // safe to collapse before persistence (which enforces symbol_id uniqueness).
         val rawSymbols = deltas.flatMap { it.symbols }.distinctBy { it.id }
         val baselineSymbols = baseline?.symbols.orEmpty().associateBy { it.id }
-        var symbols = rawSymbols.map { raw ->
+        val symbols = SymbolTable(rawSymbols.map { raw ->
             if (raw.fileId in affectedFiles) raw else baselineSymbols[raw.id] ?: raw
-        }
+        })
         val types = linkedMapOf<TypeId, TypeRecord>().apply { putAll(baseline?.types.orEmpty()) }
         val symbolFileById = rawSymbols.associate { it.id to it.fileId }
         val validSymbolIds = symbolFileById.keys
-        val relations = (
+        val relations = RelationTable((
             deltas.flatMap { it.relations } +
                 baseline?.relations.orEmpty().filter { relation ->
                     symbolFileById[relation.from] !in affectedFiles &&
                         relation.from in validSymbolIds && relation.to in validSymbolIds
                 }
-            ).distinctBy { Triple(it.from, it.to, it.kind) }.toMutableList()
+            ).distinctBy { Triple(it.from, it.to, it.kind) })
 
-        val symbolsById = { symbols.associateBy { it.id } }
         deltas.asSequence()
             .filter { it.fileId in affectedFiles }
             .flatMap { it.unresolvedTypes }
             .forEach { unresolved ->
-                val owner = symbolsById()[unresolved.ownerSymbolId] ?: return@forEach
-                val type = resolveTypeRef(unresolved.name, unresolved.scopeId, owner.fileId, symbols, scopes)
+                val owner = symbols.byId(unresolved.ownerSymbolId) ?: return@forEach
+                // An alias may share its spelling with the type it aliases (C tag namespace).
+                val candidates = if (owner.kind == SymbolKind.TYPE_ALIAS) {
+                    SymbolTable(symbols.filterNot { it.id == owner.id })
+                } else symbols
+                val type = resolveTypeRef(unresolved.name, unresolved.scopeId, owner.fileId, candidates, scopes)
                 if (type == null) return@forEach
                 val typeId = typeId(type)
                 val crossesFileBoundary = namedTypes(type).any { named ->
-                    symbols.firstOrNull { it.id == named.symbolId }?.fileId != owner.fileId
+                    symbols.byId(named.symbolId)?.fileId != owner.fileId
                 }
                 val level = if (crossesFileBoundary) {
                     TypeKnowledgeLevel.CROSS_FILE_RESOLVED
@@ -91,18 +123,15 @@ class SemanticResolver {
                     TypeKnowledgeLevel.SYNTACTICALLY_DECLARED
                 }
                 types[typeId] = TypeRecord(typeId, type, unresolved.confidence, level)
-                symbols = symbols.map { symbol ->
-                    if (symbol.id != owner.id) symbol
-                    else when (unresolved.role) {
+                symbols.replace(when (unresolved.role) {
                         TypeRole.DECLARED,
                         TypeRole.PARAMETER,
-                        TypeRole.RETURN -> symbol.copy(declaredTypeId = typeId)
-                        TypeRole.SUPER_TYPE -> symbol
-                    }
-                }
+                        TypeRole.RETURN -> owner.copy(declaredTypeId = typeId)
+                        TypeRole.SUPER_TYPE -> owner
+                })
                 primaryNamedType(type)?.let { named ->
                     val relationKind = when (unresolved.role) {
-                        TypeRole.DECLARED -> RelationKind.TYPE_OF
+                        TypeRole.DECLARED -> if (owner.kind == SymbolKind.TYPE_ALIAS) RelationKind.ALIAS_OF else RelationKind.TYPE_OF
                         TypeRole.PARAMETER -> RelationKind.PARAMETER_TYPE
                         TypeRole.RETURN -> RelationKind.RETURNS
                         TypeRole.SUPER_TYPE -> RelationKind.EXTENDS
@@ -118,7 +147,7 @@ class SemanticResolver {
         for (pass in 0..pendingTypeHints.size) {
             var changed = false
             pendingTypeHints.forEach { hint ->
-                val target = symbols.firstOrNull { it.id == hint.targetSymbolId } ?: return@forEach
+                val target = symbols.byId(hint.targetSymbolId) ?: return@forEach
                 if (target.declaredTypeId != null) return@forEach
                 val inferred = when (hint.kind) {
                     TypeHintKind.CONSTRUCTOR_CALL -> resolveNamedType(
@@ -170,13 +199,7 @@ class SemanticResolver {
                     hint.confidence,
                     TypeKnowledgeLevel.LOCALLY_INFERRED
                 )
-                symbols = symbols.map { symbol ->
-                    if (symbol.id == target.id && symbol.declaredTypeId == null) {
-                        symbol.copy(inferredTypeId = typeId, confidence = hint.confidence)
-                    } else {
-                        symbol
-                    }
-                }
+                symbols.replace(target.copy(inferredTypeId = typeId, confidence = hint.confidence))
                 changed = true
                 namedTypes(mergedType).forEach { named ->
                     relations += RelationRecord(target.id, named.symbolId, RelationKind.TYPE_OF, hint.confidence)
@@ -194,7 +217,7 @@ class SemanticResolver {
             .flatMap { it.occurrences }
             .sortedWith(compareBy<OccurrenceRecord> { it.fileId.value }.thenBy { it.range.startOffset })
             .forEach { occurrence ->
-                val resolved = occurrence.resolvedSymbolId?.let { id -> symbols.firstOrNull { it.id == id } }
+                val resolved = occurrence.resolvedSymbolId?.let(symbols::byId)
                     ?: resolveOccurrence(occurrence, occurrenceById, symbols, scopes, relations, types)
                 val updated = if (resolved == null) {
                     occurrence
@@ -336,14 +359,14 @@ class SemanticResolver {
         }
         if (occurrence.text == "super") {
             val owner = ownerTypeForScope(occurrence.scopeId, scopes, symbols) ?: return null
-            val superId = relations.firstOrNull {
+            val superId = relations.outgoing(owner.id).firstOrNull {
                 it.from == owner.id && it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS)
             }?.to
-            return superId?.let { id -> symbols.firstOrNull { it.id == id } }
+            return superId?.let { symbols.lookup(it) }
         }
         if (occurrence.kind == OccurrenceKind.MEMBER_REFERENCE) {
             val receiver = occurrence.receiverOccurrenceId?.let(occurrenceById::get)
-            val receiverSymbol = receiver?.resolvedSymbolId?.let { id -> symbols.firstOrNull { it.id == id } }
+            val receiverSymbol = receiver?.resolvedSymbolId?.let { symbols.lookup(it) }
             val receiverType = receiverSymbol?.let { symbol -> typeOfOccurrence(receiver, symbol, types) }
             val receiverTypeId = receiverType?.let(::primaryNamedType)?.symbolId
             if (receiverTypeId != null) {
@@ -379,7 +402,7 @@ class SemanticResolver {
         scopes: List<ScopeRecord>
     ): TypeRef.Named? {
         val normalized = name.removeSuffix("?").substringBefore('<')
-        val exactQualified = symbols.filter { it.kind in TYPE_KINDS && it.qualifiedName == normalized }
+        val exactQualified = symbols.named(normalized.substringAfterLast('.')).filter { it.kind in TYPE_KINDS && it.qualifiedName == normalized }
         val symbol = exactQualified.firstOrNull() ?: resolveSymbol(
             normalized.substringAfterLast('.'),
             scopeId,
@@ -442,7 +465,7 @@ class SemanticResolver {
         if (name == "this") return ownerTypeForScope(scopeId, scopes, symbols)?.let { TypeRef.Named(it.id) }
         if (name == "super") {
             val owner = ownerTypeForScope(scopeId, scopes, symbols) ?: return null
-            return relations.firstOrNull {
+            return relations.outgoing(owner.id).firstOrNull {
                 it.from == owner.id && it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS)
             }?.to?.let(TypeRef::Named)
         }
@@ -478,7 +501,7 @@ class SemanticResolver {
         kinds: Set<SymbolKind>? = null
     ): SymbolRecord? {
         val chain = scopeChain(scopeId, scopes)
-        return symbols.asSequence()
+        return symbols.named(name).asSequence()
             .filter { it.name == name && (kinds == null || it.kind in kinds) }
             .filter { it.flags and SymbolFlags.PRIVATE == 0L || it.fileId == fileId }
             .filter { symbol ->
@@ -496,7 +519,7 @@ class SemanticResolver {
     }
 
     private fun scopeChain(scopeId: ScopeId, scopes: List<ScopeRecord>): List<ScopeId> {
-        val byId = scopes.associateBy { it.id }
+        val byId = scopes.indexed()
         val result = mutableListOf<ScopeId>()
         var cursor: ScopeId? = scopeId
         while (cursor != null) {
@@ -507,7 +530,7 @@ class SemanticResolver {
     }
 
     private fun ownerSymbolForScope(scopeId: ScopeId, scopes: List<ScopeRecord>): SymbolId? {
-        val byId = scopes.associateBy { it.id }
+        val byId = scopes.indexed()
         var cursor: ScopeId? = scopeId
         while (cursor != null) {
             val scope = byId[cursor] ?: break
@@ -522,12 +545,11 @@ class SemanticResolver {
         scopes: List<ScopeRecord>,
         symbols: List<SymbolRecord>
     ): SymbolRecord? {
-        val scopesById = scopes.associateBy { it.id }
-        val symbolsById = symbols.associateBy { it.id }
+        val scopesById = scopes.indexed()
         var cursor: ScopeId? = scopeId
         while (cursor != null) {
             val scope = scopesById[cursor] ?: break
-            val owner = scope.ownerSymbolId?.let(symbolsById::get)
+            val owner = scope.ownerSymbolId?.let { symbols.lookup(it) }
             if (owner?.kind in TYPE_KINDS) return owner
             cursor = scope.parentId
         }
@@ -539,17 +561,16 @@ class SemanticResolver {
         symbols: List<SymbolRecord>,
         relations: List<RelationRecord>
     ): List<SymbolRecord> {
-        val byId = symbols.associateBy { it.id }
         val visited = mutableSetOf<SymbolId>()
         val result = mutableListOf<SymbolRecord>()
         fun collect(owner: SymbolId) {
             if (!visited.add(owner)) return
-            relations.asSequence()
+            relations.outgoing(owner).asSequence()
                 .filter { it.from == owner && it.kind == RelationKind.CONTAINS }
-                .mapNotNull { byId[it.to] }
+                .mapNotNull { symbols.lookup(it.to) }
                 .forEach(result::add)
-            relations.asSequence()
-                .filter { it.from == owner && it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS) }
+            relations.outgoing(owner).asSequence()
+                .filter { it.from == owner && it.kind in setOf(RelationKind.EXTENDS, RelationKind.IMPLEMENTS, RelationKind.ALIAS_OF) }
                 .forEach { collect(it.to) }
         }
         collect(typeSymbolId)

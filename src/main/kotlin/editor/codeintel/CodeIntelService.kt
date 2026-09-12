@@ -156,9 +156,11 @@ class CodeIntelService(
     private val defsByPath = mutableMapOf<String, List<SymbolDef>>()
     private val workspaceIndex = mutableMapOf<String, MutableList<SymbolDef>>()
     private val usagesIndex = mutableMapOf<String, MutableList<IdentifierToken>>()
+    private val usageNamesByPath = mutableMapOf<String, MutableSet<String>>()
     private val semanticSources = java.util.LinkedHashMap<String, SourceFile>(HOT_SOURCE_CACHE_SIZE, 0.75f, true)
     private data class SemanticTokenCacheEntry(
         val version: Long,
+        val resolutionGeneration: Long,
         val lineStarts: IntArray,
         val byLine: MutableMap<Int, List<Token>> = mutableMapOf(),
         val computedLines: MutableSet<Int> = mutableSetOf()
@@ -459,6 +461,7 @@ class CodeIntelService(
             defsByPath.clear()
             workspaceIndex.clear()
             usagesIndex.clear()
+            usageNamesByPath.clear()
             semanticSources.clear()
             semanticTokenCache.clear()
             pendingSemanticDeltas.clear()
@@ -476,6 +479,7 @@ class CodeIntelService(
             defsByPath.clear()
             workspaceIndex.clear()
             usagesIndex.clear()
+            usageNamesByPath.clear()
             loaded.defs.groupBy { it.filePath }.forEach { (path, defs) ->
                 defsByPath[path] = defs
                 defs.forEach { def ->
@@ -485,6 +489,7 @@ class CodeIntelService(
                 }
             }
             loaded.usages.forEach { tok ->
+                tok.filePath?.let { path -> usageNamesByPath.getOrPut(path) { mutableSetOf() } += tok.name }
                 val key = tok.name
                 val bucket = usagesIndex.getOrPut(key) { mutableListOf() }
                 bucket.add(tok)
@@ -494,7 +499,10 @@ class CodeIntelService(
 
     fun hasPersistentData(): Boolean = store != null && semanticIndex.hasPersistentData()
 
-    fun semanticVersion(path: String): Long? = semanticIndex.snapshot().file(path)?.semanticVersion
+    fun semanticVersion(path: String): Long? = synchronized(lock) { reusedSemanticVersions[path] }
+        ?: semanticIndex.snapshot().file(path)?.semanticVersion
+
+    fun semanticRevision(path: String): Long? = semanticIndex.snapshot().file(path)?.dependencyGeneration
 
     fun waitForIdle(timeoutMs: Long = 1000L) {
         val jobs = synchronized(lock) { pendingJobs.values.toList() }
@@ -517,9 +525,12 @@ class CodeIntelService(
             val source = SourceFile(path, semanticAdapter.languageId, text, version)
             runCatching {
                 val delta = semanticAdapter.extract(source)
+                if (synchronized(lock) { latestVersionByPath[path] != version }) return
                 semanticDelta = delta
                 submitSemanticDelta(delta)
-                cacheSemanticSource(source)
+                synchronized(lock) {
+                    if (latestVersionByPath[path] == version) cacheSemanticSource(source)
+                }
             }
                 .onFailure { error ->
                     System.err.println("Semantic indexing failed for $path: ${error.message}")
@@ -575,6 +586,7 @@ class CodeIntelService(
             }
         }
         synchronized(lock) {
+            if (latestVersionByPath[path] != version) return
             pendingJobs.remove(path)
             documents[path] = docIndex
             rebuildWorkspaceIndex(path, defs)
@@ -671,12 +683,15 @@ class CodeIntelService(
     }
 
     private fun rebuildUsagesIndex(path: String, identifiersByLine: Map<Int, List<IdentifierToken>>) {
-        // remove old entries for this path
-        usagesIndex.forEach { (_, list) ->
-            list.removeIf { it.filePath == path }
+        // Touch only buckets contributed by this file, not every workspace occurrence.
+        usageNamesByPath.remove(path).orEmpty().forEach { name ->
+            usagesIndex[name]?.removeIf { it.filePath == path }
+            if (usagesIndex[name].isNullOrEmpty()) usagesIndex.remove(name)
         }
+        val names = usageNamesByPath.getOrPut(path) { mutableSetOf() }
         identifiersByLine.values.flatten().filter { !it.declaration }.forEach { tok ->
             val key = tok.name
+            names += key
             val bucket = usagesIndex.getOrPut(key) { mutableListOf() }
             bucket.add(tok)
         }
@@ -931,9 +946,10 @@ class CodeIntelService(
         if (requestedLines.isEmpty()) return emptyList()
         val cache = synchronized(lock) {
             semanticTokenCache[request.filePath]
-                ?.takeIf { it.version == file.semanticVersion }
+                ?.takeIf { it.version == file.semanticVersion && it.resolutionGeneration == file.dependencyGeneration }
                 ?: SemanticTokenCacheEntry(
                     version = file.semanticVersion,
+                    resolutionGeneration = file.dependencyGeneration,
                     lineStarts = buildLineStarts(source.text)
                 ).also { created ->
                     semanticTokenCache[request.filePath] = created

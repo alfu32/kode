@@ -19,6 +19,38 @@ import kotlin.test.assertTrue
 
 class H2SemanticStoreTest {
     @Test
+    fun readersKeepPreviousSnapshotDuringBackgroundPublication() {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val store = object : editor.codeintel.index.SemanticStore {
+            override fun replaceFile(
+                delta: editor.codeintel.model.FileSemanticDelta,
+                resolved: editor.codeintel.resolver.ResolvedSemanticProject
+            ) {
+                entered.countDown()
+                check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            }
+            override fun loadFiles() = emptyList<editor.codeintel.model.FileSemanticDelta>()
+            override fun hasData() = false
+        }
+        val index = SemanticIndex(store)
+        val before = index.snapshot()
+        val delta = KotlinSemanticAdapter().extract(SourceFile("Pending.kt", "kotlin", "class Pending", 1L))
+        val writer = java.util.concurrent.CompletableFuture.supplyAsync { index.apply(delta) }
+        try {
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertSame(before, index.snapshot())
+            assertTrue(before.workspaceSymbols().none())
+        } finally {
+            release.countDown()
+        }
+        val after = writer.get(5, java.util.concurrent.TimeUnit.SECONDS)
+        assertSame(after, index.snapshot())
+        assertTrue(after.workspaceSymbols().any { it.name == "Pending" })
+        assertTrue(before.workspaceSymbols().none())
+    }
+
+    @Test
     fun reusesSnapshotUntilSemanticRevisionChanges() {
         val index = SemanticIndex()
 

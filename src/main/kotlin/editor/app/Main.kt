@@ -1665,6 +1665,8 @@ private class SplitPanelsApp(
                 progress?.invoke("Indexing: ${idx + 1}/${files.size}")
             }
         } finally {
+            progress?.invoke("Indexing: resolving relationships and saving database")
+            progressFile?.invoke("Publishing semantic snapshot...")
             codeIntelIndexer.endSemanticBatch()
         }
         indexSdkSources()
