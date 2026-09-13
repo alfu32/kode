@@ -36,7 +36,7 @@ jobs:
       - name: Build Linux bundle and AppImage
         env:
           APPIMAGETOOL: ${{ runner.temp }}/appimagetool.AppImage
-        run: ./gradlew --no-daemon releaseBundle releaseAppImage -PreleaseNumber="${{ inputs.tag }}" -PbundleRuntime=true
+        run: ./gradlew --no-daemon releaseBundle releaseAppImage -PreleaseNumber="${{ inputs.tag }}" -PbundleRuntime=true -PdownloadTtydLibraries=false
       - name: Archive Linux bundle
         run: |
           set -euo pipefail

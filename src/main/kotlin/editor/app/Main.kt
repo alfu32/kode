@@ -222,7 +222,14 @@ fun main(args: Array<String>) {
             return
         }
         "serve" -> {
-            runServe(args.drop(1).toTypedArray())
+            val serveArgs = args.drop(1)
+            // Keep `kode serve -- -h` available for forwarding ttyd's own help,
+            // but make the conventional subcommand help form non-destructive.
+            if (serveArgs.takeWhile { it != "--" }.any { it == "-h" || it == "--help" }) {
+                printHelp()
+                return
+            }
+            runServe(serveArgs.toTypedArray())
             return
         }
         "cat" -> {
@@ -287,6 +294,10 @@ private fun printHelp() {
           --public                Bind 0.0.0.0
           --credential <u:p>      Basic auth credential passed to ttyd
           -- <args...>            Pass remaining args directly to ttyd
+
+        Browser shortcuts:
+          Chrome app mode:        google-chrome --app=http://127.0.0.1:<port>
+                                  (preserves Ctrl+T/Ctrl+W and similar terminal keys)
         """.trimIndent()
     )
 }
@@ -310,20 +321,19 @@ private fun runServe(args: Array<String>) {
     val ttyd = TtydAdapter.resolveLauncher()
     if (ttyd == null) {
         val platform = TtydAdapter.describePlatform()
-        val asset = TtydAdapter.assetNameForCurrentPlatform()
+        val asset = TtydAdapter.platformForCurrentPlatform()?.resourcePath
         System.err.println("`kode serve` requires bundled ttyd, but no usable ttyd launcher is available for $platform.")
         if (asset != null) {
-            System.err.println("Expected bundled asset: /native/ttyd/$asset")
-            System.err.println("Vendor ttyd native libraries in src/main/resources/native/ttyd or run `./gradlew -PdownloadTtydLibraries=true downloadTtydLibraries fatJar` before packaging.")
+            System.err.println("Expected bundled asset: /native/$asset")
+            System.err.println("Provide the matching shared library under src/main/resources/native/<os>/<arch>/ and rebuild the jar.")
         } else {
-            System.err.println("This OS is not mapped to a ttyd native library asset.")
+            System.err.println("This OS/CPU is not mapped to a bundled ttyd shared library; provide and map one for this platform.")
         }
         exitProcess(1)
     }
 
     val ttydArgs = buildTtydArguments(options, kodeCommand)
-    val ttydKind = if (ttyd.mode == TtydLaunchMode.EXECUTABLE) "executable" else "native library"
-    println("Serving Kode with bundled ttyd $ttydKind (${ttyd.assetName}) at http://${options.host}:${options.port}")
+    println("Serving Kode with bundled ttyd shared library (${ttyd.resourcePath}) at http://${options.host}:${options.port}")
     if (options.host == "127.0.0.1" || options.host == "localhost") {
         println("Remote access through SSH tunnel: ssh -L ${options.port}:127.0.0.1:${options.port} <host>")
     } else if (options.credential == null) {
@@ -333,7 +343,7 @@ private fun runServe(args: Array<String>) {
     val exit = try {
         TtydAdapter.invoke(ttyd, ttydArgs)
     } catch (ex: Throwable) {
-        System.err.println("Failed to start bundled ttyd $ttydKind (${ttyd.assetName}): ${ex.message}")
+        System.err.println("Failed to start bundled ttyd shared library (${ttyd.resourcePath}): ${ex.message}")
         1
     }
     exitProcess(exit)

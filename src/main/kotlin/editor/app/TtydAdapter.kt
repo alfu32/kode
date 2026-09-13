@@ -5,7 +5,6 @@ import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
-import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -15,21 +14,22 @@ import java.util.Locale
 
 internal data class TtydLibrary(
     val path: Path,
-    val assetName: String,
-    val mode: TtydLaunchMode
+    val resourcePath: String
 )
 
-internal enum class TtydLaunchMode {
-    NATIVE_LIBRARY,
-    EXECUTABLE
-}
+internal data class TtydPlatform(
+    val os: String,
+    val arch: String,
+    /** Relative path below the classpath `native/` directory. */
+    val resourcePath: String
+)
 
 internal object TtydAdapter {
-    private const val RESOURCE_ROOT = "/native/ttyd"
+    private const val RESOURCE_ROOT = "/native"
 
     fun resolveLauncher(): TtydLibrary? {
-        val asset = assetNameForCurrentPlatform() ?: return null
-        return extractBundledLibrary(asset, launchModeForAsset(asset))
+        val platform = platformForCurrentPlatform()
+        return platform?.let { extractBundledLibrary(it.resourcePath) }
     }
 
     fun describePlatform(
@@ -38,24 +38,53 @@ internal object TtydAdapter {
     ): String = "${normalizeOs(osName)}/${normalizeArch(archName)}"
 
     fun assetNameForCurrentPlatform(): String? =
-        assetNameFor(System.getProperty("os.name").orEmpty())
+        platformFor(
+            osName = System.getProperty("os.name").orEmpty(),
+            archName = System.getProperty("os.arch").orEmpty()
+        )?.resourcePath
 
-    internal fun assetNameFor(osName: String): String? =
-        when (normalizeOs(osName)) {
-            "linux" -> "ttyd.linux.so"
-            "macos" -> "ttyd.macos.dylib"
-            "windows" -> "ttyd.msvc.dll"
+    internal fun platformForCurrentPlatform(): TtydPlatform? =
+        platformFor(
+            osName = System.getProperty("os.name").orEmpty(),
+            archName = System.getProperty("os.arch").orEmpty()
+        )
+
+    internal fun assetNameFor(
+        osName: String,
+        archName: String = System.getProperty("os.arch").orEmpty()
+    ): String? = platformFor(osName, archName)?.resourcePath
+
+    /** Returns the hierarchical resource path used for a platform's shared library. */
+    internal fun resourcePathFor(
+        osName: String,
+        archName: String = System.getProperty("os.arch").orEmpty()
+    ): String? = platformFor(osName, archName)?.resourcePath
+
+    internal fun platformFor(osName: String, archName: String): TtydPlatform? {
+        val os = normalizeOs(osName)
+        val arch = normalizeArch(archName)
+        return when (os) {
+            "linux" -> when (arch) {
+                "x86_64" -> TtydPlatform(os, arch, "linux/x86_64/ttyd.so")
+                "aarch64" -> TtydPlatform(os, arch, "linux/aarch64/ttyd.so")
+                else -> null
+            }
+            "macos" -> when (arch) {
+                "aarch64" -> TtydPlatform(os, arch, "macos/aarch64/ttyd.dylib")
+                "x86_64" -> TtydPlatform(os, arch, "macos/x86_64/ttyd.dylib")
+                else -> null
+            }
+            "windows" -> when (arch) {
+                "x86_64" -> TtydPlatform(os, arch, "windows/x86_64/ttyd.dll")
+                "aarch64" -> TtydPlatform(os, arch, "windows/aarch64/ttyd.dll")
+                else -> null
+            }
             else -> null
         }
+    }
 
-    fun invoke(launcher: TtydLibrary, argv: List<String>): Int =
-        when (launcher.mode) {
-            TtydLaunchMode.NATIVE_LIBRARY -> invokeMain(launcher, argv)
-            TtydLaunchMode.EXECUTABLE -> invokeExecutable(launcher, argv)
-        }
-
-    private fun invokeMain(library: TtydLibrary, argv: List<String>): Int {
-        val nativeLibrary = NativeLibrary.getInstance(library.path.toString())
+    fun invoke(launcher: TtydLibrary, argv: List<String>): Int {
+        val nativeLibrary = NativeLibrary.getInstance(launcher.path.toString())
         val main = nativeLibrary.getFunction("main", Function.C_CONVENTION)
         val nativeArgs = argv.map { toNativeCString(it) }
         val argvMemory = Memory(((nativeArgs.size + 1) * Native.POINTER_SIZE).toLong())
@@ -66,26 +95,6 @@ internal object TtydAdapter {
         return main.invokeInt(arrayOf(nativeArgs.size, argvMemory))
     }
 
-    private fun invokeExecutable(executable: TtydLibrary, argv: List<String>): Int {
-        val command = listOf(executable.path.toString()) + argv.drop(1)
-        return ProcessBuilder(command)
-            .inheritIO()
-            .start()
-            .waitFor()
-    }
-
-    fun findExecutable(name: String = "ttyd"): Path? {
-        val candidates = if (isWindows()) listOf("$name.exe", "$name.cmd", "$name.bat", name) else listOf(name)
-        return System.getenv("PATH")
-            ?.split(File.pathSeparator)
-            .orEmpty()
-            .asSequence()
-            .flatMap { dir -> candidates.asSequence().map { Paths.get(dir).resolve(it) } }
-            .firstOrNull { Files.isExecutable(it) }
-            ?.toAbsolutePath()
-            ?.normalize()
-    }
-
     private fun toNativeCString(value: String): Memory {
         val bytes = value.toByteArray(StandardCharsets.UTF_8)
         val memory = Memory((bytes.size + 1).toLong())
@@ -94,35 +103,26 @@ internal object TtydAdapter {
         return memory
     }
 
-    private fun extractBundledLibrary(asset: String, mode: TtydLaunchMode): TtydLibrary? {
-        val resource = "$RESOURCE_ROOT/$asset"
+    private fun extractBundledLibrary(resourcePath: String): TtydLibrary? {
+        val resource = "$RESOURCE_ROOT/$resourcePath"
         val bytes = TtydAdapter::class.java.getResourceAsStream(resource)?.use { it.readBytes() } ?: return null
         val hash = sha256(bytes).take(16)
+        val assetName = resourcePath.substringAfterLast('/')
         for (root in resolveCacheRoots()) {
             val cacheDir = root.resolve("kode").resolve("ttyd-lib").resolve(hash)
-            val target = cacheDir.resolve(asset)
+            val target = cacheDir.resolve(assetName)
             runCatching {
                 Files.createDirectories(cacheDir)
                 if (!Files.exists(target) || Files.size(target) != bytes.size.toLong()) {
                     Files.write(target, bytes)
                 }
                 target.toFile().setReadable(true, false)
-                if (mode == TtydLaunchMode.EXECUTABLE) {
-                    target.toFile().setExecutable(true, false)
-                }
             }.onSuccess {
-                return TtydLibrary(target, asset, mode)
+                return TtydLibrary(target, resourcePath)
             }
         }
         return null
     }
-
-    private fun launchModeForAsset(asset: String): TtydLaunchMode =
-        if (asset.endsWith(".exe", ignoreCase = true)) {
-            TtydLaunchMode.EXECUTABLE
-        } else {
-            TtydLaunchMode.NATIVE_LIBRARY
-        }
 
     private fun resolveCacheRoots(): List<Path> {
         val roots = linkedSetOf<Path>()

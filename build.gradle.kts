@@ -82,10 +82,12 @@ kotlin {
 val externalColorMap = layout.projectDirectory.file("token-colors.txt")
 val ttydResourceDir = layout.buildDirectory.dir("generated/ttyd-resources")
 val ttydReleaseBaseUrl = "https://github.com/alfu32/ttyd/releases/latest/download"
+data class TtydAsset(val remoteName: String, val resourcePath: String)
+
 val ttydAssets = listOf(
-    "ttyd.macos.dylib",
-    "ttyd.msvc.dll",
-    "ttyd.linux.so"
+    TtydAsset("ttyd.macos.dylib", "native/macos/aarch64/ttyd.dylib"),
+    TtydAsset("ttyd.msvc.dll", "native/windows/x86_64/ttyd.dll"),
+    TtydAsset("ttyd.linux.so", "native/linux/x86_64/ttyd.so")
 )
 val downloadBundledTtydLibraries = providers.gradleProperty("downloadTtydLibraries")
     .map { value ->
@@ -102,17 +104,18 @@ val downloadBundledTtydLibraries = providers.gradleProperty("downloadTtydLibrari
 
 tasks.register("downloadTtydLibraries") {
     group = "distribution"
-    description = "Download ttyd native libraries into generated resources for bundled serve mode"
+    description = "Download ttyd shared libraries into generated resources for bundled serve mode"
     outputs.dir(ttydResourceDir)
     outputs.upToDateWhen { false }
     doLast {
-        val outDir = ttydResourceDir.get().asFile.resolve("native/ttyd")
+        val outDir = ttydResourceDir.get().asFile
         outDir.deleteRecursively()
         outDir.mkdirs()
         ttydAssets.forEach { asset ->
-            val target = outDir.resolve(asset)
-            val temp = outDir.resolve("$asset.download")
-            val url = "$ttydReleaseBaseUrl/$asset"
+            val target = outDir.resolve(asset.resourcePath)
+            target.parentFile.mkdirs()
+            val temp = target.resolveSibling("${target.name}.download")
+            val url = "$ttydReleaseBaseUrl/${asset.remoteName}"
             println("Downloading $url")
             URI(url).toURL().openStream().use { input ->
                 temp.outputStream().use { output -> input.copyTo(output) }
@@ -174,7 +177,7 @@ tasks.register<Jar>("fatJar") {
         dependsOn(ttydLibraries)
         from(ttydResourceDir)
     } else {
-        logger.lifecycle("Using vendored ttyd native libraries from src/main/resources.")
+        logger.lifecycle("Using vendored ttyd shared libraries from src/main/resources/native/<os>/<arch>/.")
     }
 
     // include compiled classes/resources of this project
