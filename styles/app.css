@@ -207,6 +207,10 @@ code-tab {
     bg: #1a2237;
     fg: #30394f;
 }
+code-fold-placeholder {
+    bg: #25345a;
+    fg: #9fb7ff;
+}
 keyword {
     bg: #1a2237;
 }

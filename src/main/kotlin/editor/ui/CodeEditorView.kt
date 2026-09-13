@@ -97,6 +97,9 @@ class CodeEditorView(
     private val previewLineNumbers: MutableList<Int> = mutableListOf()
     private var cachedCodeIntelTokensByLine: Map<Int, List<editor.grammars.Token>> = emptyMap()
     private var cachedCodeIntelTokenVersion: Long = -1L
+    private var foldRegions: List<FoldRegion> = emptyList()
+    private var foldRegionsByStart: Map<Int, FoldRegion> = emptyMap()
+    private val collapsedFoldStarts = mutableSetOf<Int>()
     private var paintedText: String = ""
     private var observedSemanticRevision: Long? = null
     private data class PendingFileLoad(val requestId: Long, val content: String)
@@ -108,6 +111,9 @@ class CodeEditorView(
 
     fun loadTextContent(text: String) {
         buffer.loadText(text)
+        collapsedFoldStarts.clear()
+        foldRegions = emptyList()
+        foldRegionsByStart = emptyMap()
         scrollTop = 0
         lastIndexedVersion = -1
         clearCodeIntelTokenCache()
@@ -174,6 +180,9 @@ class CodeEditorView(
             }
         }
         buffer.restoreState(state.buffer)
+        collapsedFoldStarts.clear()
+        foldRegions = emptyList()
+        foldRegionsByStart = emptyMap()
         scrollTop = state.scrollTop.coerceAtLeast(0)
         lastIndexedVersion = -1
         clearCodeIntelTokenCache()
@@ -189,6 +198,9 @@ class CodeEditorView(
         grammarLanguage = language
         grammarAvailable = language != null && syntaxProvider?.languages()?.contains(language) == true
         buffer.loadText(content)
+        collapsedFoldStarts.clear()
+        foldRegions = emptyList()
+        foldRegionsByStart = emptyMap()
         scrollTop = 0
         lastIndexedVersion = -1
         clearCodeIntelTokenCache()
@@ -216,6 +228,9 @@ class CodeEditorView(
         this.grammarAvailable = grammarAvailable
         this.grammarLanguage = grammarLanguage ?: detection?.language
         scrollTop = 0
+        collapsedFoldStarts.clear()
+        foldRegions = emptyList()
+        foldRegionsByStart = emptyMap()
         lastIndexedVersion = -1
         clearCodeIntelTokenCache()
         loadingFile = true
@@ -270,6 +285,8 @@ class CodeEditorView(
             } ?: baseBody.fg,
             bg = baseBody.bg
         )
+        val foldPlaceholderStyle = localStyleSheet.getStyle("code-fold-placeholder")
+            .withDefaults(baseBody.fg, baseBody.bg)
         val effectiveSearchVisible = searchVisible
         val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyStartRow = 1 + searchHeight
@@ -382,8 +399,14 @@ class CodeEditorView(
                 val visualLine = visualLines.getOrElse(lineNumber) { VisualLine("") }
 
                 canvas.withStyle(gutterStyle) {
+                    val foldMarker = when {
+                        wrapped.foldEndLine != null -> "+"
+                        foldRegionStartingAt(lineNumber) != null -> "-"
+                        else -> " "
+                    }
+                    val numberWidth = (gutterWidth - 2).coerceAtLeast(1)
                     val g = if (wrapped.startColumn == 0) {
-                        (lineNumber + 1).toString().padStart(gutterWidth - 1, ' ') + " "
+                        "$foldMarker ${(lineNumber + 1).toString().padStart(numberWidth, ' ')}"
                     } else {
                         " ".repeat(gutterWidth)
                     }
@@ -419,6 +442,23 @@ class CodeEditorView(
                     if (start < end) {
                         visualLine.visualColumn(start) - visualStart until visualLine.visualColumn(end) - visualStart
                     } else null
+                }
+                if (wrapped.foldEndLine != null) {
+                    renderFoldedLine(
+                        canvas = this,
+                        firstText = chunkText,
+                        lastText = VisualLine(lines.getOrElse(wrapped.foldEndLine) { "" }).visualText,
+                        y = y,
+                        startX = gutterWidth,
+                        maxCols = contentCols,
+                        tokens = chunkTokens,
+                        overlayTokens = chunkIntelTokens,
+                        baseStyle = bodyStyle,
+                        selection = chunkSelection,
+                        selectionStyle = selectionStyle,
+                        foldStyle = foldPlaceholderStyle
+                    )
+                    return@forEachIndexed
                 }
                 renderLineWithTokens(
                     canvas = this,
@@ -626,6 +666,28 @@ class CodeEditorView(
                 clearHoverInfo()
                 if (handleUsageClick(event)) return true
                 if (handleSuggestionClick(event)) return true
+                val visualIndex = (scrollTop + (y - bodyStartRow)).coerceAtLeast(0)
+                val clickedRow = layout.wrapped.getOrNull(visualIndex)
+                if (clickedRow != null && ex < gutterWidth) {
+                    val foldStart = when {
+                        clickedRow.foldEndLine != null -> clickedRow.lineIndex
+                        else -> clickedRow.lineIndex.takeIf { foldRegionStartingAt(it) != null }
+                    }
+                    if (foldStart != null) {
+                        toggleFold(foldStart)
+                        return true
+                    }
+                }
+                if (clickedRow?.foldEndLine != null && foldEllipsisHit(
+                        clickedRow,
+                        layout,
+                        ex - gutterWidth,
+                        contentCols
+                    )
+                ) {
+                    toggleFold(clickedRow.lineIndex)
+                    return true
+                }
                 if (event.ctrl && handleCtrlClick(event, bodyStartRow, layout, gutterWidth)) {
                     return true
                 }
@@ -725,7 +787,9 @@ class CodeEditorView(
                 val afterSelection = if (buffer.hasSelection()) buffer.selectionText() else null
                 val moved = beforeCursor != afterCursor || beforeSelection != afterSelection
                 val textChanged = beforeText != buffer.text()
-                ensureCursorVisible(rows, searchHeight, layout, gutterWidth)
+                if (moved || textChanged) expandFoldContaining(afterCursor.line)
+                val updatedLayout = cachedLayout(contentCols)
+                ensureCursorVisible(rows, searchHeight, updatedLayout, gutterWidth)
                 if (textChanged) {
                     triggerCodeIntel()
                     suggestionPopup = null
@@ -1490,6 +1554,10 @@ class CodeEditorView(
         val lineText = layout.rawLines.getOrElse(wrapped.lineIndex) { "" }
         val visualLine = layout.visualLines.getOrElse(wrapped.lineIndex) { VisualLine(lineText) }
         val targetCol = visualLine.rawColumn(visualLine.visualColumn(wrapped.startColumn) + relX)
+        if (wrapped.foldEndLine != null && foldEllipsisHit(wrapped, layout, relX, layout.contentWidth)) {
+            toggleFold(wrapped.lineIndex)
+            return true
+        }
         val pos = Position(wrapped.lineIndex, targetCol)
         if (startSelection) {
             buffer.startSelection(pos)
@@ -1948,10 +2016,36 @@ class CodeEditorView(
         val width = contentCols.coerceAtLeast(1)
         val wrapped = mutableListOf<WrappedLine>()
         val visualLines = lines.map { VisualLine(it) }
+        foldRegions = detectFoldRegions(lines)
+        val regionByStart = foldRegions.groupBy { it.startLine }
+            .mapValues { (_, regionsAtLine) -> regionsAtLine.maxBy { it.endLine } }
+        foldRegionsByStart = regionByStart
+        collapsedFoldStarts.retainAll(regionByStart.keys)
         val lineOffsets = IntArray(lines.size)
         val wrapCounts = IntArray(lines.size)
-        visualLines.forEachIndexed { idx, line ->
+        var idx = 0
+        while (idx < visualLines.size) {
+            val line = visualLines[idx]
             lineOffsets[idx] = wrapped.size
+            val foldedRegion = regionByStart[idx]?.takeIf { it.startLine in collapsedFoldStarts }
+            if (foldedRegion != null) {
+                wrapped.add(
+                    WrappedLine(
+                        lineIndex = idx,
+                        startColumn = 0,
+                        endColumn = line.rawText.length,
+                        foldEndLine = foldedRegion.endLine
+                    )
+                )
+                wrapCounts[idx] = 1
+                for (hiddenLine in (idx + 1)..foldedRegion.endLine) {
+                    if (hiddenLine !in lineOffsets.indices) break
+                    lineOffsets[hiddenLine] = wrapped.lastIndex
+                    wrapCounts[hiddenLine] = 1
+                }
+                idx = foldedRegion.endLine + 1
+                continue
+            }
             val len = line.rawText.length
             if (line.visualText.isEmpty()) {
                 wrapped.add(WrappedLine(idx, 0, 0))
@@ -1970,11 +2064,187 @@ class CodeEditorView(
                 }
                 wrapCounts[idx] = maxOf(1, count)
             }
+            idx++
         }
         if (lines.isEmpty()) {
             wrapped.add(WrappedLine(0, 0, 0))
         }
-        return VisualLayout(lines, visualLines, wrapped, lineOffsets, wrapCounts, width)
+        return VisualLayout(
+            lines,
+            visualLines,
+            wrapped,
+            lineOffsets,
+            wrapCounts,
+            width
+        )
+    }
+
+    private fun detectFoldRegions(lines: List<String>): List<FoldRegion> {
+        val regions = mutableListOf<FoldRegion>()
+        val stack = ArrayDeque<Int>()
+        var blockComment = false
+        lines.forEachIndexed { lineIndex, line ->
+            var quote: Char? = null
+            var escaped = false
+            var index = 0
+            while (index < line.length) {
+                val ch = line[index]
+                if (blockComment) {
+                    if (ch == '*' && index + 1 < line.length && line[index + 1] == '/') {
+                        blockComment = false
+                        index += 2
+                        continue
+                    }
+                    index++
+                    continue
+                }
+                if (quote != null) {
+                    if (escaped) {
+                        escaped = false
+                    } else if (ch == '\\') {
+                        escaped = true
+                    } else if (ch == quote) {
+                        quote = null
+                    }
+                    index++
+                    continue
+                }
+                if (ch == '/' && index + 1 < line.length && line[index + 1] == '/') break
+                if (ch == '/' && index + 1 < line.length && line[index + 1] == '*') {
+                    blockComment = true
+                    index += 2
+                    continue
+                }
+                if (ch == '"' || ch == '\'' || ch == '`') {
+                    quote = ch
+                } else if (ch == '{') {
+                    stack.addLast(lineIndex)
+                } else if (ch == '}' && stack.isNotEmpty()) {
+                    val start = stack.removeLast()
+                    if (lineIndex > start) regions += FoldRegion(start, lineIndex)
+                }
+                index++
+            }
+        }
+        if (language?.lowercase() in setOf("python", "yaml", "yml", "bash", "powershell", "ruby")) {
+            lines.forEachIndexed { start, line ->
+                val trimmed = line.trim()
+                if (trimmed.isEmpty() || !startsIndentBlock(trimmed)) return@forEachIndexed
+                val indent = indentationWidth(line)
+                var end = start + 1
+                while (end < lines.size) {
+                    val candidate = lines[end]
+                    if (candidate.trim().isNotEmpty() && indentationWidth(candidate) <= indent) break
+                    end++
+                }
+                val last = end - 1
+                if (last > start) regions += FoldRegion(start, last)
+            }
+        }
+        return regions.distinct().sortedWith(compareBy<FoldRegion> { it.startLine }.thenByDescending { it.endLine })
+    }
+
+    private fun startsIndentBlock(trimmed: String): Boolean {
+        if (trimmed.endsWith(":")) return true
+        return language?.lowercase() == "ruby" &&
+            trimmed.matches(Regex("(?:class|module|def|if|unless|case|begin|while|until|for|do)\\b.*"))
+    }
+
+    private fun indentationWidth(line: String): Int {
+        var width = 0
+        for (ch in line) {
+            when (ch) {
+                ' ' -> width++
+                '\t' -> width += TAB_WIDTH
+                else -> break
+            }
+        }
+        return width
+    }
+
+    private fun foldRegionStartingAt(line: Int): FoldRegion? =
+        foldRegionsByStart[line]
+
+    private fun toggleFold(line: Int) {
+        if (foldRegionStartingAt(line) == null) return
+        if (!collapsedFoldStarts.add(line)) collapsedFoldStarts.remove(line)
+        lastLayout = null
+        rerenderOnce = true
+        onInvalidate()
+    }
+
+    private fun expandFoldContaining(line: Int): Boolean {
+        val region = foldRegions.firstOrNull {
+            it.startLine < line && line <= it.endLine && it.startLine in collapsedFoldStarts
+        } ?: return false
+        collapsedFoldStarts.remove(region.startLine)
+        lastLayout = null
+        rerenderOnce = true
+        onInvalidate()
+        return true
+    }
+
+    private fun foldEllipsisHit(
+        wrapped: WrappedLine,
+        layout: VisualLayout,
+        visualColumn: Int,
+        maxCols: Int
+    ): Boolean {
+        val endLine = wrapped.foldEndLine ?: return false
+        val first = layout.visualLines.getOrElse(wrapped.lineIndex) { VisualLine("") }.visualText
+        val last = VisualLine(layout.rawLines.getOrElse(endLine) { "" }).visualText
+        val marker = " ... "
+        val tailBudget = minOf(last.length, (maxCols / 3).coerceAtLeast(1))
+        val headBudget = (maxCols - marker.length - tailBudget).coerceAtLeast(1)
+        val markerStart = minOf(first.length, headBudget)
+        return visualColumn in markerStart until (markerStart + marker.length).coerceAtMost(maxCols)
+    }
+
+    private fun renderFoldedLine(
+        canvas: CanvasRenderer,
+        firstText: String,
+        lastText: String,
+        y: Int,
+        startX: Int,
+        maxCols: Int,
+        tokens: List<editor.grammars.Token>,
+        overlayTokens: List<editor.grammars.Token>,
+        baseStyle: StyleSet,
+        selection: IntRange?,
+        selectionStyle: StyleSet,
+        foldStyle: StyleSet
+    ) {
+        if (maxCols <= 0) return
+        val marker = " ... "
+        val tailBudget = minOf(lastText.length, (maxCols / 3).coerceAtLeast(1))
+        val headBudget = (maxCols - marker.length - tailBudget).coerceAtLeast(1)
+        val head = firstText.take(headBudget)
+        val tail = lastText.takeLast(tailBudget)
+        renderLineWithTokens(
+            canvas = canvas,
+            text = firstText,
+            y = y,
+            startX = startX,
+            maxCols = head.length,
+            tokens = tokens,
+            overlayTokens = overlayTokens,
+            baseStyle = baseStyle,
+            selection = selection?.takeIf { it.first < head.length }?.let { it.first until minOf(it.last + 1, head.length) },
+            selectionStyle = selectionStyle,
+            highlights = emptyList(),
+            highlightStyle = baseStyle,
+            activeHighlightStyle = baseStyle
+        )
+        val markerX = startX + head.length
+        canvas.withStyle(foldStyle) {
+            drawText(markerX, y, marker.take(maxCols - head.length))
+        }
+        val tailX = markerX + marker.length
+        if (tail.isNotEmpty() && tailX < startX + maxCols) {
+            canvas.withStyle(baseStyle) {
+                drawText(tailX, y, tail.take((startX + maxCols - tailX).coerceAtLeast(0)))
+            }
+        }
     }
 
     private fun visualRowForPosition(pos: Position, layout: VisualLayout): Int {
@@ -2440,7 +2710,13 @@ class CodeEditorView(
         }
     }
 
-    private data class WrappedLine(val lineIndex: Int, val startColumn: Int, val endColumn: Int)
+    private data class FoldRegion(val startLine: Int, val endLine: Int)
+    private data class WrappedLine(
+        val lineIndex: Int,
+        val startColumn: Int,
+        val endColumn: Int,
+        val foldEndLine: Int? = null
+    )
     private data class VisualLayout(
         val rawLines: List<String>,
         val visualLines: List<VisualLine>,

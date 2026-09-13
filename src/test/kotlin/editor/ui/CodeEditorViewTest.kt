@@ -170,6 +170,28 @@ class CodeEditorViewTest {
     }
 
     @Test
+    fun braceBlocksCanBeCollapsedFromTheGutter() {
+        val source = "fun main() {\n    println(\"one\")\n    println(\"two\")\n}"
+        val view = CodeEditorView(StyleSheet())
+        view.loadVirtualContent("fold.kt", source, "kotlin")
+        val renderer = StringSnapshotRenderer(cols = 80, rows = 8)
+
+        view.render(renderer)
+        assertTrue(renderer.snapshot().lines().drop(1).take(4).any { it.contains("- 1") })
+
+        assertTrue(view.dispatch(UIEvent(kind = "mouse_down", x = 0, y = 1)))
+        view.render(renderer)
+        val body = renderer.snapshot().lines().drop(1)
+        assertTrue(body.any { it.contains("+") && it.contains("...") })
+        assertTrue(body.none { it.contains("println(\"two\")") })
+
+        // Clicking the ellipsis expands the original source rows again.
+        assertTrue(view.dispatch(UIEvent(kind = "mouse_down", x = 15, y = 1)))
+        view.render(renderer)
+        assertTrue(renderer.snapshot().lines().drop(1).take(4).any { it.contains("println(\"two\")") })
+    }
+
+    @Test
     fun controlCharactersUseSingleCursorStepEscapes() {
         val ctor = Class.forName("editor.ui.CodeEditorView\$VisualLine").getDeclaredConstructor(String::class.java)
         ctor.isAccessible = true
