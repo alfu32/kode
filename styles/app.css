@@ -234,6 +234,11 @@ code-gutter {
     bg: #3f4e7e;
     fg: #b6b9c5;
 }
+code-fold-marker {
+    bg: #3f4e7e;
+    fg: #ffcc66;
+    text-decoration: bold;
+}
 code-selection {
     bg: #3f4e7e;
     fg: #b6b9c5;

@@ -287,6 +287,8 @@ class CodeEditorView(
         )
         val foldPlaceholderStyle = localStyleSheet.getStyle("code-fold-placeholder")
             .withDefaults(baseBody.fg, baseBody.bg)
+        val foldMarkerStyle = localStyleSheet.getStyle("code-fold-marker")
+            .withDefaults(gutterStyle.fg, gutterStyle.bg)
         val effectiveSearchVisible = searchVisible
         val searchHeight = if (effectiveSearchVisible) searchBar.preferredHeight().coerceAtMost(rows - 1) else 0
         val bodyStartRow = 1 + searchHeight
@@ -402,15 +404,20 @@ class CodeEditorView(
                     val foldMarker = when {
                         wrapped.foldEndLine != null -> "+"
                         foldRegionStartingAt(lineNumber) != null -> "-"
-                        else -> " "
+                        else -> ""
                     }
                     val numberWidth = (gutterWidth - 2).coerceAtLeast(1)
-                    val g = if (wrapped.startColumn == 0) {
-                        "$foldMarker ${(lineNumber + 1).toString().padStart(numberWidth, ' ')}"
+                    val number = if (wrapped.startColumn == 0) {
+                        (lineNumber + 1).toString().padStart(numberWidth, ' ')
                     } else {
-                        " ".repeat(gutterWidth)
+                        " ".repeat(numberWidth)
                     }
-                    drawText(0, y, g.take(gutterWidth))
+                    drawText(0, y, "$number ".take(gutterWidth).padEnd(gutterWidth, ' '))
+                    if (foldMarker.isNotEmpty()) {
+                        canvas.withStyle(foldMarkerStyle) {
+                            drawText(gutterWidth - 1, y, foldMarker)
+                        }
+                    }
                 }
 
                 if (contentCols <= 0) return@forEachIndexed

@@ -177,7 +177,7 @@ class CodeEditorViewTest {
         val renderer = StringSnapshotRenderer(cols = 80, rows = 8)
 
         view.render(renderer)
-        assertTrue(renderer.snapshot().lines().drop(1).take(4).any { it.contains("- 1") })
+        assertTrue(renderer.snapshot().lines().drop(1).take(4).any { it.contains("1 -") })
 
         assertTrue(view.dispatch(UIEvent(kind = "mouse_down", x = 0, y = 1)))
         view.render(renderer)
