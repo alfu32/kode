@@ -304,7 +304,10 @@ class AnsiCanvasRenderer(
             bytes.add(next.toByte())
             val c = next.toChar()
             seq.append(c)
-            if ((c in 'A'..'Z') || (c in 'a'..'z')) break
+            // ANSI CSI sequences end with a final byte in 0x40..0x7e.
+            // This includes '~' used by PageUp/PageDown (ESC[5~/ESC[6~),
+            // not just alphabetic navigation finals such as A/B/C/D.
+            if (next in 0x40..0x7e) break
         }
         val s = seq.toString()
         val finalChar = s.lastOrNull() ?: return null to bytesToHex(bytes.toByteArray())

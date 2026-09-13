@@ -30,6 +30,8 @@ import react.renderer.CanvasRenderer
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import editor.ui.SearchReplaceBar.SearchCommand
 
 class CodeEditorView(
@@ -42,7 +44,9 @@ class CodeEditorView(
     private val navigationHandler: ((String, Position) -> Unit)? = null,
     private val projectRootProvider: () -> java.nio.file.Path = {
         Paths.get("").toAbsolutePath().normalize()
-    }
+    },
+    private val onInvalidate: () -> Unit = {},
+    private val onFileLoaded: (String) -> Unit = {}
 ) : BaseComponent(styleSheet) {
     private companion object {
         private const val HOVER_INFO_DELAY_MS = 500L
@@ -95,6 +99,10 @@ class CodeEditorView(
     private var cachedCodeIntelTokenVersion: Long = -1L
     private var paintedText: String = ""
     private var observedSemanticRevision: Long? = null
+    private data class PendingFileLoad(val requestId: Long, val content: String)
+    private val fileLoadSequence = AtomicLong(0L)
+    private val pendingFileLoad = AtomicReference<PendingFileLoad?>(null)
+    private var loadingFile = false
 
     fun textContent(): String = buffer.text()
 
@@ -200,12 +208,8 @@ class CodeEditorView(
         grammarAvailable: Boolean = false,
         grammarLanguage: String? = null
     ) {
-        val content = try {
-            File(path).readText()
-        } catch (_: Exception) {
-            ""
-        }
-        buffer.loadText(content)
+        val requestId = fileLoadSequence.incrementAndGet()
+        pendingFileLoad.set(null)
         filePath = path
         this.mime = detection?.mime
         this.language = detection?.language
@@ -214,11 +218,33 @@ class CodeEditorView(
         scrollTop = 0
         lastIndexedVersion = -1
         clearCodeIntelTokenCache()
+        loadingFile = true
+        buffer.loadText("")
+        rerenderOnce = true
+        Thread({
+            val content = runCatching { File(path).readText() }.getOrElse { "" }
+            if (fileLoadSequence.get() != requestId) return@Thread
+            pendingFileLoad.set(PendingFileLoad(requestId, content))
+            onInvalidate()
+        }, "code-editor-file-load").apply { isDaemon = true }.start()
+    }
+
+    private fun applyPendingFileLoad(): Boolean {
+        val pending = pendingFileLoad.getAndSet(null) ?: return false
+        if (pending.requestId != fileLoadSequence.get()) return false
+        buffer.loadText(pending.content)
+        loadingFile = false
+        lastIndexedVersion = -1
+        clearCodeIntelTokenCache()
         triggerCodeIntel(force = true)
         syncLsp(open = true)
+        onFileLoaded(filePath)
+        rerenderOnce = true
+        return true
     }
 
     override fun render(canvas: CanvasRenderer) {
+        applyPendingFileLoad()
         val rows = canvas.rows().coerceAtLeast(1)
         val totalCols = canvas.cols().coerceAtLeast(1)
         val previewCols = computePreviewWidth(totalCols)
@@ -342,6 +368,13 @@ class CodeEditorView(
 
         canvas.withStyle(bodyStyle) {
             drawRect(0, bodyStartRow, cols, bodyRows)
+            if (loadingFile) {
+                canvas.withStyle(gutterStyle) {
+                    drawText(0, bodyStartRow, " ".repeat(gutterWidth).take(gutterWidth))
+                }
+                drawText(gutterWidth, bodyStartRow, "Loading…".take(contentCols))
+                return@withStyle
+            }
             visibleRows.forEachIndexed { idx, wrapped ->
                 val lineNumber = wrapped.lineIndex
                 val y = bodyStartRow + idx
@@ -479,9 +512,11 @@ class CodeEditorView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        val fileLoaded = applyPendingFileLoad()
         if (event.kind == "animation_frame") {
             val now = event.timeMs ?: System.currentTimeMillis()
             val infoShown = maybeShowHoverInfo(now)
+            if (fileLoaded) return true
             if (rerenderOnce) {
                 rerenderOnce = false
                 lastLayout = null

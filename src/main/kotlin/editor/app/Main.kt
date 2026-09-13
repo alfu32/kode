@@ -936,7 +936,9 @@ private class SplitPanelsApp(
         // lsp = lspService, // keep it
         lsp = null,
         navigationHandler = this::navigateTo,
-        projectRootProvider = { projectRoot }
+        projectRootProvider = { projectRoot },
+        onInvalidate = { renderDirty.set(true) },
+        onFileLoaded = this::handleCodeFileLoaded
     )
     private val diffViewer = SideBySideDiffView(styleSheet)
     private val hexViewer = BinaryHexView(styleSheet)
@@ -1294,6 +1296,15 @@ private class SplitPanelsApp(
 
     private fun isOnSplitter(x: Int): Boolean = x == clampWidth(leftWidth, lastCols.coerceAtLeast(1))
 
+    private fun handleCodeFileLoaded(loadedPath: String) {
+        if (codeEditor.currentPath() == loadedPath) {
+            codeEditor.captureState(fileLastModified(loadedPath))?.let { state ->
+                recordRecent(loadedPath, state, ViewerType.CODE)
+            }
+        }
+        renderDirty.set(true)
+    }
+
     private fun openInViewer(path: String, detected: MimeTypeResult) {
         saveCurrentEditorState()
         clearDiffViewer()
@@ -1311,7 +1322,10 @@ private class SplitPanelsApp(
                 rightFocus = FocusTarget.CODE
                 focus = rightFocus
                 currentOpenPath = path
-                recordRecent(path, codeEditor.captureState(fileLastModified(path)), ViewerType.CODE)
+                // The file content is loaded asynchronously; completion callback records
+                // the populated editor state instead of persisting an empty placeholder.
+                savedEditors.remove(sessionManager.toAbsolute(path))
+                recordRecent(path, null, ViewerType.CODE)
             }
             MimeTypeCategory.BINARY, MimeTypeCategory.UNKNOWN -> {
                 // Unknown defaults to hex viewer.
@@ -1478,7 +1492,9 @@ private class SplitPanelsApp(
             codeIntelIndexer = codeIntelIndexer,
             codeIntel = codeIntelFacade,
             navigationHandler = this::navigateTo,
-            projectRootProvider = { projectRoot }
+            projectRootProvider = { projectRoot },
+            onInvalidate = { renderDirty.set(true) },
+            onFileLoaded = this::handleCodeFileLoaded
         )
         focus = FocusTarget.FILES
         rightFocus = FocusTarget.CODE
