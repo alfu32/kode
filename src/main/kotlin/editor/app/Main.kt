@@ -581,6 +581,7 @@ private fun ansiColor(color: react.Color): String =
     "\u001B[38;2;${color.r};${color.g};${color.b}m"
 
 private const val ANSI_RESET = "\u001B[0m"
+private val SCAN_PROGRESS_PATTERN = Regex("\\d+/\\d+")
 
 private fun resolveSelfJarPath(): Path? = runCatching {
     val uri = SplitPanelsApp::class.java.protectionDomain.codeSource?.location?.toURI() ?: return null
@@ -888,7 +889,7 @@ private class SplitPanelsApp(
     private val renderer: AnsiCanvasRenderer,
     private val onQuit: () -> Unit,
     private val runInitialScan: Boolean = true
-) : BaseComponent(styleSheet), StatusLineProvider, AppShutdown {
+) : BaseComponent(styleSheet), StatusLineProvider, AppShutdown, RenderInvalidator {
     // gotcha
     private var sessionManager = ProjectSessionManager(projectRoot)
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
@@ -916,6 +917,11 @@ private class SplitPanelsApp(
     private val dbManager = DbServerManager()
     private val codeIntelStore = DbCodeIntelStore { dbManager.jdbcUrl() }
     private val codeIntelIndexer = CodeIntelService(store = codeIntelStore)
+    private val renderDirty = AtomicBoolean(true)
+    private val scanActive = AtomicBoolean(false)
+    private val activeScanCancel = AtomicReference<AtomicBoolean?>(null)
+    private val scanStatusText = AtomicReference<String?>(null)
+    private val scanFileText = AtomicReference<String?>(null)
     // private val codeIntelFacade = CompositeEditorIntelligenceService(
     //     primary = LspEditorIntelligence(lspService),
     //     fallback = codeIntelIndexer
@@ -1631,11 +1637,45 @@ private class SplitPanelsApp(
         }
         val stats = codeIntelIndexer.stats()
         val idxLabel = "Idx:${stats.files}f/${stats.symbols}s"
-        return "$dbLabel  $idxLabel"
+        val scan = scanStatusText.get()?.let(::compactScanStatus)
+        val scanLabel = scan?.let { "  | $it" }.orEmpty()
+        return "$dbLabel  $idxLabel$scanLabel"
+    }
+
+    private fun compactScanStatus(status: String): String {
+        val detail = status.removePrefix("Indexing: ")
+        return when {
+            SCAN_PROGRESS_PATTERN.matches(detail) -> "Scan $detail"
+            detail.contains("resolving", ignoreCase = true) -> "Scan: resolving"
+            detail.contains("preparing", ignoreCase = true) -> "Scan: preparing"
+            detail.contains("aborted", ignoreCase = true) -> "Scan: aborted"
+            detail.contains("failed", ignoreCase = true) -> "Scan: failed"
+            else -> "Scan: active"
+        }
     }
 
     override fun shutdownApp() {
+        cancelCurrentScan()
         dbManager.stop()
+    }
+
+    override fun consumeInvalidation(): Boolean = renderDirty.getAndSet(false)
+
+    /** Requests cancellation of the active index pass without blocking the UI thread. */
+    fun cancelCurrentScan() {
+        activeScanCancel.get()?.set(true)
+        renderDirty.set(true)
+    }
+
+    private fun waitForCurrentScanToStop() {
+        while (scanActive.get()) {
+            try {
+                Thread.sleep(5L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            }
+        }
     }
 
     fun fullReindex(
@@ -1643,50 +1683,79 @@ private class SplitPanelsApp(
         progressFile: ((String) -> Unit)? = null,
         shouldAbort: (() -> Boolean)? = null,
     ) {
-        progress?.invoke("Indexing: preparing")
-        val startMs = System.currentTimeMillis()
-        val files = listFilesForIndex()
-        progress?.invoke("Indexing: 0/${files.size}")
-        progressFile?.invoke("Preparing file list...")
-        var indexed = 0
-        codeIntelIndexer.beginSemanticBatch()
-        try {
-            for ((idx, path) in files.withIndex()) {
-                if (shouldAbort?.invoke() == true) {
-                    progress?.invoke("Indexing: aborted")
-                    return
-                }
-                val detected = mimeDetector.detectFile(path)
-                val lang = detected?.language
-                val rel = projectRoot.relativize(path).toString()
-                progressFile?.invoke(rel)
-                if (!lang.isNullOrBlank()) {
-                    val text = runCatching { Files.readString(path) }.getOrNull()
-                    if (text != null) {
-                        codeIntelIndexer.indexDocumentNow(path.toString(), lang, text, version = 0L)
-                        indexed++
-                    }
-                }
-                progress?.invoke("Indexing: ${idx + 1}/${files.size}")
-            }
-        } finally {
-            progress?.invoke("Indexing: resolving relationships and saving database")
-            progressFile?.invoke("Publishing semantic snapshot...")
-            codeIntelIndexer.endSemanticBatch()
+        val scanCancel = AtomicBoolean(false)
+        if (!scanActive.compareAndSet(false, true)) return
+        activeScanCancel.set(scanCancel)
+        fun report(status: String) {
+            scanStatusText.set(status)
+            renderDirty.set(true)
+            progress?.invoke(status)
         }
-        indexSdkSources()
-        val elapsed = System.currentTimeMillis() - startMs
-        progress?.invoke("Indexing: complete ($indexed/${files.size}) in ${elapsed}ms")
+        fun reportFile(file: String) {
+            scanFileText.set(file)
+            renderDirty.set(true)
+            progressFile?.invoke(file)
+        }
+        fun aborted(): Boolean = scanCancel.get() || shouldAbort?.invoke() == true
+        val startMs = System.currentTimeMillis()
+        try {
+            report("Indexing: preparing")
+            val files = listFilesForIndex()
+            report("Indexing: 0/${files.size}")
+            reportFile("Preparing file list...")
+            var indexed = 0
+            codeIntelIndexer.beginSemanticBatch()
+            try {
+                for ((idx, path) in files.withIndex()) {
+                    if (aborted()) {
+                        report("Indexing: aborted")
+                        return
+                    }
+                    val detected = mimeDetector.detectFile(path)
+                    val lang = detected?.language
+                    val rel = projectRoot.relativize(path).toString()
+                    reportFile(rel)
+                    if (!lang.isNullOrBlank()) {
+                        val text = runCatching { Files.readString(path) }.getOrNull()
+                        if (text != null) {
+                            codeIntelIndexer.indexDocumentNow(path.toString(), lang, text, version = 0L)
+                            indexed++
+                        }
+                    }
+                    report("Indexing: ${idx + 1}/${files.size}")
+                }
+            } finally {
+                report("Indexing: resolving relationships and saving database")
+                reportFile("Publishing semantic snapshot...")
+                codeIntelIndexer.endSemanticBatch()
+            }
+            indexSdkSources()
+            val elapsed = System.currentTimeMillis() - startMs
+            report("Indexing: complete ($indexed/${files.size}) in ${elapsed}ms")
+        } finally {
+            scanStatusText.set(null)
+            scanFileText.set(null)
+            activeScanCancel.compareAndSet(scanCancel, null)
+            scanActive.set(false)
+            renderDirty.set(true)
+        }
     }
 
     private fun startExplicitRescan() {
         if (rescanVisible) return
+        cancelCurrentScan()
         rescanCancelRequested.set(false)
-        rescanStatus.set(RescanProgress("Rescan: clearing semantic database", "", done = false))
+        rescanStatus.set(RescanProgress("Rescan: stopping current scan", "", done = false))
         rescanVisible = true
         Thread({
             var aborted = false
             try {
+                waitForCurrentScanToStop()
+                if (rescanCancelRequested.get()) {
+                    aborted = true
+                    return@Thread
+                }
+                rescanStatus.set(RescanProgress("Rescan: clearing semantic database", "", done = false))
                 val cleared = dbManager.clearIndex()
                 codeIntelIndexer.clear()
                 if (!cleared) {
