@@ -210,6 +210,22 @@ code-tab {
 keyword {
     bg: #1a2237;
 }
+tag {
+    bg: #1a2237;
+    fg: #e8bf6a;
+}
+attribute {
+    bg: #1a2237;
+    fg: #a5c261;
+}
+string {
+    bg: #1a2237;
+    fg: #6a8759;
+}
+css.class {
+    bg: #1a2237;
+    fg: #9876aa;
+}
 code-gutter {
     bg: #3f4e7e;
     fg: #b6b9c5;

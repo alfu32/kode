@@ -2324,8 +2324,12 @@ class CodeEditorView(
             val tabs = mutableListOf<IntRange>()
             rawToVisual = IntArray(rawText.length + 1)
             var column = 0
-            rawText.forEachIndexed { index, ch ->
-                rawToVisual[index] = column
+            var index = 0
+            while (index < rawText.length) {
+                val codePoint = rawText.codePointAt(index)
+                val charCount = Character.charCount(codePoint)
+                repeat(charCount) { rawToVisual[index + it] = column }
+                val ch = rawText[index]
                 if (ch == '\t') {
                     // Keep the marker atomic: one logical tab is always rendered
                     // as exactly four terminal cells, regardless of its column.
@@ -2334,22 +2338,57 @@ class CodeEditorView(
                     out.append("|-->")
                     tabs += start until (start + spaces)
                     column += spaces
-                } else if (ch.isISOControl()) {
-                    val escaped = if (ch.code <= 0xFF) {
-                        "\\x%02X".format(ch.code)
-                    } else {
-                        "\\x%04X".format(ch.code)
-                    }
+                } else if (!isRenderable(codePoint)) {
+                    val escaped = escapeCodePoint(codePoint)
                     out.append(escaped)
                     column += escaped.length
                 } else {
-                    out.append(ch)
-                    column++
+                    // The diff renderer stores one UTF-16 code unit per cell.
+                    // Keep wide/non-BMP/combining runes deterministic by showing
+                    // their explicit escape instead of corrupting terminal columns.
+                    val width = runeWidth(codePoint)
+                    if (width != 1 || charCount != 1) {
+                        val escaped = escapeCodePoint(codePoint)
+                        out.append(escaped)
+                        column += escaped.length
+                    } else {
+                        out.append(ch)
+                        column++
+                    }
                 }
+                index += charCount
             }
             rawToVisual[rawText.length] = column
             visualText = out.toString()
             tabRanges = tabs
+        }
+
+        private fun isRenderable(codePoint: Int): Boolean {
+            val type = Character.getType(codePoint)
+            return !Character.isISOControl(codePoint) &&
+                type != Character.UNASSIGNED.toInt() &&
+                type != Character.SURROGATE.toInt() &&
+                type != Character.PRIVATE_USE.toInt() &&
+                type != Character.FORMAT.toInt()
+        }
+
+        private fun escapeCodePoint(codePoint: Int): String =
+            if (codePoint <= 0xFF) "\\x%02X".format(codePoint) else "\\x%04X".format(codePoint)
+
+        private fun runeWidth(codePoint: Int): Int = when {
+            Character.getType(codePoint) == Character.NON_SPACING_MARK.toInt() ||
+                Character.getType(codePoint) == Character.COMBINING_SPACING_MARK.toInt() -> 0
+            codePoint in 0x1100..0x115F ||
+                codePoint in 0x2329..0x232A ||
+                codePoint in 0x2E80..0xA4CF ||
+                codePoint in 0xAC00..0xD7A3 ||
+                codePoint in 0xF900..0xFAFF ||
+                codePoint in 0xFE10..0xFE19 ||
+                codePoint in 0xFE30..0xFE6F ||
+                codePoint in 0xFF00..0xFF60 ||
+                codePoint in 0xFFE0..0xFFE6 ||
+                codePoint in 0x1F300..0x1FAFF -> 2
+            else -> 1
         }
 
         fun visualColumn(rawColumn: Int): Int = rawToVisual[rawColumn.coerceIn(0, rawText.length)]

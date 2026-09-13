@@ -183,6 +183,15 @@ class CodeEditorViewTest {
     }
 
     @Test
+    fun nonBmpAndWideRunesUseExplicitEscapesInTheCellRenderer() {
+        val ctor = Class.forName("editor.ui.CodeEditorView\$VisualLine").getDeclaredConstructor(String::class.java)
+        ctor.isAccessible = true
+        val line = ctor.newInstance("a😀中b")
+        val visualText = line.javaClass.getDeclaredField("visualText").apply { isAccessible = true }.get(line) as String
+        assertEquals("a\\x1F600\\x4E2Db", visualText)
+    }
+
+    @Test
     fun logicalCursorStepsTreatTabAndControlAsOneCharacterEach() {
         val buffer = TextBuffer()
         buffer.loadText("\t\u0001x")

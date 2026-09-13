@@ -705,6 +705,10 @@ private class SplashApp(
             val dirty = when (event.kind) {
                 "key_down" -> {
                     if (event.key?.equals("Enter", ignoreCase = true) == true) {
+                        if (!scanStarted) {
+                            scanStarted = true
+                            startScan()
+                        }
                         enterPressed = true
                         true
                     } else {
@@ -763,7 +767,7 @@ private class SplashApp(
 
     private fun checkDismiss(): Boolean {
         if (splashDismissed) return false
-        if (enterPressed && scanDone.get()) {
+        if (enterPressed) {
             splashDismissed = true
             return true
         }
@@ -792,9 +796,10 @@ private class SplashApp(
             fileText
         )
         sourceRootNotice?.let { footerLines += it }
-        if (scanDone.get()) {
-            footerLines.add("Scan complete. Press Enter to begin.")
-        }
+        footerLines.add(
+            if (scanDone.get()) "Scan complete. Press Enter to begin."
+            else "Scan continues in the background. Press Enter to continue."
+        )
         val shortcutLines = HelpView.shortcutLines()
         val targetWidth = ((cols * 3) / 4).coerceAtLeast(20)
         val targetHeight = ((rows * 3) / 4).coerceAtLeast(6)

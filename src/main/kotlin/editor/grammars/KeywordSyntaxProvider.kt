@@ -13,6 +13,17 @@ import java.util.regex.Pattern
 object KeywordSyntaxProvider : SyntaxProvider {
     private val extensionIndex: Map<String, String> = emptyMap()
 
+    private val markupLanguages = setOf("html", "html-derivative", "xml", "xsl", "jsx", "tsx", "vue-html")
+    private val markupTagColor = Color.from("#E8BF6A")
+    private val markupAttributeColor = Color.from("#A5C261")
+    private val markupStringColor = Color.from("#6A8759")
+    private val cssClassColor = Color.from("#9876AA")
+    private val markupTagPattern = Pattern.compile("<\\s*/?\\s*([A-Za-z_][A-Za-z0-9_.:-]*)([^>]*)(?:>|$)")
+    private val markupProcessingPattern = Pattern.compile("<\\?\\s*([A-Za-z_][A-Za-z0-9_.:-]*)([^>]*)\\?>")
+    private val markupAttributePattern = Pattern.compile("\\b([A-Za-z_:][A-Za-z0-9_.:-]*)(?=\\s*=)")
+    private val markupValuePattern = Pattern.compile("=\\s*(\\\"(?:[^\\\"\\\\]|\\\\.)*\\\"|'(?:[^'\\\\]|\\\\.)*')")
+    private val cssClassPattern = Pattern.compile("(?<![A-Za-z0-9_-])\\.([A-Za-z_-][A-Za-z0-9_-]*)")
+
     private val colorOverrides: Map<String, Color> by lazy { loadColorOverrides() }
     private val defaultColor: Color = colorOverrides["default"] ?: Color.from("#CC7832")!!
     private data class KeywordEntry(val pattern: Pattern, val keywords: List<String>)
@@ -23,7 +34,14 @@ object KeywordSyntaxProvider : SyntaxProvider {
         tokensForLines(lineNumber, listOf(lineText), language)
 
     override fun tokensForLines(startLine: Int, lines: List<String>, language: String): List<Token> {
-        val entry = keywordEntries[language] ?: return emptyList()
+        val normalizedLanguage = language.lowercase(Locale.ROOT)
+        if (normalizedLanguage in markupLanguages) {
+            return markupTokens(startLine, lines, normalizedLanguage)
+        }
+        if (normalizedLanguage == "css" || normalizedLanguage == "scss" || normalizedLanguage == "less") {
+            return cssTokens(startLine, lines, normalizedLanguage)
+        }
+        val entry = keywordEntries[normalizedLanguage] ?: return emptyList()
         val pattern = entry.pattern
         if (lines.isEmpty()) return emptyList()
         val tokens = mutableListOf<Token>()
@@ -44,6 +62,89 @@ object KeywordSyntaxProvider : SyntaxProvider {
             }
         }
         return tokens
+    }
+
+    private fun markupTokens(startLine: Int, lines: List<String>, language: String): List<Token> {
+        val tokens = mutableListOf<Token>()
+        lines.forEachIndexed { index, line ->
+            val lineNumber = startLine + index
+            val tagRanges = mutableListOf<IntRange>()
+            fun addTag(match: java.util.regex.Matcher, nameGroup: Int, bodyGroup: Int? = null) {
+                val nameStart = match.start(nameGroup)
+                val nameEnd = match.end(nameGroup)
+                if (nameStart >= 0 && nameEnd > nameStart) {
+                    tokens += Token(nameStart, nameEnd, listOf("tag"), lineNumber,
+                        line.substring(nameStart, nameEnd), markupTagColor)
+                }
+                val bodyStart = bodyGroup?.let(match::start) ?: return
+                val bodyEnd = bodyGroup.let(match::end)
+                if (bodyStart < 0 || bodyEnd <= bodyStart) return
+                val body = line.substring(bodyStart, bodyEnd)
+                markupAttributePattern.matcher(body).let { attributes ->
+                    while (attributes.find()) {
+                        val attrStart = bodyStart + attributes.start(1)
+                        val attrEnd = bodyStart + attributes.end(1)
+                        val attrName = attributes.group(1)
+                        val scope = if (attrName.equals("class", true) || attrName.equals("className", true)) {
+                            "css.class"
+                        } else "attribute"
+                        tokens += Token(attrStart, attrEnd, listOf(scope), lineNumber,
+                            line.substring(attrStart, attrEnd), if (scope == "css.class") cssClassColor else markupAttributeColor)
+                    }
+                }
+                markupValuePattern.matcher(body).let { values ->
+                    while (values.find()) {
+                        val valueStart = bodyStart + values.start(1)
+                        val valueEnd = bodyStart + values.end(1)
+                        tokens += Token(valueStart, valueEnd, listOf("string"), lineNumber,
+                            line.substring(valueStart, valueEnd), markupStringColor)
+                    }
+                }
+                tagRanges += match.start() until match.end()
+            }
+            markupProcessingPattern.matcher(line).let { processing ->
+                while (processing.find()) addTag(processing, 1, 2)
+            }
+            markupTagPattern.matcher(line).let { tags ->
+                while (tags.find()) addTag(tags, 1, 2)
+            }
+            // JSX/TSX still needs its language keywords in addition to markup.
+            if (language == "jsx" || language == "tsx") {
+                val entry = keywordEntries[language]
+                if (entry != null) {
+                    val keywords = entry.pattern.matcher(line)
+                    while (keywords.find()) {
+                        if (tagRanges.none { keywords.start() in it }) {
+                            tokens += Token(keywords.start(), keywords.end(), listOf("keyword"), lineNumber,
+                                line.substring(keywords.start(), keywords.end()), colorFor("keyword"))
+                        }
+                    }
+                }
+            }
+        }
+        return tokens.sortedWith(compareBy<Token> { it.line }.thenBy { it.start }.thenBy { it.end })
+    }
+
+    private fun cssTokens(startLine: Int, lines: List<String>, language: String): List<Token> {
+        val tokens = mutableListOf<Token>()
+        val entry = keywordEntries[language]
+        lines.forEachIndexed { index, line ->
+            val lineNumber = startLine + index
+            cssClassPattern.matcher(line).let { classes ->
+                while (classes.find()) {
+                    tokens += Token(classes.start(), classes.end(), listOf("css.class"), lineNumber,
+                        line.substring(classes.start(), classes.end()), cssClassColor)
+                }
+            }
+            if (entry != null) {
+                val keywords = entry.pattern.matcher(line)
+                while (keywords.find()) {
+                    tokens += Token(keywords.start(), keywords.end(), listOf("keyword"), lineNumber,
+                        line.substring(keywords.start(), keywords.end()), colorFor("keyword"))
+                }
+            }
+        }
+        return tokens.sortedWith(compareBy<Token> { it.line }.thenBy { it.start }.thenBy { it.end })
     }
 
     override fun languages(): Set<String> = keywordEntries.keys

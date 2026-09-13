@@ -113,7 +113,7 @@ jsonc=\{\s*("(?:[^"\\]|\\.)*"|[A-Za-z_][A-Za-z0-9_]*)\s*:
 jsonl=^\s*\{.*\}\s*$
 jsonnet=(^|\b)(local|import|importstr|if|then|else|function)($|\b)
 jssm=(^|\b)(machine|state|initial|->|=>)($|\b)
-jsx=<\s*[A-Z][A-Za-z0-9]*[^>]*>|\b(import|from|export|default|class|extends|if|else|return)($|\b)
+jsx=<\s*[A-Z][A-Za-z0-9]*[^>]*>|(^|\b)(function|import|from|export|default|class|extends|if|else|for|while|return|const|let|var|new|this|super|async|await|try|catch|finally)($|\b)
 julia=(^|\b)(module|using|import|export|struct|mutable struct|function|end|if|elseif|else|for|while|return|begin|try|catch|finally|macro)($|\b)
 kdl=^[A-Za-z_][A-Za-z0-9_-]*(\s+[^;]*)?;?$
 kotlin=(@[a-zA-Z0-9_]+)|(^|\b)(override|operator|public|private|protected|companion|package|import|class|interface|object|data|sealed|enum|fun|val|var|if|else|for|while|when|return|this|super|is|in|as|break|continue|null)($|\b)

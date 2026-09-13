@@ -88,6 +88,7 @@ class TextBuffer : ITextBuffer {
        INTERNAL STATE
     ----------------------------------------------------------- */
     private var lines: MutableList<String> = mutableListOf("")
+    private var cachedText: String? = null
     private var cursor = Position()
     private var anchor: Position? = null
     private var clipboard: String = ""
@@ -115,7 +116,7 @@ class TextBuffer : ITextBuffer {
     ===============================================================
     */
 
-    override fun text(): String = lines.joinToString("\n")
+    override fun text(): String = cachedText ?: lines.joinToString("\n").also { cachedText = it }
 
     override fun cursorPosition(): Position = Position(cursor.line, cursor.column)
 
@@ -859,6 +860,7 @@ class TextBuffer : ITextBuffer {
     }
 
     private fun bumpVersion() {
+        cachedText = null
         docVersion++
     }
 
@@ -991,5 +993,4 @@ private fun BufferSnapshotState.toSnapshot(): BufferSnapshot =
 
 data class Notification(val kind: NotificationKind, val text: String)
 enum class NotificationKind { COPY, CUT }
-
 
