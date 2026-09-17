@@ -111,12 +111,17 @@ parts:
       cat > "$CRAFT_PART_INSTALL/bin/kode" <<'EOF'
       #!/bin/sh
       export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$SNAP_USER_COMMON/.cache}"
+      # Java keeps the host user.home inside strict confinement. JGit derives
+      # its XDG config path from this variable, so keep it in writable Snap
+      # data instead of attempting to read the inaccessible host config.
+      export XDG_CONFIG_HOME="$SNAP_USER_COMMON/.config"
       export KODE_TTYD_CACHE="$XDG_CACHE_HOME"
       JNA_TMPDIR="$SNAP_USER_COMMON/.jna-tmp"
       JAVA_TMPDIR="$SNAP_USER_COMMON/tmp"
       mkdir -p \
         "$SNAP_USER_COMMON/.tree-sitter/lib" \
         "$XDG_CACHE_HOME" \
+        "$XDG_CONFIG_HOME" \
         "$JNA_TMPDIR" \
         "$JAVA_TMPDIR"
       exec "$SNAP/opt/kode/runtime/bin/java" \
