@@ -917,6 +917,7 @@ private class SplitPanelsApp(
     private val initialFile: Path? = null
 ) : BaseComponent(styleSheet), StatusLineProvider, AppShutdown, RenderInvalidator {
     // gotcha
+    private var gitServiceState = createGitService(projectRoot)
     private var sessionManager = ProjectSessionManager(projectRoot)
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
     private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
@@ -953,7 +954,7 @@ private class SplitPanelsApp(
     //     fallback = codeIntelIndexer
     // ) // keep it
     private val codeIntelFacade = codeIntelIndexer
-    private var gitService: editor.lib.IGitService? = createGitService(projectRoot)
+    private var gitService: editor.lib.IGitService? = gitServiceState.service
     private var codeEditor = CodeEditorView(
         styleSheet,
         syntaxProvider = regexProvider,
@@ -972,7 +973,8 @@ private class SplitPanelsApp(
     private val gitPanel = GitPanelView(
         styleSheet,
         projectRoot,
-        createGitService(projectRoot),
+        gitServiceState.service,
+        gitServiceState.error,
         onShowDiff = { showDiffInMain(it) }
     )
     private val aboutView = AboutView(styleSheet, buildVersion)
@@ -1530,8 +1532,9 @@ private class SplitPanelsApp(
         focus = FocusTarget.FILES
         rightFocus = FocusTarget.CODE
         filesTabView.setRoot(projectRoot.toString())
-        gitService = createGitService(projectRoot)
-        gitPanel.setGitService(gitService, projectRoot)
+        gitServiceState = createGitService(projectRoot)
+        gitService = gitServiceState.service
+        gitPanel.setGitService(gitService, projectRoot, gitServiceState.error)
         projectSearchDialog.setProjectRoot(projectRoot)
         workspacePickerVisible = false
         workspacePicker = null
@@ -1670,8 +1673,33 @@ private class SplitPanelsApp(
         }
     }
 
-    private fun createGitService(root: Path): editor.lib.IGitService? {
-        return runCatching { JGitService(root.toFile()) }.getOrNull()
+    private data class GitServiceState(
+        val service: editor.lib.IGitService?,
+        val error: String?
+    )
+
+    private fun createGitService(root: Path): GitServiceState {
+        val absoluteRoot = root.toAbsolutePath().normalize()
+        return runCatching {
+            GitServiceState(JGitService(absoluteRoot.toFile()), null)
+        }.getOrElse { error ->
+            val detail = describeGitInitializationFailure(error)
+            System.err.println(
+                "Git repository initialization failed for project root '$absoluteRoot': $detail"
+            )
+            error.printStackTrace(System.err)
+            GitServiceState(null, detail)
+        }
+    }
+
+    private fun describeGitInitializationFailure(error: Throwable): String {
+        return generateSequence(error) { it.cause }
+            .mapNotNull { cause ->
+                val type = cause::class.simpleName ?: cause.javaClass.simpleName
+                cause.message?.takeIf { it.isNotBlank() }?.let { "$type: $it" } ?: type
+            }
+            .distinct()
+            .joinToString(" -> ")
     }
 
     override fun statusRight(): String {

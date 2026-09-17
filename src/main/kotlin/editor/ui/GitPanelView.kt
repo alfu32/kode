@@ -19,6 +19,7 @@ class GitPanelView(
     styleSheet: StyleSheet,
     private var root: Path,
     private var git: IGitService?,
+    private var gitInitializationError: String? = null,
     private val onShowDiff: (GitDiff) -> Unit = {}
 ) : BaseComponent(styleSheet) {
 
@@ -46,9 +47,14 @@ class GitPanelView(
         )
     }
 
-    fun setGitService(service: IGitService?, newRoot: Path) {
+    fun setGitService(
+        service: IGitService?,
+        newRoot: Path,
+        initializationError: String? = null
+    ) {
         root = newRoot
         git = service
+        gitInitializationError = initializationError
         refreshData()
     }
 
@@ -66,12 +72,14 @@ class GitPanelView(
         statusEntries = runCatching {
             svc.statusPorcelain().sortedBy { it.path }
         }.getOrElse { ex ->
+            logGitFailure("status", ex)
             errors += "Git status unavailable: ${formatGitError(ex)}"
             emptyList()
         }
         commitEntries = runCatching {
             svc.listCommits()
         }.getOrElse { ex ->
+            logGitFailure("commit listing", ex)
             errors += "Git commits unavailable: ${formatGitError(ex)}"
             emptyList()
         }
@@ -103,15 +111,22 @@ class GitPanelView(
     private fun renderMissingRepo(canvas: CanvasRenderer, cols: Int, rows: Int) {
         val lineStyle = styleSheet.getStyle("file-entry")
         val buttonStyle = styleSheet.getStyle("button")
+        val messages = buildList {
+            add("Project root: ${root.toAbsolutePath().normalize()}")
+            add(
+                gitInitializationError?.let { "Git initialization failed: $it" }
+                    ?: "Not a git repository."
+            )
+            add("Click init to run git init here.")
+        }
         canvas.withStyle(lineStyle) {
-            drawText(0, 0, "Not a git repository.".take(cols).padEnd(cols, ' '))
-            if (rows > 1) {
-                drawText(0, 1, "Click init to run git init here.".take(cols).padEnd(cols, ' '))
+            messages.take(rows).forEachIndexed { index, message ->
+                drawText(0, index, message.take(cols).padEnd(cols, ' '))
             }
         }
         val label = "[ git init ]"
         val start = 0
-        val row = 2.coerceAtMost(rows - 1)
+        val row = messages.size.coerceAtMost(rows - 1)
         canvas.withStyle(buttonStyle) {
             drawText(start, row, label.take(cols - start))
         }
@@ -150,6 +165,13 @@ class GitPanelView(
         val type = ex::class.simpleName ?: ex.javaClass.simpleName.ifBlank { "error" }
         val detail = ex.message?.takeIf { it.isNotBlank() }
         return if (detail == null) type else "$type: $detail"
+    }
+
+    private fun logGitFailure(operation: String, error: Throwable) {
+        System.err.println(
+            "Git $operation failed for project root '${root.toAbsolutePath().normalize()}': ${formatGitError(error)}"
+        )
+        error.printStackTrace(System.err)
     }
 
     private fun renderCommitBox(canvas: CanvasRenderer, cols: Int, offsetY: Int, height: Int) {
@@ -212,6 +234,7 @@ class GitPanelView(
                     runCatching { Git.init().setDirectory(root.toFile()).call() }
                         .onSuccess {
                             git = editor.lib.JGitService(root.toFile())
+                            gitInitializationError = null
                             refreshData()
                         }
                     return true
