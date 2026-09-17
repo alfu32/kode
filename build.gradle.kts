@@ -243,7 +243,14 @@ tasks.register<Copy>("distBundle") {
         }
     }
     into(distDir)
-    doFirst { distDir.asFile.mkdirs() }
+    doFirst {
+        distDir.asFile.mkdirs()
+        if (includeBundledRuntime) {
+            // jlink emits read-only legal files; remove the previous payload
+            // before Copy attempts to replace them on a repeated build.
+            delete(distDir.asFile.resolve("runtime"))
+        }
+    }
     doLast {
         if (includeBundledRuntime) {
             ensureUnixRuntimeExecutables(distDir.asFile)
