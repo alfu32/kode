@@ -126,6 +126,7 @@ parts:
         "$JAVA_TMPDIR"
       exec "$SNAP/opt/kode/runtime/bin/java" \
         -Dkode.home="$SNAP/opt/kode" \
+        -Duser.home="$SNAP_USER_COMMON" \
         -Djava.io.tmpdir="$JAVA_TMPDIR" \
         -Djna.boot.library.path="$SNAP/opt/kode/jna" \
         -Djna.tmpdir="$JNA_TMPDIR" \
