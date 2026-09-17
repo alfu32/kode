@@ -243,7 +243,7 @@ fun main(args: Array<String>) {
         }
     }
     if (args.size > 1) {
-        System.err.println("Expected a single folder argument.")
+        System.err.println("Expected a single file or folder argument.")
         printHelp()
         return
     }
@@ -254,19 +254,20 @@ fun main(args: Array<String>) {
     val styleSheet = StyleSheet.loadFromFiles(styleFiles)
     val buildVersion = resolveBuildVersion()
     val renderer = AnsiCanvasRenderer()
-    val workingDir = resolveWorkingDirectory(args)
+    val startupTarget = resolveStartupTarget(args)
 
     lateinit var app: SplitPanelsApp
     app = SplitPanelsApp(
         styleSheet,
         buildVersion,
-        workingDir,
+        startupTarget.projectRoot,
         renderer,
         onQuit = {
             app.persistSession(force = true)
             renderer.requestExit()
         },
-        runInitialScan = false
+        runInitialScan = false,
+        initialFile = startupTarget.file
     )
 
     val startup = SplashApp(styleSheet, buildVersion, app, renderer)
@@ -279,6 +280,7 @@ private fun printHelp() {
     println(
         """
         Usage:
+          kode <file>            Open and edit a file
           kode <folder>          Open project at folder
           kode cat <file>        Print file with syntax highlighting
           kode serve [options] [folder]
@@ -599,16 +601,29 @@ private fun resolveSelfJarPath(): Path? = runCatching {
     if (path.toString().lowercase(Locale.ROOT).endsWith(".jar")) path else null
 }.getOrNull()
 
-private fun resolveWorkingDirectory(args: Array<String>): Path {
+private data class StartupTarget(
+    val projectRoot: Path,
+    val file: Path? = null
+)
+
+private fun resolveStartupTarget(args: Array<String>): StartupTarget {
     val defaultDir = Paths.get("").toAbsolutePath().normalize()
-    val requested = args.firstOrNull()?.takeIf { it.isNotBlank() } ?: return defaultDir
+    val requested = args.firstOrNull()?.takeIf { it.isNotBlank() }
+        ?: return StartupTarget(projectRoot = defaultDir)
     val candidate = Paths.get(requested)
     val resolved = (if (candidate.isAbsolute) candidate else defaultDir.resolve(candidate)).toAbsolutePath().normalize()
-    if (!Files.exists(resolved) || !Files.isDirectory(resolved)) {
-        System.err.println("Working directory must be an existing folder: $resolved")
-        exitProcess(1)
+    if (Files.isDirectory(resolved)) {
+        return StartupTarget(projectRoot = resolved)
     }
-    return resolved
+    if (Files.isRegularFile(resolved)) {
+        return StartupTarget(projectRoot = resolved.parent ?: defaultDir, file = resolved)
+    }
+    if (!Files.exists(resolved)) {
+        System.err.println("File or folder does not exist: $resolved")
+    } else {
+        System.err.println("Path must be a regular file or directory: $resolved")
+    }
+    exitProcess(1)
 }
 
 private fun kodeHome(): java.nio.file.Path? {
@@ -898,7 +913,8 @@ private class SplitPanelsApp(
     private var projectRoot: Path,
     private val renderer: AnsiCanvasRenderer,
     private val onQuit: () -> Unit,
-    private val runInitialScan: Boolean = true
+    private val runInitialScan: Boolean = true,
+    private val initialFile: Path? = null
 ) : BaseComponent(styleSheet), StatusLineProvider, AppShutdown, RenderInvalidator {
     // gotcha
     private var sessionManager = ProjectSessionManager(projectRoot)
@@ -1053,7 +1069,12 @@ private class SplitPanelsApp(
         }
         scanExclusions = loadScanExclusions(loaded.scanExclusions)
         filesTabView.refreshFileTree()
-        restoreLastSession()
+        if (initialFile == null) {
+            restoreLastSession()
+        }
+        initialFile?.let { path ->
+            openInViewer(path.toString(), mimeDetector.detectFile(path))
+        }
         if (runInitialScan) {
             if (hasPersistentIndex()) {
                 codeIntelIndexer.loadFromStore()
