@@ -12,10 +12,15 @@ import org.eclipse.jgit.revwalk.RevObject
 import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.treewalk.AbstractTreeIterator
 import org.eclipse.jgit.api.errors.NoHeadException
+import org.eclipse.jgit.errors.LargeObjectException
 import org.eclipse.jgit.errors.MissingObjectException
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import org.eclipse.jgit.dircache.DirCache
+import org.eclipse.jgit.dircache.DirCacheEntry
+import org.eclipse.jgit.lib.ObjectReader
+import org.eclipse.jgit.lib.Repository
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import org.eclipse.jgit.treewalk.TreeWalk
+import org.eclipse.jgit.treewalk.FileTreeIterator
 import org.eclipse.jgit.treewalk.filter.PathFilter
 import java.io.File
 import java.io.ByteArrayOutputStream
@@ -97,6 +102,26 @@ private fun scoreSemanticTag(tag: String, slotBits: Int = 10): Long? {
 // JGit Reference Implementation
 // =============================================================
 
+private class LargeObjectTolerantFileTreeIterator(
+    repository: Repository,
+    private val onLargeObject: (String, LargeObjectException) -> Unit
+) : FileTreeIterator(repository) {
+    override fun isModified(
+        indexEntry: DirCacheEntry?,
+        forceContentCheck: Boolean,
+        reader: ObjectReader
+    ): Boolean {
+        return try {
+            super.isModified(indexEntry, forceContentCheck, reader)
+        } catch (error: LargeObjectException) {
+            onLargeObject(getEntryPathString(), error)
+            // The content could not be checked. Report it as modified instead
+            // of aborting the entire repository status scan.
+            true
+        }
+    }
+}
+
 class JGitService(root: File) : IGitService {
 
     private lateinit var objectId: ObjectId
@@ -109,7 +134,15 @@ class JGitService(root: File) : IGitService {
     private val git = Git(repo)
 
     override fun statusPorcelain(): List<GitStatusEntry> {
-        val st = git.status().call()
+        val iterator = LargeObjectTolerantFileTreeIterator(repo) { path, error ->
+            System.err.println(
+                "Git status could not content-check large object '$path' " +
+                    "(${error.objectId?.name ?: "unknown object"}); treating it as modified."
+            )
+        }
+        val st = git.status()
+            .setWorkingTreeIt(iterator)
+            .call()
         val r = mutableListOf<GitStatusEntry>()
 
         st.added.forEach { r += GitStatusEntry("A", it, staged = true) }

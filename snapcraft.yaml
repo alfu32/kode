@@ -51,6 +51,9 @@ parts:
       - libgif7
       - libharfbuzz0b
       - libasound2t64
+      - libuv1t64
+      - libjson-c5
+      - libssl3t64
     build-snaps:
       - gradle/latest/stable
     override-build: |

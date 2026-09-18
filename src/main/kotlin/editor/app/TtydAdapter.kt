@@ -117,6 +117,9 @@ internal object TtydAdapter {
                     Files.write(target, bytes)
                 }
                 target.toFile().setReadable(true, false)
+                if (!isWindows()) {
+                    target.toFile().setExecutable(true, false)
+                }
             }.onSuccess {
                 return TtydLibrary(target, resourcePath)
             }

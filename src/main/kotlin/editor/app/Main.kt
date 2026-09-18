@@ -921,6 +921,7 @@ private class SplitPanelsApp(
     private var sessionManager = ProjectSessionManager(projectRoot)
     private var recentFiles: MutableList<RecentFileEntry> = mutableListOf()
     private var savedEditors: MutableMap<String, EditorSessionState> = mutableMapOf()
+    private val pendingEditorRestores: MutableMap<String, EditorSessionState> = mutableMapOf()
     private var sourceRoots: MutableList<String> = mutableListOf()
     private var sourceRootSetupNotice: String? = null
     private var scanExclusions: MutableList<String> = mutableListOf()
@@ -1330,9 +1331,16 @@ private class SplitPanelsApp(
     private fun isOnSplitter(x: Int): Boolean = x == clampWidth(leftWidth, lastCols.coerceAtLeast(1))
 
     private fun handleCodeFileLoaded(loadedPath: String) {
-        if (codeEditor.currentPath() == loadedPath) {
-            codeEditor.captureState(fileLastModified(loadedPath))?.let { state ->
-                recordRecent(loadedPath, state, ViewerType.CODE)
+        val absolutePath = sessionManager.toAbsolute(loadedPath)
+        pendingEditorRestores.remove(absolutePath)?.let { state ->
+            val currentMtime = fileLastModified(absolutePath)
+            if (!isStale(state, currentMtime)) {
+                codeEditor.restoreState(state.copy(path = absolutePath, lastModifiedMillis = currentMtime))
+            }
+        }
+        if (sessionManager.toAbsolute(codeEditor.currentPath()) == absolutePath) {
+            codeEditor.captureState(fileLastModified(absolutePath))?.let { state ->
+                recordRecent(absolutePath, state, ViewerType.CODE)
             }
         }
         renderDirty.set(true)
@@ -1351,13 +1359,20 @@ private class SplitPanelsApp(
             }
             MimeTypeCategory.TEXT -> {
                 val (grammarLang, grammarAvailable) = resolveGrammar(path, detected)
+                val absolutePath = sessionManager.toAbsolute(path)
+                val savedState = savedEditors[absolutePath]
+                if (savedState != null && !isStale(savedState, fileLastModified(absolutePath))) {
+                    pendingEditorRestores[absolutePath] = savedState
+                } else {
+                    pendingEditorRestores.remove(absolutePath)
+                    savedEditors.remove(absolutePath)
+                }
                 codeEditor.openFile(path, detected, grammarAvailable, grammarLang)
                 rightFocus = FocusTarget.CODE
                 focus = rightFocus
                 currentOpenPath = path
                 // The file content is loaded asynchronously; completion callback records
                 // the populated editor state instead of persisting an empty placeholder.
-                savedEditors.remove(sessionManager.toAbsolute(path))
                 recordRecent(path, null, ViewerType.CODE)
             }
             MimeTypeCategory.BINARY, MimeTypeCategory.UNKNOWN -> {
@@ -1496,6 +1511,7 @@ private class SplitPanelsApp(
         sessionManager = ProjectSessionManager(projectRoot)
         recentFiles.clear()
         savedEditors.clear()
+        pendingEditorRestores.clear()
         currentOpenPath = ""
         projectSearchVisible = false
         codeIntelIndexer.clear()
