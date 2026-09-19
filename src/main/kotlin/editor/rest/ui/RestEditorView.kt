@@ -12,6 +12,7 @@ import editor.rest.model.withField
 import editor.rest.model.withoutField
 import editor.rest.model.withOptionalField
 import editor.rest.resolve.RestRequestResolver
+import editor.ui.FormFieldRenderer
 import java.nio.file.Path
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -188,11 +189,9 @@ class RestEditorView(
         drawTabs(canvas, cols, base, active, listOf(RestEditorTab.OVERVIEW, RestEditorTab.AUTHORIZATION, RestEditorTab.VARIABLES), 2)
         when (tab) {
             RestEditorTab.OVERVIEW -> {
-                drawLine(canvas, base, 5, "Name: " + (name.value), cols)
-                drawLine(canvas, base, 6, "Description: " + description.value, cols)
+                renderLabeledField(canvas, base, 5, "Name", name, cols, Action.FocusName)
+                renderLabeledField(canvas, base, 6, "Description", description, cols, Action.FocusDescription)
                 drawLine(canvas, base, 8, if (currentPath.isRoot) "Postman Collection Format v2.1.0" else "Folder items: " + (node?.items()?.size ?: 0), cols)
-                hits += Hit(5, 0 until cols, Action.FocusName)
-                hits += Hit(6, 0 until cols, Action.FocusDescription)
             }
             RestEditorTab.AUTHORIZATION -> renderAuth(canvas, cols, base, currentPath)
             RestEditorTab.VARIABLES -> renderVariables(canvas, cols, base, currentPath)
@@ -209,14 +208,15 @@ class RestEditorView(
 
     private fun renderRequestEditor(canvas: CanvasRenderer, cols: Int, rows: Int, base: StyleSet, active: StyleSet, button: StyleSet, node: JsonObject) {
         val request = node.jsonObject("request") ?: return
-        val method = request.string("method") ?: "GET"
-        drawLine(canvas, base, 0, method + " | " + (node.string("name") ?: "Request"), cols)
-        val urlWidth = (cols - 12).coerceAtLeast(0)
-        drawLine(canvas, base, 1, method + " " + url.value, urlWidth)
-        hits += Hit(1, 0 until method.length.coerceAtMost(urlWidth), Action.FocusMethod)
-        hits += Hit(1, method.length + 1 until urlWidth, Action.FocusUrl)
+        val requestMethod = request.string("method") ?: "GET"
+        drawLine(canvas, base, 0, requestMethod + " | " + (node.string("name") ?: "Request"), cols)
         val send = if (running) "[ cancel ]" else "[ Send ]"
         val sendX = (cols - send.length).coerceAtLeast(0)
+        val methodWidth = 10.coerceAtMost((sendX - 2).coerceAtLeast(3))
+        val urlX = methodWidth + 2
+        val urlWidth = (sendX - urlX - 1).coerceAtLeast(3)
+        hits += Hit(1, FormFieldRenderer.draw(canvas, styleSheet, 0, 1, methodWidth, method.value, method.cursor, focused === method), Action.FocusMethod)
+        hits += Hit(1, FormFieldRenderer.draw(canvas, styleSheet, urlX, 1, urlWidth, url.value, url.cursor, focused === url), Action.FocusUrl)
         canvas.withStyle(button) { drawText(sendX, 1, send) }
         hits += Hit(1, sendX until cols, Action.Send)
         val tabs = listOf(RestEditorTab.PARAMS, RestEditorTab.AUTHORIZATION, RestEditorTab.HEADERS, RestEditorTab.BODY, RestEditorTab.VARIABLES, RestEditorTab.SETTINGS, RestEditorTab.RESPONSE)
@@ -364,18 +364,14 @@ class RestEditorView(
                 hits += Hit(addRow, 0 until cols, Action.AddBodyEntry)
             }
             "graphql" -> {
-                drawLine(canvas, base, 8, "Query: " + (body?.jsonObject("graphql")?.string("query") ?: ""), cols)
-                hits += Hit(8, 0 until cols, Action.FocusBody)
-                drawLine(canvas, base, 9, "Variables: " + graphqlVariables.value, cols)
-                hits += Hit(9, 0 until cols, Action.FocusGraphqlVariables)
+                renderLabeledField(canvas, base, 8, "Query", rawBody, cols, Action.FocusBody)
+                renderLabeledField(canvas, base, 9, "Variables", graphqlVariables, cols, Action.FocusGraphqlVariables)
             }
             "file" -> {
-                drawLine(canvas, base, 8, "File: " + (body?.jsonObject("file")?.string("src") ?: ""), cols)
-                hits += Hit(8, 0 until cols, Action.FocusBody)
+                renderLabeledField(canvas, base, 8, "File", rawBody, cols, Action.FocusBody)
             }
             else -> {
-                drawLine(canvas, base, 8, "Raw content: " + rawBody.value, cols)
-                hits += Hit(8, 0 until cols, Action.FocusBody)
+                renderLabeledField(canvas, base, 8, "Raw", rawBody, cols, Action.FocusBody)
             }
         }
     }
@@ -384,8 +380,7 @@ class RestEditorView(
         val settings = model.node(currentPath)?.jsonObject("protocolProfileBehavior") ?: JsonObject(emptyMap())
         drawLine(canvas, base, 5, "Follow redirects: " + if (settings.booleanValue("disableRedirects")) "off" else "on", cols)
         hits += Hit(5, 0 until cols, Action.ToggleRedirects)
-        drawLine(canvas, base, 6, "Request timeout: " + (settings.string("requestTimeout") ?: "30000") + " ms", cols)
-        hits += Hit(6, 0 until cols, Action.FocusTimeout)
+        renderLabeledField(canvas, base, 6, "Request timeout", timeout, cols, Action.FocusTimeout, suffix = " ms")
         drawLine(canvas, base, 7, "SSL validation: " + if (settings.booleanValue("disableSslVerification")) "off" else "on", cols)
         hits += Hit(7, 0 until cols, Action.ToggleSsl)
         drawLine(canvas, base, 9, "[clear cookies]  Cookie jar is runtime state and is not persisted.", cols)
@@ -438,6 +433,26 @@ class RestEditorView(
         canvas.withStyle(base) { drawText(0, row, text.take(cols).padEnd(cols, ' ')) }
     }
 
+    private fun renderLabeledField(
+        canvas: CanvasRenderer,
+        base: StyleSet,
+        row: Int,
+        label: String,
+        field: Field,
+        cols: Int,
+        action: Action,
+        suffix: String = ""
+    ) {
+        val labelText = "$label: "
+        canvas.withStyle(base) { drawText(0, row, labelText.take(cols)) }
+        val x = labelText.length
+        val suffixWidth = suffix.length + 1
+        val width = (cols - x - suffixWidth).coerceAtLeast(3)
+        val range = FormFieldRenderer.draw(canvas, styleSheet, x, row, width, field.value, field.cursor, focused === field)
+        hits += Hit(row, range, action)
+        if (suffix.isNotEmpty()) canvas.withStyle(base) { drawText(x + width + 1, row, suffix.take((cols - x - width - 1).coerceAtLeast(0))) }
+    }
+
     override fun dispatch(event: UIEvent): Boolean {
         entryDialog?.let { active ->
             val handled = active.dispatch(event)
@@ -459,7 +474,10 @@ class RestEditorView(
                     return true
                 }
             }
-            hits.firstOrNull { y == it.row && x in it.range }?.let { activate(it.action) }
+            hits.firstOrNull { y == it.row && x in it.range }?.let { hit ->
+                activate(hit.action)
+                placeCursor(hit.action, x, hit.range)
+            }
             return true
         }
         if (event.kind == "mouse_move" && draggingResponse) {
@@ -505,7 +523,7 @@ class RestEditorView(
             Action.FocusName -> focused = name
             Action.FocusDescription -> focused = description
             Action.FocusMethod -> focused = method
-            Action.FocusUrl -> focused = if (tab == RestEditorTab.BODY) rawBody else url
+            Action.FocusUrl -> focused = url
             Action.FocusBody -> focused = rawBody
             Action.FocusGraphqlVariables -> focused = graphqlVariables
             Action.AddVariable -> addVariable()
@@ -537,6 +555,22 @@ class RestEditorView(
             }
         }
         onInvalidate()
+    }
+
+    private fun placeCursor(action: Action, x: Int, range: IntRange) {
+        val field = when (action) {
+            Action.FocusName -> name
+            Action.FocusDescription -> description
+            Action.FocusMethod -> method
+            Action.FocusUrl -> url
+            Action.FocusBody -> rawBody
+            Action.FocusGraphqlVariables -> graphqlVariables
+            Action.FocusTimeout -> timeout
+            else -> null
+        } ?: return
+        val innerWidth = range.count().coerceAtLeast(1)
+        val windowStart = (field.cursor - innerWidth + 1).coerceAtLeast(0)
+        field.cursor = (windowStart + (x - range.first)).coerceIn(0, field.value.length)
     }
 
     private fun nextTab(): RestEditorTab {

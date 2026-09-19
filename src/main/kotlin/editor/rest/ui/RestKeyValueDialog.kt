@@ -1,5 +1,6 @@
 package editor.rest.ui
 
+import editor.ui.FormFieldRenderer
 import react.BaseComponent
 import react.StyleSet
 import react.StyleSheet
@@ -34,6 +35,9 @@ class RestKeyValueDialog(
         arrayOf(Field(key), Field(value), Field(thirdValue))
     }
     private var focus = 0
+    private var fieldRanges: List<IntRange> = emptyList()
+    private var okRange: IntRange = IntRange.EMPTY
+    private var cancelRange: IntRange = IntRange.EMPTY
     var result: RestEntryValue? = null
         private set
     var finished = false
@@ -73,12 +77,29 @@ class RestKeyValueDialog(
         canvas.withStyle(panel) { drawRect(x, y, width, height) }
         canvas.withStyle(panel) { drawText(x + 2, y + 1, title.take(width - 4)) }
         val labels = if (variableMode) listOf("Key", "Value", "Type", "Description", "Enabled true/false") else listOf("Key", "Value", thirdLabel)
-        labels.forEachIndexed { index, label ->
+        val labelWidth = labels.maxOf { it.length } + 2
+        fieldRanges = labels.mapIndexed { index, label ->
             val field = fields[index]
-            val text = label + ": " + field.value
-            canvas.withStyle(if (focus == index) active else panel) { drawText(x + 2, y + 3 + index, text.take(width - 4).padEnd(width - 4, ' ')) }
+            val row = y + 3 + index
+            canvas.withStyle(panel) { drawText(x + 2, row, (label + ":").padEnd(labelWidth).take(labelWidth)) }
+            FormFieldRenderer.draw(
+                canvas = canvas,
+                styleSheet = styleSheet,
+                x = x + 2 + labelWidth,
+                y = row,
+                width = width - labelWidth - 4,
+                value = field.value,
+                cursor = field.cursor,
+                focused = focus == index
+            )
         }
-        canvas.withStyle(button) { drawText(x + width - 19, y + height - 2, "[OK] [Cancel]") }
+        val okLabel = " OK "
+        val cancelLabel = " Cancel "
+        val buttonX = x + width - okLabel.length - cancelLabel.length - 1
+        okRange = buttonX until buttonX + okLabel.length
+        cancelRange = (okRange.last + 1) until (okRange.last + 1 + cancelLabel.length)
+        canvas.withStyle(if (focus == fields.size) button else panel) { drawText(okRange.first, y + height - 2, okLabel) }
+        canvas.withStyle(if (focus == fields.size + 1) button else panel) { drawText(cancelRange.first, y + height - 2, cancelLabel) }
     }
 
     override fun dispatch(event: UIEvent): Boolean {
@@ -86,18 +107,31 @@ class RestKeyValueDialog(
             val row = (event.y ?: 0)
             val height = if (variableMode) 12 else 10
             val base = ((event.rows ?: 0) - height) / 2 + 3
-            if (row in base until base + fields.size) focus = row - base
-            else if (row >= base + fields.size + 2) finish(true)
+            if (row in base until base + fields.size) {
+                focus = row - base
+                fieldRanges.getOrNull(focus)?.let { range ->
+                    if (event.x != null && event.x in range) fields[focus].cursor = (event.x - range.first).coerceIn(0, fields[focus].value.length)
+                }
+            }
+            else if (row == base + fields.size + 2 && event.x != null && event.x in okRange) {
+                focus = fields.size
+                finish(true)
+            } else if (row == base + fields.size + 2 && event.x != null && event.x in cancelRange) {
+                focus = fields.size + 1
+                finish(false)
+            }
             onInvalidate()
             return true
         }
         if (event.kind != "key_down") return true
         when (event.key?.lowercase()) {
             "escape", "esc" -> finish(false)
-            "tab", "down" -> focus = (focus + 1) % fields.size
-            "up" -> focus = (focus - 1 + fields.size) % fields.size
-            "enter", "return" -> finish(true)
-            else -> fields[focus].edit(event)
+            "tab", "down" -> focus = (focus + 1) % (fields.size + 2)
+            "up" -> focus = (focus - 1 + fields.size + 2) % (fields.size + 2)
+            "left" -> if (focus == fields.size + 1) focus = fields.size else if (focus < fields.size) fields[focus].edit(event)
+            "right" -> if (focus == fields.size) focus = fields.size + 1 else if (focus < fields.size) fields[focus].edit(event)
+            "enter", "return" -> if (focus == fields.size + 1) finish(false) else finish(true)
+            else -> if (focus < fields.size) fields[focus].edit(event)
         }
         onInvalidate()
         return true

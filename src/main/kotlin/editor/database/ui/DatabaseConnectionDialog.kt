@@ -7,6 +7,7 @@ import editor.database.model.DataSourceDefinition
 import editor.database.model.DriverSpec
 import editor.database.model.JdbcDriverArtifact
 import editor.database.model.JdbcRepositoryType
+import editor.ui.FormFieldRenderer
 import java.util.UUID
 import react.BaseComponent
 import react.StyleSet
@@ -109,8 +110,8 @@ class DatabaseConnectionDialog(
         val panel = styleSheet.getStyle("project-search-dialog").withDefaults()
         val border = styleSheet.getStyle("project-search-dialog-border").withDefaults(panel.fg, panel.bg)
         val input = styleSheet.getStyle("content").withDefaults(panel.fg, panel.bg)
-        val active = styleSheet.getStyle("file-entry:selected").withDefaults(input.fg, input.bg)
         val button = styleSheet.getStyle("lsp-button").withDefaults(panel.fg, panel.bg)
+        val active = styleSheet.getStyle("file-entry:selected").withDefaults(panel.fg, panel.bg)
 
         fieldHits = emptyList()
         buttonHits = emptyList()
@@ -130,12 +131,23 @@ class DatabaseConnectionDialog(
             val row = startRow + index
             if (row >= y + height - 3) return@forEachIndexed
             val selected = focus == index
-            canvas.withStyle(if (selected) active else input) {
+            canvas.withStyle(input) {
                 drawText(x + 2, row, ("$label:").padEnd(labelWidth).take(labelWidth))
-                val text = if (index == 0) driverLabel() else masked(valueForFocus(index))
-                drawText(x + 2 + labelWidth, row, text.take(available).padEnd(available, ' '))
             }
-            hits += FieldHit(index, row, (x + 2 + labelWidth) until (x + 2 + labelWidth + available))
+            val value = if (index == 0) driverLabel() else valueForFocus(index)
+            val fieldRange = FormFieldRenderer.draw(
+                canvas = canvas,
+                styleSheet = styleSheet,
+                x = x + 2 + labelWidth,
+                y = row,
+                width = available,
+                value = value,
+                cursor = cursorForFocus(index),
+                focused = selected,
+                mask = index == 4,
+                showCursor = selected && index != 0
+            )
+            hits += FieldHit(index, row, fieldRange)
         }
         fieldHits = hits
 
@@ -157,7 +169,8 @@ class DatabaseConnectionDialog(
         var cursor = x + width - labelsAndActions.sumOf { it.first.length } - (labelsAndActions.size - 1)
         val renderedButtons = mutableListOf<ButtonHit>()
         labelsAndActions.forEach { (label, action) ->
-            canvas.withStyle(button) { drawText(cursor, buttonRow, label) }
+            val buttonStyle = if (focus == buttonStart() + renderedButtons.size) active else button
+            canvas.withStyle(buttonStyle) { drawText(cursor, buttonRow, label) }
             renderedButtons += ButtonHit(action, cursor until cursor + label.length)
             cursor += label.length + 1
         }
@@ -191,6 +204,7 @@ class DatabaseConnectionDialog(
             val mx = event.x ?: return true
             val my = event.y ?: return true
             buttonHits.firstOrNull { my == lastButtonRow && mx in it.x }?.let {
+                focus = buttonStart() + buttonHits.indexOf(it)
                 activate(it.action)
                 return true
             }
@@ -203,6 +217,7 @@ class DatabaseConnectionDialog(
             }
             fieldHits.firstOrNull { my == it.row && mx in it.x }?.let {
                 focus = it.index
+                setCursorForFocus(it.index, (mx - it.x.first).coerceAtLeast(0))
                 if (focus == 0) driverDropdown = !driverDropdown
                 onInvalidate()
                 return true
@@ -364,6 +379,31 @@ class DatabaseConnectionDialog(
         else -> ""
     }
 
+    private fun cursorForFocus(index: Int): Int = when {
+        index in 1..4 -> fields[index - 1].cursor
+        customMode() && index in 5..8 -> customFields[index - 5].cursor
+        customMode() && index == 9 -> fields[4].cursor
+        customMode() && index == 10 -> fields[5].cursor
+        customMode() && index == 11 -> versionField.cursor
+        index == 5 -> fields[4].cursor
+        index == 6 -> fields[5].cursor
+        index == 7 -> versionField.cursor
+        else -> 0
+    }
+
+    private fun setCursorForFocus(index: Int, cursor: Int) {
+        when {
+            index in 1..4 -> fields[index - 1].cursor = cursor.coerceIn(0, fields[index - 1].value.length)
+            customMode() && index in 5..8 -> customFields[index - 5].cursor = cursor.coerceIn(0, customFields[index - 5].value.length)
+            customMode() && index == 9 -> fields[4].cursor = cursor.coerceIn(0, fields[4].value.length)
+            customMode() && index == 10 -> fields[5].cursor = cursor.coerceIn(0, fields[5].value.length)
+            customMode() && index == 11 -> versionField.cursor = cursor.coerceIn(0, versionField.value.length)
+            index == 5 -> fields[4].cursor = cursor.coerceIn(0, fields[4].value.length)
+            index == 6 -> fields[5].cursor = cursor.coerceIn(0, fields[5].value.length)
+            index == 7 -> versionField.cursor = cursor.coerceIn(0, versionField.value.length)
+        }
+    }
+
     private fun editField(index: Int, event: UIEvent): Boolean = when {
         index in 1..4 -> fields[index - 1].edit(event)
         customMode() && index in 5..8 -> customFields[index - 5].edit(event)
@@ -420,8 +460,6 @@ class DatabaseConnectionDialog(
         versionField.set(version)
         onInvalidate()
     }
-
-    private fun masked(value: String): String = if (focus == 4) "*".repeat(value.length) else value
 
     private fun drawBorder(canvas: CanvasRenderer, style: StyleSet, x: Int, y: Int, width: Int, height: Int) {
         val right = x + width - 1

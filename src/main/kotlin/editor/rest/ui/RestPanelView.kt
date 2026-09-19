@@ -10,6 +10,7 @@ import editor.rest.model.items
 import editor.rest.model.nodeKind
 import editor.rest.model.string
 import editor.rest.model.walkRestTree
+import editor.ui.FormFieldRenderer
 import java.nio.file.Path
 import react.BaseComponent
 import react.StyleSet
@@ -52,6 +53,7 @@ class RestPanelView(
     private var filter = ""
     private var filterCursor = 0
     private var filtering = false
+    private var filterRange: IntRange = IntRange.EMPTY
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
@@ -61,9 +63,23 @@ class RestPanelView(
         val selectedStyle = styleSheet.getStyle("file-entry:selected").withDefaults(base.fg, base.bg)
         canvas.withStyle(base) { drawRect(0, 0, cols, rows) }
         canvas.withStyle(base) {
-            val heading = if (filtering) "Filter: $filter" else "REST API"
-            drawText(0, 0, heading.take(cols).padEnd(cols, ' '))
+            drawText(0, 0, if (filtering) "Filter: " else "REST API".take(cols).padEnd(cols, ' '))
             drawText(0, 2, message.take(cols).padEnd(cols, ' '))
+        }
+        if (filtering) {
+            val label = "Filter: "
+            filterRange = FormFieldRenderer.draw(
+                canvas = canvas,
+                styleSheet = styleSheet,
+                x = label.length,
+                y = 0,
+                width = (cols - label.length).coerceAtLeast(3),
+                value = filter,
+                cursor = filterCursor,
+                focused = true
+            )
+        } else {
+            filterRange = IntRange.EMPTY
         }
         val toolbar = mutableListOf<Hit>()
         renderButton(canvas, button, 0, 1, " [+request] ", Action.AddRequest(RestNodePath()), toolbar, cols)
@@ -165,6 +181,11 @@ class RestPanelView(
         if (event.kind == "mouse_down") {
             val x = event.x ?: return true
             val y = event.y ?: return true
+            if (filtering && y == 0 && x in filterRange) {
+                filterCursor = (x - filterRange.first).coerceIn(0, filter.length)
+                onInvalidate()
+                return true
+            }
             hits[y]?.firstOrNull { x in it.range }?.let { hit -> execute(hit.action); return true }
             val index = scroll + y - 3
             if (index !in lines.indices) return true
@@ -191,6 +212,9 @@ class RestPanelView(
                     filter = filter.removeRange(filterCursor - 1, filterCursor)
                     filterCursor--
                 }
+                "delete" -> if (filterCursor < filter.length) filter = filter.removeRange(filterCursor, filterCursor + 1)
+                "home" -> filterCursor = 0
+                "end" -> filterCursor = filter.length
                 "left" -> filterCursor = (filterCursor - 1).coerceAtLeast(0)
                 "right" -> filterCursor = (filterCursor + 1).coerceAtMost(filter.length)
                 else -> if (!event.ctrl && !event.alt && !event.meta && event.key?.length == 1) {
@@ -412,6 +436,12 @@ class RestInputDialog(
 ) : BaseComponent(styleSheet) {
     private var value = initial
     private var cursor = value.length
+    private var fieldRange: IntRange = IntRange.EMPTY
+    private var fieldRow = -1
+    private var buttonRow = -1
+    private var okRange: IntRange = IntRange.EMPTY
+    private var cancelRange: IntRange = IntRange.EMPTY
+    private var focus = 0 // 0 = field, 1 = OK, 2 = Cancel
     var result: String? = null
         private set
     var finished = false
@@ -428,31 +458,71 @@ class RestInputDialog(
         canvas.withStyle(style) { drawRect(x, y, width, 7) }
         canvas.withStyle(style) {
             drawText(x + 2, y + 1, title.take(width - 4))
-            drawText(x + 2, y + 3, "$label: ${value.take(width - 10)}".take(width - 4))
-            drawText(x + width - 16, y + 5, "[OK] [Cancel]")
         }
-        canvas.withStyle(button) { drawText(x + width - 16, y + 5, "[OK] [Cancel]") }
+        val labelText = "$label: "
+        canvas.withStyle(style) { drawText(x + 2, y + 3, labelText) }
+        fieldRange = FormFieldRenderer.draw(
+            canvas = canvas,
+            styleSheet = styleSheet,
+            x = x + 2 + labelText.length,
+            y = y + 3,
+            width = width - labelText.length - 4,
+            value = value,
+            cursor = cursor,
+            focused = focus == 0
+        )
+        fieldRow = y + 3
+        buttonRow = y + 5
+        val okLabel = " OK "
+        val cancelLabel = " Cancel "
+        val buttonX = x + width - okLabel.length - cancelLabel.length - 1
+        okRange = buttonX until buttonX + okLabel.length
+        cancelRange = (okRange.last + 1) until (okRange.last + 1 + cancelLabel.length)
+        canvas.withStyle(if (focus == 1) button else style) { drawText(okRange.first, buttonRow, okLabel) }
+        canvas.withStyle(if (focus == 2) button else style) { drawText(cancelRange.first, buttonRow, cancelLabel) }
     }
 
     override fun dispatch(event: UIEvent): Boolean {
         if (event.kind == "mouse_down") {
+            val x = event.x ?: return true
             val y = event.y ?: return true
-            if (y >= (event.rows ?: 0) / 2 + 1) {
+            if (y == fieldRow && x in fieldRange) {
+                focus = 0
+                cursor = (x - fieldRange.first).coerceIn(0, value.length)
+            } else if (y == buttonRow && x in okRange) {
+                focus = 1
                 result = value.trim()
                 finished = true
+            } else if (y == buttonRow && x in cancelRange) {
+                focus = 2
+                finished = true
             }
+            onInvalidate()
             return true
         }
         if (event.kind != "key_down") return true
         when (event.key?.lowercase()) {
             "escape", "esc" -> finished = true
-            "enter", "return" -> { result = value.trim(); finished = true }
-            "backspace" -> if (cursor > 0) { value = value.removeRange(cursor - 1, cursor); cursor-- }
-            "left" -> cursor = (cursor - 1).coerceAtLeast(0)
-            "right" -> cursor = (cursor + 1).coerceAtMost(value.length)
+            "tab", "down" -> focus = (focus + 1) % 3
+            "up" -> focus = (focus + 2) % 3
+            "left" -> when (focus) {
+                0 -> cursor = (cursor - 1).coerceAtLeast(0)
+                2 -> focus = 1
+            }
+            "right" -> when (focus) {
+                0 -> cursor = (cursor + 1).coerceAtMost(value.length)
+                1 -> focus = 2
+            }
+            "enter", "return" -> when (focus) {
+                0, 1 -> { result = value.trim(); finished = true }
+                else -> finished = true
+            }
+            "backspace" -> if (focus == 0 && cursor > 0) { value = value.removeRange(cursor - 1, cursor); cursor-- }
             else -> if (!event.ctrl && !event.alt && !event.meta && event.key?.length == 1) {
-                value = value.substring(0, cursor) + event.key + value.substring(cursor)
-                cursor++
+                if (focus == 0) {
+                    value = value.substring(0, cursor) + event.key + value.substring(cursor)
+                    cursor++
+                }
             }
         }
         onInvalidate()
