@@ -109,6 +109,15 @@ class CodeEditorView(
 
     fun textContent(): String = buffer.text()
 
+    fun insertTextAtCursor(text: String): Boolean {
+        if (readOnly || text.isEmpty()) return false
+        buffer.insertText(text)
+        triggerCodeIntel()
+        rerenderOnce = true
+        onInvalidate()
+        return true
+    }
+
     fun loadTextContent(text: String) {
         buffer.loadText(text)
         collapsedFoldStarts.clear()

@@ -6,6 +6,7 @@ import editor.database.connection.DatabaseConnectionManager
 import editor.database.driver.JdbcDriverDownloader
 import editor.database.driver.JdbcDriverRegistry
 import editor.database.driver.JdbcDriverResolver
+import editor.database.driver.JdbcDownloadProgress
 import editor.database.metadata.DatabaseMetadataService
 import editor.database.model.ConnectionStatus
 import editor.database.model.ConnectionTestResult
@@ -35,7 +36,12 @@ interface DatabaseService {
     fun setAutoCommit(id: DataSourceId, value: Boolean)
     fun autoCommit(id: DataSourceId): Boolean?
     fun installLocalDriver(definition: DataSourceDefinition, jar: Path): Path
-    fun downloadDriver(definition: DataSourceDefinition): Path
+    fun downloadDriver(
+        definition: DataSourceDefinition,
+        progress: (JdbcDownloadProgress) -> Unit = {},
+        isCancelled: () -> Boolean = { false }
+    ): Path
+    fun replaceDataSources(definitions: List<DataSourceDefinition>)
 }
 
 class JdbcDatabaseService(
@@ -53,15 +59,21 @@ class JdbcDatabaseService(
 
     override fun dataSources(): List<DataSourceDefinition> = cachedDataSources
 
+    override fun replaceDataSources(definitions: List<DataSourceDefinition>) {
+        cachedDataSources = definitions
+    }
+
     override fun saveDataSource(definition: DataSourceDefinition, password: String?): DataSourceDefinition {
         if (!password.isNullOrEmpty()) {
             val ref = definition.credentialReference ?: "${definition.id}.password"
             credentialStore.put(ref, password)
             val withRef = definition.copy(credentialReference = ref)
-            cachedDataSources = repository.upsert(withRef)
+            cachedDataSources = cachedDataSources.filterNot { it.id == withRef.id } + withRef
+            repository.save(cachedDataSources)
             return withRef
         }
-        cachedDataSources = repository.upsert(definition)
+        cachedDataSources = cachedDataSources.filterNot { it.id == definition.id } + definition
+        repository.save(cachedDataSources)
         return definition
     }
 
@@ -69,7 +81,8 @@ class JdbcDatabaseService(
         val current = cachedDataSources.firstOrNull { it.id == id }
         disconnect(id)
         credentialStore.remove(current?.credentialReference)
-        cachedDataSources = repository.remove(id)
+        cachedDataSources = cachedDataSources.filterNot { it.id == id }
+        repository.save(cachedDataSources)
     }
 
     override fun connect(id: DataSourceId): ConnectionStatus {
@@ -117,8 +130,11 @@ class JdbcDatabaseService(
     override fun installLocalDriver(definition: DataSourceDefinition, jar: Path): Path =
         driverResolver.installLocalJar(definition.driver, jar)
 
-    override fun downloadDriver(definition: DataSourceDefinition): Path =
-        driverDownloader.download(definition.driver)
+    override fun downloadDriver(
+        definition: DataSourceDefinition,
+        progress: (JdbcDownloadProgress) -> Unit,
+        isCancelled: () -> Boolean
+    ): Path = driverDownloader.download(definition.driver, progress, isCancelled)
 
     override fun close() {
         connections.close()

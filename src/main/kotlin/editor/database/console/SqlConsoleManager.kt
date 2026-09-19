@@ -1,6 +1,8 @@
 package editor.database.console
 
 import editor.database.model.DataSourceId
+import editor.database.model.DatabaseProjectState
+import editor.database.model.DatabaseSessionState
 import editor.database.query.SqlExecutionResult
 import java.time.Instant
 
@@ -47,6 +49,42 @@ class SqlConsoleManager {
         id?.let { consoles[it] }
 
     fun all(): List<SqlConsole> = consoles.values.toList()
+
+    fun restore(state: DatabaseProjectState, validDataSourceIds: Set<DataSourceId>) {
+        consoles.clear()
+        counters.clear()
+        state.sessions
+            .filter { it.dataSourceId in validDataSourceIds }
+            .forEach { persisted ->
+                consoles[persisted.id] = SqlConsole(
+                    id = persisted.id,
+                    dataSourceId = persisted.dataSourceId,
+                    title = persisted.title,
+                    catalog = persisted.catalog,
+                    schema = persisted.schema,
+                    autoCommit = persisted.autoCommit,
+                    buffer = persisted.buffer
+                )
+                val counter = persisted.id.substringAfterLast(':').toIntOrNull() ?: 0
+                counters[persisted.dataSourceId] = maxOf(counters[persisted.dataSourceId] ?: 0, counter)
+            }
+    }
+
+    fun remove(id: String): SqlConsole? = consoles.remove(id)
+
+    fun projectState(): DatabaseProjectState = DatabaseProjectState(
+        sessions = all().map { console ->
+            DatabaseSessionState(
+                id = console.id,
+                dataSourceId = console.dataSourceId,
+                title = console.title,
+                catalog = console.catalog,
+                schema = console.schema,
+                autoCommit = console.autoCommit,
+                buffer = console.buffer
+            )
+        }
+    )
 
     fun updateBuffer(id: String, text: String) {
         consoles[id]?.buffer = text

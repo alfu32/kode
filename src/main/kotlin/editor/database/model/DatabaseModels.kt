@@ -2,6 +2,26 @@ package editor.database.model
 
 import kotlinx.serialization.Serializable
 
+@Serializable
+enum class JdbcRepositoryType {
+    MAVEN_CENTRAL,
+    MAVEN_CUSTOM,
+    VENDOR_URL,
+    LOCAL_FILE
+}
+
+@Serializable
+data class JdbcDriverArtifact(
+    val repositoryType: JdbcRepositoryType = JdbcRepositoryType.MAVEN_CENTRAL,
+    val groupId: String? = null,
+    val artifactId: String? = null,
+    val version: String? = null,
+    val classifier: String? = null,
+    val repository: String? = null,
+    val vendorDownloadPage: String? = null,
+    val downloadUrl: String? = null
+)
+
 typealias DataSourceId = String
 
 @Serializable
@@ -10,7 +30,9 @@ data class DriverSpec(
     val displayName: String = "Generic JDBC Driver",
     val driverClass: String,
     val coordinates: String? = null,
-    val jarPath: String? = null
+    val jarPath: String? = null,
+    val artifact: JdbcDriverArtifact? = null,
+    val providerId: String? = null
 )
 
 @Serializable
@@ -63,6 +85,7 @@ enum class DatabaseObjectType {
     COLUMN,
     PROCEDURE,
     FUNCTION,
+    PACKAGE,
     TYPE,
     INDEX,
     PRIMARY_KEY,
@@ -70,6 +93,23 @@ enum class DatabaseObjectType {
     MESSAGE,
     ERROR
 }
+
+@Serializable
+data class DatabaseProjectState(
+    val dataSources: List<DataSourceDefinition> = emptyList(),
+    val sessions: List<DatabaseSessionState> = emptyList()
+)
+
+@Serializable
+data class DatabaseSessionState(
+    val id: String,
+    val dataSourceId: DataSourceId,
+    val title: String,
+    val catalog: String? = null,
+    val schema: String? = null,
+    val autoCommit: Boolean = true,
+    val buffer: String = ""
+)
 
 data class DatabaseObject(
     val id: String,
@@ -107,7 +147,8 @@ data class MetadataRequest(
     val catalog: String? = null,
     val schema: String? = null,
     val category: DatabaseObjectType? = null,
-    val objectName: String? = null
+    val objectName: String? = null,
+    val objectType: DatabaseObjectType? = null
 )
 
 data class MetadataResult(

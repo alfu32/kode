@@ -24,4 +24,24 @@ class JdbcDriverRegistryTest {
             assertTrue(loaded.driver.acceptsURL("jdbc:h2:mem:kode"))
         }
     }
+
+    @Test
+    fun resolvesAliasesToOneSharedDriverArtifact() {
+        val registry = JdbcDriverRegistry()
+
+        val alias = registry.specFor("cockroachdb")!!
+
+        assertEquals("postgresql", alias.providerId)
+        assertEquals("org.postgresql", alias.artifact?.groupId)
+        assertEquals("postgresql", alias.artifact?.artifactId)
+        assertEquals(null, alias.artifact?.version)
+    }
+
+    @Test
+    fun exposesCustomJdbcSourceWithoutInventingAnArtifact() {
+        val spec = JdbcDriverRegistry().specFor("custom-jdbc")!!
+
+        assertEquals(null, spec.artifact)
+        assertEquals("custom-jdbc", spec.providerId)
+    }
 }

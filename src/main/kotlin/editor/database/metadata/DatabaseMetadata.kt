@@ -126,6 +126,7 @@ class JdbcDatabaseIntrospector : DatabaseIntrospector {
         if (supportsFunctions(meta)) {
             result += category("Functions", DatabaseObjectType.FUNCTION, catalog, schema)
         }
+        result += category("Packages", DatabaseObjectType.PACKAGE, catalog, schema)
         result += category("Types", DatabaseObjectType.TYPE, catalog, schema)
         return MetadataResult(result, capabilities(meta))
     }
@@ -147,6 +148,7 @@ class JdbcDatabaseIntrospector : DatabaseIntrospector {
             DatabaseObjectType.VIEW -> tables(meta, request, arrayOf("VIEW"))
             DatabaseObjectType.PROCEDURE -> procedures(meta, request)
             DatabaseObjectType.FUNCTION -> functions(meta, request)
+            DatabaseObjectType.PACKAGE -> MetadataResult(emptyList(), capabilities(meta))
             DatabaseObjectType.TYPE -> types(meta, request)
             else -> MetadataResult(emptyList(), capabilities(meta))
         }
@@ -192,7 +194,8 @@ class JdbcDatabaseIntrospector : DatabaseIntrospector {
                     qualifiedName = listOfNotNull(request.schema, name).joinToString("."),
                     objectType = DatabaseObjectType.PROCEDURE,
                     catalog = request.catalog,
-                    schema = request.schema
+                    schema = request.schema,
+                    hasChildren = true
                 )
             },
             capabilities(meta)
@@ -208,7 +211,8 @@ class JdbcDatabaseIntrospector : DatabaseIntrospector {
                     qualifiedName = listOfNotNull(request.schema, name).joinToString("."),
                     objectType = DatabaseObjectType.FUNCTION,
                     catalog = request.catalog,
-                    schema = request.schema
+                    schema = request.schema,
+                    hasChildren = true
                 )
             },
             capabilities(meta)
@@ -231,7 +235,42 @@ class JdbcDatabaseIntrospector : DatabaseIntrospector {
     private fun objectChildren(meta: DatabaseMetaData, request: MetadataRequest): MetadataResult {
         val table = request.objectName ?: return MetadataResult(emptyList(), capabilities(meta))
         val objects = mutableListOf<DatabaseObject>()
-        objects += readRows(meta.getColumns(request.catalog, request.schema, table, "%")) { rs ->
+        val columns = when (request.objectType) {
+            DatabaseObjectType.PROCEDURE -> runCatching {
+                readRows(meta.getProcedureColumns(request.catalog, request.schema, table, "%")) { rs ->
+                    val name = rs.getString("COLUMN_NAME") ?: return@readRows null
+                    DatabaseObject(
+                        id = "parameter:${request.catalog.orEmpty()}:${request.schema.orEmpty()}:$table:$name",
+                        name = name,
+                        qualifiedName = "$table.$name",
+                        objectType = DatabaseObjectType.COLUMN,
+                        catalog = request.catalog,
+                        schema = request.schema,
+                        attributes = mapOf(
+                            "type" to (rs.getString("TYPE_NAME") ?: ""),
+                            "mode" to rs.getInt("COLUMN_TYPE").toString()
+                        )
+                    )
+                }
+            }.getOrDefault(emptyList())
+            DatabaseObjectType.FUNCTION -> runCatching {
+                readRows(meta.getFunctionColumns(request.catalog, request.schema, table, "%")) { rs ->
+                    val name = rs.getString("COLUMN_NAME") ?: return@readRows null
+                    DatabaseObject(
+                        id = "parameter:${request.catalog.orEmpty()}:${request.schema.orEmpty()}:$table:$name",
+                        name = name,
+                        qualifiedName = "$table.$name",
+                        objectType = DatabaseObjectType.COLUMN,
+                        catalog = request.catalog,
+                        schema = request.schema,
+                        attributes = mapOf(
+                            "type" to (rs.getString("TYPE_NAME") ?: ""),
+                            "mode" to rs.getInt("COLUMN_TYPE").toString()
+                        )
+                    )
+                }
+            }.getOrDefault(emptyList())
+            else -> readRows(meta.getColumns(request.catalog, request.schema, table, "%")) { rs ->
             val name = rs.getString("COLUMN_NAME") ?: return@readRows null
             DatabaseObject(
                 id = "column:${request.catalog.orEmpty()}:${request.schema.orEmpty()}:$table:$name",
@@ -247,7 +286,9 @@ class JdbcDatabaseIntrospector : DatabaseIntrospector {
                     "ordinal" to rs.getInt("ORDINAL_POSITION").toString()
                 )
             )
+            }
         }
+        objects += columns
         objects += readRows(meta.getPrimaryKeys(request.catalog, request.schema, table)) { rs ->
             val name = rs.getString("PK_NAME") ?: "PRIMARY KEY"
             DatabaseObject(
