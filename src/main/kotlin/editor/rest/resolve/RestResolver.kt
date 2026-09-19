@@ -64,9 +64,18 @@ data class ResolvedRequest(
     val sslValidation: Boolean = true
 )
 
+data class RestRequestPreview(
+    val request: ResolvedRequest,
+    val text: String
+)
+
 class RestRequestValidationException(message: String) : IllegalArgumentException(message)
 
-class RestVariableResolver(private val collection: JsonObject, private val path: RestNodePath) {
+class RestVariableResolver(
+    private val collection: JsonObject,
+    private val path: RestNodePath,
+    environmentVariables: Map<String, String> = emptyMap()
+) {
     private val variables: LinkedHashMap<String, RestVariableValue> = linkedMapOf()
 
     init {
@@ -82,6 +91,9 @@ class RestVariableResolver(private val collection: JsonObject, private val path:
             readVariables(node, source).forEach { value ->
                 if (!value.disabled) variables[value.key] = value
             }
+        }
+        environmentVariables.forEach { (key, value) ->
+            variables[key] = RestVariableValue(key, value, source = "Environment")
         }
     }
 
@@ -140,15 +152,43 @@ class RestVariableResolver(private val collection: JsonObject, private val path:
 class RestRequestResolver(
     private val collection: JsonObject,
     private val path: RestNodePath,
-    private val workspaceRoot: Path
+    private val workspaceRoot: Path,
+    environmentVariables: Map<String, String> = emptyMap()
 ) {
-    private val variables = RestVariableResolver(collection, path)
+    private val variables = RestVariableResolver(collection, path, environmentVariables)
     private val unresolved = linkedSetOf<String>()
     private val cycles = linkedSetOf<String>()
 
     fun effectiveVariables(): List<RestVariableValue> = variables.effectiveVariables()
 
     fun resolve(value: String): RestVariableResolution = variables.resolve(value)
+
+    fun preview(): RestRequestPreview {
+        val request = materialize()
+        val uri = java.net.URI(request.url)
+        val target = buildString {
+            append(uri.rawPath.takeIf { it.isNotEmpty() } ?: "/")
+            uri.rawQuery?.let { append('?').append(it) }
+        }
+        val headers = request.headers
+            .filterNot { it.name.equals("Host", true) || it.name.equals("Content-Length", true) }
+            .filterNot { it.name.equals("Connection", true) && it.value.equals("keep-alive", true) }
+            .map { it.name + ": " + it.value }
+            .toMutableList()
+        if (request.headers.none { it.name.equals("Host", true) }) {
+            uri.authority?.let { headers.add(0, "Host: $it") }
+        }
+        request.body?.let { body ->
+            if (headers.none { it.startsWith("Content-Length:", true) }) headers += "Content-Length: ${body.size}"
+        }
+        val text = buildString {
+            append(request.method.uppercase(Locale.ROOT)).append(' ').append(target).append(" HTTP/1.1\n")
+            headers.forEach { append(it).append('\n') }
+            append('\n')
+            request.body?.let { append(it.toString(StandardCharsets.UTF_8)) }
+        }
+        return RestRequestPreview(request, text)
+    }
 
     /** Includes the app's x-kode-headers extension on collections/folders and request.header. */
     fun effectiveHeaders(): List<RestHeaderValue> {
@@ -194,10 +234,14 @@ class RestRequestResolver(
         val request = item.jsonObject("request") ?: throw RestRequestValidationException("Selected node is not a request")
         val method = request.string("method")?.trim().orEmpty().ifBlank { "GET" }
         val url = resolveUrl(request)
-        val uri = runCatching { java.net.URI(url) }.getOrElse {
+        var uri = runCatching { java.net.URI(url) }.getOrElse {
             throw RestRequestValidationException("Invalid URL: ${it.message ?: url}")
         }
-        if (uri.scheme?.lowercase(Locale.ROOT) !in setOf("http", "https")) {
+        if (uri.scheme?.lowercase(Locale.ROOT) == "sse") {
+            val httpUrl = url.replaceFirst(Regex("^sse://", RegexOption.IGNORE_CASE), "http://")
+            uri = java.net.URI(httpUrl)
+        }
+        if (uri.scheme?.lowercase(Locale.ROOT) !in setOf("http", "https", "ws", "wss")) {
             throw RestRequestValidationException("Unsupported URL scheme: ${uri.scheme ?: "missing"}")
         }
         val headers = effectiveHeaders()
@@ -208,10 +252,14 @@ class RestRequestResolver(
             }
             .values
             .toMutableList()
+        if (url.startsWith("sse://", true) && headers.none { it.name.equals("Accept", true) }) {
+            headers += ResolvedHeader("Accept", "text/event-stream")
+        }
         val auth = effectiveAuth()
         val authQuery = applyAuth(headers, auth)
         val body = buildBody(request, headers)
-        val finalUrl = authQuery?.let { appendQuery(url, it.first, it.second) } ?: url
+        val normalizedUrl = if (url.startsWith("sse://", true)) url.replaceFirst(Regex("^sse://", RegexOption.IGNORE_CASE), "http://") else url
+        val finalUrl = authQuery?.let { appendQuery(normalizedUrl, it.first, it.second) } ?: normalizedUrl
         val settings = item.jsonObject("protocolProfileBehavior") ?: collection.jsonObject("protocolProfileBehavior")
         val timeout = settings?.long("requestTimeout")?.coerceAtLeast(1) ?: 30_000L
         val followRedirects = settings?.boolean("disableRedirects") != true

@@ -6,6 +6,9 @@ import editor.rest.resolve.RestRequestResolver
 import kotlinx.serialization.json.JsonObject
 import editor.rest.model.RestNodePath
 import java.io.InputStream
+import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
+import java.io.InputStreamReader
 import java.net.CookieManager
 import java.net.CookiePolicy
 import java.net.HttpCookie
@@ -20,6 +23,9 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import java.net.http.WebSocket
+import java.util.concurrent.CompletionStage
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLParameters
@@ -101,8 +107,15 @@ class RestHttpExecutor(
 ) {
     fun executeAsync(
         request: ResolvedRequest,
-        onComplete: (RestResponse) -> Unit
+        onComplete: (RestResponse) -> Unit,
+        onStream: (String) -> Unit = {}
     ): RestExecutionHandle {
+        if (request.url.startsWith("ws://", true) || request.url.startsWith("wss://", true)) {
+            return executeWebSocket(request, onComplete, onStream)
+        }
+        if (request.headers.any { it.name.equals("Accept", true) && it.value.split(',').any { value -> value.trim().equals("text/event-stream", true) } }) {
+            return executeSse(request, onComplete, onStream)
+        }
         val started = System.currentTimeMillis()
         val uri = URI(request.url)
         val httpRequest = buildRequest(request, uri)
@@ -123,6 +136,140 @@ class RestHttpExecutor(
                 readResponse(request, started, finished, response)
             }
             onComplete(result)
+        }
+        return handle
+    }
+
+    private fun executeSse(
+        request: ResolvedRequest,
+        onComplete: (RestResponse) -> Unit,
+        onStream: (String) -> Unit
+    ): RestExecutionHandle {
+        val started = System.currentTimeMillis()
+        val uri = URI(request.url)
+        val httpRequest = buildRequest(request, uri)
+        val client = buildClient(request)
+        val future = client.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofInputStream())
+        val stream = AtomicReference<InputStream?>()
+        val readerThread = AtomicReference<Thread?>()
+        lateinit var handle: RestExecutionHandle
+        handle = RestExecutionHandle {
+            future.cancel(true)
+            stream.getAndSet(null)?.close()
+            readerThread.get()?.interrupt()
+        }
+        future.whenComplete { response, throwable ->
+            if (throwable != null) {
+                onComplete(RestResponse(request, started, System.currentTimeMillis() - started, error = networkMessage(throwable, handle.isCancelled())))
+                return@whenComplete
+            }
+            val input = response.body()
+            stream.set(input)
+            val thread = Thread({
+                val captured = ByteArrayOutputStream()
+                try {
+                    BufferedReader(InputStreamReader(input, StandardCharsets.UTF_8)).useLines { lines ->
+                        lines.forEach { line ->
+                            if (handle.isCancelled()) return@forEach
+                            val event = line + "\n"
+                            if (captured.size() < responsePreviewLimit) {
+                                val bytes = event.toByteArray(StandardCharsets.UTF_8)
+                                captured.write(bytes, 0, minOf(bytes.size, responsePreviewLimit - captured.size()))
+                            }
+                            onStream(event)
+                        }
+                    }
+                    onComplete(streamResponse(request, started, response.statusCode(), response.headers().map(), response.uri(), captured.toByteArray(), handle.isCancelled()))
+                } catch (error: Throwable) {
+                    if (!handle.isCancelled()) onComplete(RestResponse(request, started, System.currentTimeMillis() - started, error = networkMessage(error, false)))
+                    else onComplete(RestResponse(request, started, System.currentTimeMillis() - started, error = "Request cancelled"))
+                } finally {
+                    stream.set(null)
+                }
+            }, "rest-sse-reader")
+            readerThread.set(thread)
+            thread.isDaemon = true
+            thread.start()
+        }
+        return handle
+    }
+
+    private fun executeWebSocket(
+        request: ResolvedRequest,
+        onComplete: (RestResponse) -> Unit,
+        onStream: (String) -> Unit
+    ): RestExecutionHandle {
+        val started = System.currentTimeMillis()
+        val client = buildClient(request)
+        val captured = ByteArrayOutputStream()
+        val completed = AtomicBoolean(false)
+        val socket = AtomicReference<WebSocket?>()
+        fun finish(error: String? = null) {
+            if (!completed.compareAndSet(false, true)) return
+            onComplete(RestResponse(
+                request = request,
+                startedAt = started,
+                durationMs = System.currentTimeMillis() - started,
+                statusCode = if (error == null) 101 else null,
+                statusText = if (error == null) "Switching Protocols" else "",
+                bodyBytes = captured.toByteArray(),
+                receivedBytes = captured.size().toLong(),
+                contentType = "text/plain",
+                error = error
+            ))
+        }
+        val listener = object : WebSocket.Listener {
+            override fun onOpen(webSocket: WebSocket) {
+                socket.set(webSocket)
+                onStream("[websocket connected]\n")
+                webSocket.request(1)
+            }
+
+            override fun onText(webSocket: WebSocket, data: CharSequence, last: Boolean): CompletionStage<*>? {
+                val text = data.toString()
+                val bytes = text.toByteArray(StandardCharsets.UTF_8)
+                if (captured.size() < responsePreviewLimit) captured.write(bytes, 0, minOf(bytes.size, responsePreviewLimit - captured.size()))
+                onStream(text + if (last) "\n" else "")
+                webSocket.request(1)
+                return null
+            }
+
+            override fun onBinary(webSocket: WebSocket, data: java.nio.ByteBuffer, last: Boolean): CompletionStage<*>? {
+                val bytes = ByteArray(data.remaining())
+                data.get(bytes)
+                if (captured.size() < responsePreviewLimit) captured.write(bytes, 0, minOf(bytes.size, responsePreviewLimit - captured.size()))
+                onStream(bytes.toString(StandardCharsets.UTF_8) + if (last) "\n" else "")
+                webSocket.request(1)
+                return null
+            }
+
+            override fun onClose(webSocket: WebSocket, statusCode: Int, reason: String): CompletionStage<*>? {
+                finish()
+                return null
+            }
+
+            override fun onError(webSocket: WebSocket, error: Throwable) {
+                finish(networkMessage(error, false))
+            }
+        }
+        val webSocketBuilder = client.newWebSocketBuilder()
+            .connectTimeout(Duration.ofMillis(request.timeoutMs.coerceAtLeast(1)))
+        request.headers.forEach { header ->
+            when (header.name.trim().lowercase()) {
+                "host", "connection", "content-length", "expect", "upgrade", "sec-websocket-key",
+                "sec-websocket-version", "sec-websocket-extensions", "transfer-encoding" -> Unit
+                else -> webSocketBuilder.header(header.name, header.value)
+            }
+        }
+        val future = webSocketBuilder.buildAsync(URI(request.url), listener)
+        val handle = RestExecutionHandle {
+            socket.getAndSet(null)?.abort()
+            future.cancel(true)
+            finish("Request cancelled")
+        }
+        future.whenComplete { connected, throwable ->
+            if (throwable != null && !handle.isCancelled()) finish(networkMessage(throwable, false))
+            else if (connected != null) socket.compareAndSet(null, connected)
         }
         return handle
     }
@@ -220,6 +367,35 @@ class RestHttpExecutor(
         )
     }
 
+    private fun streamResponse(
+        request: ResolvedRequest,
+        started: Long,
+        statusCode: Int,
+        responseHeaders: Map<String, List<String>>,
+        uri: URI,
+        body: ByteArray,
+        cancelled: Boolean
+    ): RestResponse {
+        val headers = responseHeaders.flatMap { (name, values) -> values.map { value -> RestResponseHeader(name, value) } }
+        val setCookies = headers.filter { it.name.equals("Set-Cookie", true) }.map { it.value }
+        cookieJar.accept(uri, setCookies)
+        return RestResponse(
+            request = request,
+            startedAt = started,
+            durationMs = System.currentTimeMillis() - started,
+            statusCode = statusCode,
+            statusText = statusText(statusCode),
+            headers = headers,
+            cookies = setCookies,
+            bodyBytes = body,
+            receivedBytes = body.size.toLong(),
+            truncated = body.size >= responsePreviewLimit,
+            contentType = headers.firstOrNull { it.name.equals("Content-Type", true) }?.value,
+            finalUrl = uri.toString(),
+            error = if (cancelled) "Request cancelled" else null
+        )
+    }
+
     private fun readLimited(input: InputStream): CapturedBody {
         input.use { stream ->
             val output = java.io.ByteArrayOutputStream(minOf(responsePreviewLimit, 64 * 1024))
@@ -270,9 +446,11 @@ class RestApiRuntime(private val workspaceRoot: java.nio.file.Path) {
     fun executeAsync(
         collection: JsonObject,
         path: RestNodePath,
-        onComplete: (RestResponse) -> Unit
+        onComplete: (RestResponse) -> Unit,
+        environmentVariables: Map<String, String> = emptyMap(),
+        onStream: (String) -> Unit = {}
     ): RestExecutionHandle {
-        val requestResult = runCatching { RestRequestResolver(collection, path, workspaceRoot).materialize() }
+        val requestResult = runCatching { RestRequestResolver(collection, path, workspaceRoot, environmentVariables).materialize() }
         val request = requestResult.getOrNull()
         if (request == null) {
             val cancelled = AtomicBoolean(false)
@@ -285,7 +463,7 @@ class RestApiRuntime(private val workspaceRoot: java.nio.file.Path) {
             }
             return handle
         }
-        return executor.executeAsync(request, onComplete)
+        return executor.executeAsync(request, onComplete, onStream)
     }
 
     fun clearCookies() = executor.clearCookies()

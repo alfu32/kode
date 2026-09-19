@@ -94,14 +94,49 @@ class RestHttpTest {
         }
     }
 
+    @Test
+    fun readsSseEventsAndCanPublishIncrementalUpdates() {
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/events") { exchange ->
+            exchange.responseHeaders.add("Content-Type", "text/event-stream")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.use { output ->
+                output.write("data: one\n\n".toByteArray(StandardCharsets.UTF_8))
+                output.write("data: two\n\n".toByteArray(StandardCharsets.UTF_8))
+            }
+        }
+        server.start()
+        try {
+            val request = ResolvedRequest(
+                RestNodePath(),
+                "GET",
+                "http://127.0.0.1:${server.address.port}/events",
+                listOf(editor.rest.resolve.ResolvedHeader("Accept", "text/event-stream"))
+            )
+            val latch = CountDownLatch(1)
+            val events = StringBuilder()
+            var result: editor.rest.http.RestResponse? = null
+            RestHttpExecutor(responsePreviewLimit = 1024).executeAsync(request, {
+                result = it
+                latch.countDown()
+            }) { events.append(it) }
+            assertTrue(latch.await(10, TimeUnit.SECONDS))
+            assertEquals(200, result?.statusCode)
+            assertTrue(events.toString().contains("data: one"))
+            assertTrue(events.toString().contains("data: two"))
+        } finally {
+            server.stop(0)
+        }
+    }
+
     private fun execute(executor: RestHttpExecutor, request: ResolvedRequest) =
         kotlin.run {
             val latch = CountDownLatch(1)
             var result: editor.rest.http.RestResponse? = null
-            executor.executeAsync(request) {
+            executor.executeAsync(request, onComplete = {
                 result = it
                 latch.countDown()
-            }
+            })
             assertTrue(latch.await(10, TimeUnit.SECONDS))
             result ?: error("No HTTP result")
         }

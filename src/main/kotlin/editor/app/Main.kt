@@ -1046,6 +1046,7 @@ private class SplitPanelsApp(
         model = restWorkspace,
         workspaceRoot = projectRoot,
         onOpen = { path -> openRestNode(path) },
+        onOpenEnvironment = { id -> openRestEnvironment(id) },
         onRun = { path -> runRestRequests(path) },
         onChanged = { schedulePersist(); renderDirty.set(true) },
         onInvalidate = { renderDirty.set(true) }
@@ -1609,6 +1610,14 @@ private class SplitPanelsApp(
         renderDirty.set(true)
     }
 
+    private fun openRestEnvironment(id: String) {
+        activeSqlConsoleId = null
+        restEditor.openEnvironment(id)
+        rightFocus = FocusTarget.REST
+        focus = rightFocus
+        renderDirty.set(true)
+    }
+
     private fun sendRestRequest(path: RestNodePath) {
         restExecution?.let {
             it.cancel()
@@ -1617,7 +1626,10 @@ private class SplitPanelsApp(
             return
         }
         restEditor.markRunning()
-        startRestExecution(path) { result ->
+        startRestExecution(path, onStream = { text ->
+            restEditor.showStreamUpdate(text)
+            renderDirty.set(true)
+        }) { result ->
             restEditor.showResponse(result)
             renderDirty.set(true)
         }
@@ -1668,16 +1680,20 @@ private class SplitPanelsApp(
         renderDirty.set(true)
     }
 
-    private fun startRestExecution(path: RestNodePath, onComplete: (editor.rest.http.RestResponse) -> Unit) {
+    private fun startRestExecution(
+        path: RestNodePath,
+        onStream: (String) -> Unit = {},
+        onComplete: (editor.rest.http.RestResponse) -> Unit
+    ) {
         val reference = AtomicReference<RestExecutionHandle?>()
         val completed = AtomicBoolean(false)
-        val handle = restRuntime.executeAsync(restWorkspace.collection, path) { result ->
+        val handle = restRuntime.executeAsync(restWorkspace.collection, path, { result ->
             completed.set(true)
             onComplete(result)
             reference.get()?.let { current ->
                 if (restExecution === current) restExecution = null
             }
-        }
+        }, restWorkspace.activeEnvironmentVariables(), onStream)
         reference.set(handle)
         if (!completed.get()) restExecution = handle
     }

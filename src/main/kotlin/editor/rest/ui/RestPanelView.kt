@@ -26,6 +26,7 @@ class RestPanelView(
     private val model: RestWorkspaceModel,
     private val workspaceRoot: Path,
     private val onOpen: (RestNodePath) -> Unit,
+    private val onOpenEnvironment: (String) -> Unit = {},
     private val onRun: (RestNodePath) -> Unit,
     private val onChanged: () -> Unit,
     private val onInvalidate: () -> Unit = {}
@@ -40,6 +41,12 @@ class RestPanelView(
         data object Import : Action
         data class ImportOpenApi(val parent: RestNodePath) : Action
         data object Export : Action
+        data object NewEnvironment : Action
+        data object CopyEnvironment : Action
+        data object RenameEnvironment : Action
+        data object ActivateEnvironment : Action
+        data object RemoveEnvironment : Action
+        data class OpenEnvironment(val id: String) : Action
     }
 
     private data class Hit(val range: IntRange, val action: Action)
@@ -60,6 +67,8 @@ class RestPanelView(
     private var filterRange: IntRange = IntRange.EMPTY
     private var pendingImportParent = RestNodePath()
     private var pendingRenamePath: RestNodePath? = null
+    private var environmentSelectionId: String? = null
+    private var pendingEnvironmentAction: String? = null
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
@@ -88,17 +97,25 @@ class RestPanelView(
             filterRange = IntRange.EMPTY
         }
         val toolbar = mutableListOf<Hit>()
-        renderButton(canvas, button, 0, 1, " [+request] ", Action.AddRequest(RestNodePath()), toolbar, cols)
-        renderButton(canvas, button, 13, 1, " [+folder] ", Action.AddFolder(RestNodePath()), toolbar, cols)
-        renderButton(canvas, button, 24, 1, " [run] ", Action.Run(RestNodePath()), toolbar, cols)
-        renderButton(canvas, button, 32, 1, " [import] ", Action.Import, toolbar, cols)
-        renderButton(canvas, button, 43, 1, " [openapi] ", Action.ImportOpenApi(RestNodePath()), toolbar, cols)
-        renderButton(canvas, button, 55, 1, " [export] ", Action.Export, toolbar, cols)
+        val toolbarWidth = if (cols >= 60) (cols / 2).coerceAtLeast(30) else cols
+        renderButton(canvas, button, 0, 1, " [+request] ", Action.AddRequest(RestNodePath()), toolbar, toolbarWidth)
+        renderButton(canvas, button, 13, 1, " [+folder] ", Action.AddFolder(RestNodePath()), toolbar, toolbarWidth)
+        renderButton(canvas, button, 24, 1, " [run] ", Action.Run(RestNodePath()), toolbar, toolbarWidth)
+        renderButton(canvas, button, 32, 1, " [import] ", Action.Import, toolbar, toolbarWidth)
+        renderButton(canvas, button, 43, 1, " [openapi] ", Action.ImportOpenApi(RestNodePath()), toolbar, toolbarWidth)
+        renderButton(canvas, button, 55, 1, " [export] ", Action.Export, toolbar, toolbarWidth)
 
         lines = visibleTreeNodes()
+        if (environmentSelectionId == null || model.environment(environmentSelectionId.orEmpty()) == null) {
+            environmentSelectionId = model.activeEnvironmentId ?: model.environments.firstOrNull()?.id
+        }
         selected = selected.coerceIn(0, (lines.size - 1).coerceAtLeast(0))
         val listTop = 3
-        val visible = (rows - listTop).coerceAtLeast(0)
+        val sideEnvironmentWidth = if (cols >= 60) (cols / 2).coerceAtLeast(30) else 0
+        val treeWidth = if (sideEnvironmentWidth > 0) sideEnvironmentWidth else cols
+        val environmentHeight = if (sideEnvironmentWidth > 0) rows else minOf(8, (rows / 3).coerceAtLeast(5))
+        val treeBottom = if (sideEnvironmentWidth > 0) rows else (rows - environmentHeight).coerceAtLeast(listTop)
+        val visible = (treeBottom - listTop).coerceAtLeast(0)
         scroll = scroll.coerceIn(0, (lines.size - visible).coerceAtLeast(0))
         val rowHits = mutableMapOf<Int, MutableList<Hit>>()
         lines.drop(scroll).take(visible).forEachIndexed { visibleIndex, line ->
@@ -110,7 +127,7 @@ class RestPanelView(
             val method = line.method?.uppercase()?.padEnd(7)?.take(7).orEmpty()
             val label = prefix + marker + " " + method + line.name
             canvas.withStyle(if (index == selected) selectedStyle else base) {
-                drawText(0, row, label.take(cols).padEnd(cols, ' '))
+                drawText(0, row, label.take(treeWidth).padEnd(treeWidth, ' '))
             }
             if (line.hasChildren) {
                 rowHits.getOrPut(row) { mutableListOf() } += Hit(
@@ -119,20 +136,35 @@ class RestPanelView(
                 )
             }
             val addParent = line.kind != RestNodeKind.REQUEST
-            if (addParent && cols > 8) {
+            if (addParent && treeWidth > 8) {
                 val addLabel = " [+] "
-                val x = (cols - addLabel.length).coerceAtLeast(prefix.length + marker.length + 1)
+                val x = (treeWidth - addLabel.length).coerceAtLeast(prefix.length + marker.length + 1)
                 rowHits.getOrPut(row) { mutableListOf() } += Hit(x until x + addLabel.length, Action.AddRequest(line.path))
                 canvas.withStyle(button) { drawText(x, row, addLabel) }
             }
             val menuLabel = " [...] "
-            if (cols > menuLabel.length + 8) {
-                val x = cols - menuLabel.length - if (addParent) addLabelLength() else 0
+            if (treeWidth > menuLabel.length + 8) {
+                val x = treeWidth - menuLabel.length - if (addParent) addLabelLength() else 0
                 rowHits.getOrPut(row) { mutableListOf() } += Hit(x until x + menuLabel.length, Action.Menu(line.path, x, row))
                 canvas.withStyle(button) { drawText(x, row, menuLabel) }
             }
         }
-        hits = (mapOf(1 to toolbar) + rowHits).mapValues { it.value.toList() }
+        val environmentHits = mutableMapOf<Int, MutableList<Hit>>()
+        renderEnvironments(
+            canvas,
+            if (sideEnvironmentWidth > 0) sideEnvironmentWidth else 0,
+            if (sideEnvironmentWidth > 0) 0 else treeBottom,
+            if (sideEnvironmentWidth > 0) cols - sideEnvironmentWidth else cols,
+            rows,
+            base,
+            button,
+            environmentHits
+        )
+        val allHits = mutableMapOf<Int, MutableList<Hit>>()
+        allHits.getOrPut(1) { mutableListOf() }.addAll(toolbar)
+        rowHits.forEach { (row, values) -> allHits.getOrPut(row) { mutableListOf() }.addAll(values) }
+        environmentHits.forEach { (row, values) -> allHits.getOrPut(row) { mutableListOf() }.addAll(values) }
+        hits = allHits.mapValues { it.value.toList() }
         menu?.render(canvas)
         dialog?.render(canvas)
         confirm?.render(canvas)
@@ -143,7 +175,7 @@ class RestPanelView(
         dialog?.let { active ->
             val handled = active.dispatch(event)
             if (active.finished) {
-                active.result?.let { handleRenameOrPath(it) }
+                active.result?.let { handleRenameOrPath(it) } ?: run { pendingEnvironmentAction = null }
                 dialog = null
             }
             onInvalidate()
@@ -282,6 +314,27 @@ class RestPanelView(
                 action.parent
             )
             Action.Export -> openInput("Export Postman collection", "File", workspaceRoot.resolve("collection.postman_collection.json").toString())
+            Action.NewEnvironment -> openEnvironmentInput("New environment", "New environment", "new")
+            Action.CopyEnvironment -> environmentSelectionId?.let { id ->
+                val source = model.environment(id) ?: return@let
+                openEnvironmentInput("Copy environment", "${source.name} copy", "copy", id)
+            }
+            Action.RenameEnvironment -> environmentSelectionId?.let { id ->
+                model.environment(id)?.let { openEnvironmentInput("Rename environment", it.name, "rename", id) }
+            }
+            Action.ActivateEnvironment -> environmentSelectionId?.let { id ->
+                if (model.activateEnvironment(id)) notifyChanged("Activated environment")
+            }
+            Action.RemoveEnvironment -> environmentSelectionId?.let { id ->
+                if (model.removeEnvironment(id)) {
+                    environmentSelectionId = model.activeEnvironmentId
+                    notifyChanged("Removed environment")
+                }
+            }
+            is Action.OpenEnvironment -> {
+                environmentSelectionId = action.id
+                onOpenEnvironment(action.id)
+            }
         }
     }
 
@@ -342,8 +395,40 @@ class RestPanelView(
         dialog = ModalTextInputDialog(styleSheet, title, label, initial, onInvalidate = onInvalidate)
     }
 
+    private fun openEnvironmentInput(title: String, initial: String, action: String, id: String? = null) {
+        pendingEnvironmentAction = action + ":" + (id.orEmpty())
+        pendingRenamePath = null
+        dialog = ModalTextInputDialog(styleSheet, title, "Name", initial, onInvalidate = onInvalidate)
+    }
+
     private fun handleRenameOrPath(value: String) {
         val title = dialog?.title ?: return
+        val environmentAction = pendingEnvironmentAction
+        pendingEnvironmentAction = null
+        if (environmentAction != null) {
+            val parts = environmentAction.split(':', limit = 2)
+            val action = parts.firstOrNull()
+            val id = parts.getOrNull(1).orEmpty().ifBlank { null }
+            when (action) {
+                "new" -> {
+                    val environment = model.createEnvironment(value)
+                    environmentSelectionId = environment.id
+                    onOpenEnvironment(environment.id)
+                    notifyChanged("Created environment")
+                }
+                "copy" -> id?.let { sourceId ->
+                    model.duplicateEnvironment(sourceId, value)?.let { environment ->
+                        environmentSelectionId = environment.id
+                        onOpenEnvironment(environment.id)
+                        notifyChanged("Copied environment")
+                    }
+                }
+                "rename" -> id?.let {
+                    if (model.renameEnvironment(it, value)) notifyChanged("Renamed environment")
+                }
+            }
+            return
+        }
         if (title.startsWith("Rename \"")) {
             val path = pendingRenamePath ?: lines.getOrNull(selected)?.path ?: return
             model.rename(path, value)
@@ -394,6 +479,51 @@ class RestPanelView(
     }
 
     private fun addLabelLength(): Int = 5
+
+    private fun renderEnvironments(
+        canvas: CanvasRenderer,
+        x: Int,
+        top: Int,
+        width: Int,
+        rows: Int,
+        base: StyleSet,
+        button: StyleSet,
+        target: MutableMap<Int, MutableList<Hit>>
+    ) {
+        if (width < 12 || top >= rows) return
+        canvas.withStyle(styleSheet.getStyle("splitter").withDefaults(base.fg, base.bg)) {
+            if (x > 0) for (row in 0 until rows) drawText(x - 1, row, "│")
+        }
+        val title = "Environments"
+        canvas.withStyle(base) { drawText(x, top, title.take(width).padEnd(width, ' ')) }
+        val buttons = listOf(
+            "[+]" to Action.NewEnvironment,
+            "[copy]" to Action.CopyEnvironment,
+            "[rename]" to Action.RenameEnvironment,
+            "[activate]" to Action.ActivateEnvironment,
+            "[-]" to Action.RemoveEnvironment
+        )
+        var buttonX = x
+        buttons.forEach { (label, action) ->
+            if (buttonX < x + width) {
+                val visible = label.take((x + width - buttonX).coerceAtLeast(0))
+                canvas.withStyle(button) { drawText(buttonX, top + 1, visible) }
+                target.getOrPut(top + 1) { mutableListOf() } += Hit(buttonX until buttonX + visible.length, action)
+                buttonX += label.length + 1
+            }
+        }
+        model.environments.forEachIndexed { index, environment ->
+            val row = top + 3 + index
+            if (row >= rows) return@forEachIndexed
+            val marker = if (environment.id == model.activeEnvironmentId) "*" else " "
+            val selectedMarker = if (environment.id == environmentSelectionId) ">" else " "
+            val label = "$selectedMarker[$marker] ${environment.name}"
+            canvas.withStyle(if (environment.id == environmentSelectionId) styleSheet.getStyle("file-entry:selected").withDefaults(base.fg, base.bg) else base) {
+                drawText(x, row, label.take(width).padEnd(width, ' '))
+            }
+            target.getOrPut(row) { mutableListOf() } += Hit(x until x + width, Action.OpenEnvironment(environment.id))
+        }
+    }
 }
 
 enum class RestMenuAction {

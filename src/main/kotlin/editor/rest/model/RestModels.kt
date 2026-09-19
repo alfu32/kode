@@ -24,10 +24,29 @@ data class RestApiUiState(
 )
 
 @Serializable
+data class RestEnvironmentValue(
+    val key: String,
+    val value: String,
+    val enabled: Boolean = true,
+    val type: String = "default",
+    val description: String? = null,
+    val secret: Boolean = false
+)
+
+@Serializable
+data class RestEnvironment(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "New environment",
+    val values: List<RestEnvironmentValue> = emptyList()
+)
+
+@Serializable
 data class RestApiProjectState(
     val version: Int = 1,
     val collection: JsonObject = defaultCollection(),
-    val ui: RestApiUiState = RestApiUiState()
+    val ui: RestApiUiState = RestApiUiState(),
+    val environments: List<RestEnvironment> = emptyList(),
+    val activeEnvironmentId: String? = null
 )
 
 data class RestNodePath(val indices: List<Int> = emptyList()) {

@@ -2,6 +2,7 @@ package editor.rest.ui
 
 import editor.rest.http.RestResponse
 import editor.rest.model.RestNodePath
+import editor.rest.model.RestEnvironmentCodec
 import editor.rest.model.RestWorkspaceModel
 import editor.rest.model.array
 import editor.rest.model.items
@@ -30,8 +31,8 @@ import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
 
-enum class RestEditorTab { OVERVIEW, AUTHORIZATION, VARIABLES, PARAMS, HEADERS, BODY, SETTINGS, RESPONSE }
-enum class RestResponseTab { BODY, HEADERS, COOKIES, RAW }
+enum class RestEditorTab { OVERVIEW, AUTHORIZATION, VARIABLES, PARAMS, HEADERS, BODY, SETTINGS, RAW_REQUEST }
+enum class RestResponseTab { BODY, HEADERS, COOKIES, RAW, TRANSACTION }
 data class RestRunSummary(val path: RestNodePath, val text: String)
 
 class RestEditorView(
@@ -109,9 +110,11 @@ class RestEditorView(
     }
 
     private var currentPath = RestNodePath()
+    private var environmentId: String? = null
     private var tab = RestEditorTab.OVERVIEW
     private var responseTab = RestResponseTab.BODY
     private var response: RestResponse? = null
+    private var streamText = ""
     private var runSummary: List<RestRunSummary>? = null
     private val runResponses = mutableMapOf<RestNodePath, RestResponse>()
     private var running = false
@@ -132,23 +135,33 @@ class RestEditorView(
     private var requestBodyEditorFocused = false
     private var responseEditorFocused = false
     private var headersEditorFocused = false
+    private var rawRequestEditorFocused = false
+    private var environmentEditorFocused = false
     private var requestBodyEditorKey: String? = null
     private var responseEditorKey: String? = null
     private var headersEditorKey: String? = null
+    private var rawRequestEditorKey: String? = null
+    private var environmentEditorKey: String? = null
     private var requestBodyEditorRegion: EditorRegion? = null
     private var responseEditorRegion: EditorRegion? = null
     private var headersEditorRegion: EditorRegion? = null
+    private var rawRequestEditorRegion: EditorRegion? = null
+    private var environmentEditorRegion: EditorRegion? = null
     private val requestBodyEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
     private val responseEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
     private val headersEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
+    private val rawRequestEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
+    private val environmentEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
 
     private data class EditorRegion(val x: Int, val y: Int, val width: Int, val height: Int)
 
     init {
         responseEditor.setReadOnly(true)
+        rawRequestEditor.setReadOnly(true)
     }
 
     fun open(path: RestNodePath) {
+        environmentId = null
         currentPath = path
         model.select(path)
         response = runResponses[path]
@@ -158,14 +171,30 @@ class RestEditorView(
         requestBodyEditorFocused = false
         responseEditorFocused = false
         headersEditorFocused = false
+        rawRequestEditorFocused = false
+        environmentEditorFocused = false
         syncFields()
         tab = if (path.isRoot || model.node(path)?.isRequestNode() != true) RestEditorTab.OVERVIEW else RestEditorTab.PARAMS
+        onInvalidate()
+    }
+
+    fun openEnvironment(id: String) {
+        if (model.environment(id) == null) return
+        environmentId = id
+        focused = null
+        requestBodyEditorFocused = false
+        responseEditorFocused = false
+        headersEditorFocused = false
+        rawRequestEditorFocused = false
+        environmentEditorFocused = false
+        environmentEditorKey = null
         onInvalidate()
     }
 
     fun markRunning() {
         running = true
         response = null
+        streamText = ""
         runSummary = null
         onInvalidate()
     }
@@ -173,22 +202,27 @@ class RestEditorView(
     fun showResponse(result: RestResponse) {
         running = false
         response = result
+        streamText = ""
         runResponses[currentPath] = result
         runSummary = null
-        tab = RestEditorTab.RESPONSE
         onInvalidate()
     }
 
     fun clearRunHistory() {
         runResponses.clear()
         response = null
+        streamText = ""
+    }
+
+    fun showStreamUpdate(text: String) {
+        streamText += text
+        onInvalidate()
     }
 
     fun showRunSummary(summary: List<RestRunSummary>) {
         running = false
         response = null
         runSummary = summary
-        tab = RestEditorTab.RESPONSE
         onInvalidate()
     }
 
@@ -205,6 +239,13 @@ class RestEditorView(
         requestBodyEditorRegion = null
         responseEditorRegion = null
         headersEditorRegion = null
+        rawRequestEditorRegion = null
+        environmentEditorRegion = null
+        if (environmentId != null) {
+            renderEnvironmentEditor(canvas, cols, rows, base, active)
+            entryDialog?.render(canvas)
+            return
+        }
         val node = model.node(currentPath)
         if (currentPath.isRoot || node?.isRequestNode() != true) renderNodeEditor(canvas, cols, base, active, node)
         else renderRequestEditor(canvas, cols, rows, base, active, button, node)
@@ -249,7 +290,7 @@ class RestEditorView(
         hits += Hit(1, FormFieldRenderer.draw(canvas, styleSheet, urlX, 1, urlWidth, url.value, url.cursor, focused === url), Action.FocusUrl)
         canvas.withStyle(button) { drawText(sendX, 1, send) }
         hits += Hit(1, sendX until cols, Action.Send)
-        val tabs = listOf(RestEditorTab.PARAMS, RestEditorTab.AUTHORIZATION, RestEditorTab.HEADERS, RestEditorTab.BODY, RestEditorTab.VARIABLES, RestEditorTab.SETTINGS, RestEditorTab.RESPONSE)
+        val tabs = listOf(RestEditorTab.PARAMS, RestEditorTab.AUTHORIZATION, RestEditorTab.HEADERS, RestEditorTab.BODY, RestEditorTab.VARIABLES, RestEditorTab.SETTINGS, RestEditorTab.RAW_REQUEST)
         drawTabs(canvas, cols, base, active, tabs, 3)
         val responseHeight = if (response != null || running || runSummary != null) model.ui.responsePanelHeight.coerceAtMost((rows - 8).coerceAtLeast(5)) else 0
         val editorRows = (rows - responseHeight - if (responseHeight > 0) 1 else 0).coerceAtLeast(6)
@@ -260,7 +301,7 @@ class RestEditorView(
             RestEditorTab.BODY -> renderBody(canvas, cols, base, editorRows)
             RestEditorTab.VARIABLES -> renderVariables(canvas, cols, base, currentPath)
             RestEditorTab.SETTINGS -> renderSettings(canvas, cols, base)
-            RestEditorTab.RESPONSE -> drawLine(canvas, base, 5, "Response is displayed below.", cols)
+            RestEditorTab.RAW_REQUEST -> renderRawRequest(canvas, cols, base, editorRows)
             else -> Unit
         }
         if (responseHeight > 0) {
@@ -272,7 +313,7 @@ class RestEditorView(
     private fun drawTabs(canvas: CanvasRenderer, cols: Int, base: StyleSet, active: StyleSet, tabs: List<RestEditorTab>, row: Int) {
         var x = 0
         tabs.forEach { candidate ->
-            val label = " " + candidate.name.lowercase() + " "
+            val label = " " + candidate.name.lowercase().replace('_', ' ') + " "
             if (x < cols) {
                 canvas.withStyle(if (candidate == tab) active else base) { drawText(x, row, label.take(cols - x)) }
                 hits += Hit(row, x until (x + label.length).coerceAtMost(cols), Action.Tab(candidate))
@@ -284,7 +325,7 @@ class RestEditorView(
     private fun renderAuth(canvas: CanvasRenderer, cols: Int, base: StyleSet, path: RestNodePath) {
         val node = model.node(path) ?: model.collection
         val auth = if (path.isRoot) node.jsonObject("auth") else if (node.isRequestNode()) node.jsonObject("request")?.jsonObject("auth") else node.jsonObject("auth")
-        val effective = if (!path.isRoot && auth == null) RestRequestResolver(model.collection, path, workspaceRoot).effectiveAuth() else null
+        val effective = if (!path.isRoot && auth == null) resolver(path).effectiveAuth() else null
         drawLine(canvas, base, 5, "Auth: " + (auth?.string("type") ?: "inherit auth from parent"), cols)
         drawLine(canvas, base, 6, "[inherit] [noauth] [bearer] [basic] [apikey]", cols)
         val choices = listOf(null, "noauth", "bearer", "basic", "apikey")
@@ -324,7 +365,7 @@ class RestEditorView(
             hits += Hit(7 + index, 0 until 4, Action.ToggleEntry("variable", index))
             hits += Hit(7 + index, 4 until cols, Action.EditVariable(index))
         }
-        val effective = RestRequestResolver(model.collection, path, workspaceRoot).effectiveVariables()
+        val effective = resolver(path).effectiveVariables()
         var row = 8 + local.size
         effective.filter { value -> local.none { it.string("key") == value.key } }.forEach { value ->
             drawLine(canvas, base, row++, "    " + value.key + " = " + mask(value.key, value.value) + " (" + value.type + ") " + value.source, cols)
@@ -361,9 +402,9 @@ class RestEditorView(
     }
 
     private fun renderHeaders(canvas: CanvasRenderer, cols: Int, base: StyleSet, button: StyleSet, editorRows: Int) {
-        val resolver = RestRequestResolver(model.collection, currentPath, workspaceRoot)
-        val inherited = resolver.effectiveHeaders().filter { !it.editable }
-        val local = resolver.effectiveHeaders().filter { it.editable }
+        val requestResolver = resolver(currentPath)
+        val inherited = requestResolver.effectiveHeaders().filter { !it.editable }
+        val local = requestResolver.effectiveHeaders().filter { it.editable }
         drawLine(canvas, base, 5, "Inherited headers (read-only)", cols)
         inherited.forEachIndexed { index, header ->
             val state = if (header.disabled) "[off]" else "[on]"
@@ -461,6 +502,37 @@ class RestEditorView(
         renderCodeEditor(canvas, requestBodyEditor, region)
     }
 
+    private fun renderRawRequest(canvas: CanvasRenderer, cols: Int, base: StyleSet, editorRows: Int) {
+        val preview = runCatching { resolver(currentPath).preview().text }
+            .getOrElse { "Unable to materialize request: ${it.message ?: "unknown error"}" }
+        drawLine(canvas, base, 5, "Resolved HTTP request | variables, inherited headers and auth applied", cols)
+        val region = EditorRegion(0, 7, cols, (editorRows - 7).coerceAtLeast(1))
+        rawRequestEditorRegion = region
+        val key = currentPath.encode() + "|" + preview
+        if (rawRequestEditorKey != key && rawRequestEditor.textContent() != preview) {
+            rawRequestEditor.loadVirtualContent("<request-preview:${currentPath.encode()}>", preview, "http")
+        }
+        rawRequestEditorKey = key
+        renderCodeEditor(canvas, rawRequestEditor, region)
+    }
+
+    private fun renderEnvironmentEditor(canvas: CanvasRenderer, cols: Int, rows: Int, base: StyleSet, active: StyleSet) {
+        val environment = environmentId?.let(model::environment) ?: return
+        drawLine(canvas, base, 0, "ENVIRONMENT | ${environment.name}", cols)
+        val activeLabel = if (model.activeEnvironmentId == environment.id) "[active]" else "[activate from the environments list]"
+        drawLine(canvas, base, 2, "Variables | key=value | $activeLabel", cols)
+        drawLine(canvas, base, 3, "Escape '=' and '\\' with a backslash. One variable per line.", cols)
+        val source = RestEnvironmentCodec.format(environment.values)
+        val region = EditorRegion(0, 5, cols, (rows - 5).coerceAtLeast(1))
+        environmentEditorRegion = region
+        val key = environment.id + "|" + source
+        if (environmentEditorKey != key && environmentEditor.textContent() != source) {
+            environmentEditor.loadVirtualContent("<environment:${environment.id}>", source, "properties")
+        }
+        environmentEditorKey = key
+        renderCodeEditor(canvas, environmentEditor, region)
+    }
+
     private fun renderCodeEditor(canvas: CanvasRenderer, editor: CodeEditorView, region: EditorRegion) {
         val clipped = ClippedCanvasRenderer(canvas, region.x, region.y, region.width, region.height)
         editor.render(clipped)
@@ -483,10 +555,10 @@ class RestEditorView(
             else -> "Response | " + result.statusCode + " " + result.statusText + " | " + result.durationMs + " ms | " + result.receivedBytes + " bytes"
         }
         drawLine(canvas, base, start, status, cols)
-        val tabs = listOf(RestResponseTab.BODY, RestResponseTab.HEADERS, RestResponseTab.COOKIES, RestResponseTab.RAW)
+        val tabs = listOf(RestResponseTab.BODY, RestResponseTab.HEADERS, RestResponseTab.COOKIES, RestResponseTab.RAW, RestResponseTab.TRANSACTION)
         var x = 0
         tabs.forEach { candidate ->
-            val label = " " + candidate.name.lowercase() + " "
+            val label = " " + candidate.name.lowercase().replace('_', ' ') + " "
             canvas.withStyle(if (candidate == responseTab) active else base) { drawText(x, start + 1, label.take(cols - x)) }
             hits += Hit(start + 1, x until (x + label.length).coerceAtMost(cols), Action.ResponseTab(candidate))
             x += label.length + 1
@@ -496,23 +568,77 @@ class RestEditorView(
             canvas.withStyle(styleSheet.getStyle("lsp-button").withDefaults(base.fg, base.bg)) { drawText(cols - pretty.length, start + 1, pretty) }
             hits += Hit(start + 1, cols - pretty.length until cols, Action.TogglePrettyPrint)
         }
-        if (result == null) return
+        if (result == null && streamText.isBlank()) return
         val body = when (responseTab) {
-            RestResponseTab.BODY -> responseBody(result)
-            RestResponseTab.HEADERS -> result.headers.joinToString("\n") { it.name + ": " + it.value }
-            RestResponseTab.COOKIES -> result.cookies.joinToString("\n")
-            RestResponseTab.RAW -> "HTTP " + (result.statusCode ?: "ERR") + " " + result.statusText + "\n" + result.headers.joinToString("\n") { it.name + ": " + it.value } + "\n\n" + result.bodyText
+            RestResponseTab.BODY -> result?.let(::responseBody) ?: streamText
+            RestResponseTab.HEADERS -> result?.headers?.joinToString("\n") { it.name + ": " + it.value }.orEmpty()
+            RestResponseTab.COOKIES -> result?.cookies?.joinToString("\n").orEmpty()
+            RestResponseTab.RAW -> result?.let { "HTTP " + (it.statusCode ?: "ERR") + " " + it.statusText + "\n" + it.headers.joinToString("\n") { header -> header.name + ": " + header.value } + "\n\n" + it.bodyText }.orEmpty()
+            RestResponseTab.TRANSACTION -> ""
         }
-        val language = restLanguageForContentType(result.contentType)
-        val displayed = restPrettyPrint(body, result.contentType, model.ui.prettyPrintResponses && responseTab == RestResponseTab.BODY)
+        if (responseTab == RestResponseTab.TRANSACTION) {
+            result?.let { renderTransaction(canvas, cols, start + 2, height - 2, base, it) }
+            return
+        }
+        val language = restLanguageForContentType(result?.contentType) ?: "text"
+        val displayed = restPrettyPrint(body, result?.contentType, model.ui.prettyPrintResponses && responseTab == RestResponseTab.BODY)
         val region = EditorRegion(0, start + 2, cols, (height - 2).coerceAtLeast(1))
         responseEditorRegion = region
-        val key = result.startedAt.toString() + "|" + responseTab.name + "|" + model.ui.prettyPrintResponses + "|" + displayed
+        val key = (result?.startedAt ?: "stream").toString() + "|" + responseTab.name + "|" + model.ui.prettyPrintResponses + "|" + displayed
         if (responseEditorKey != key && responseEditor.textContent() != displayed) {
             responseEditor.loadVirtualContent("<response:${responseTab.name.lowercase()}>", displayed, language)
         }
         responseEditorKey = key
         renderCodeEditor(canvas, responseEditor, region)
+    }
+
+    private fun renderTransaction(canvas: CanvasRenderer, cols: Int, start: Int, height: Int, base: StyleSet, result: RestResponse) {
+        val leftWidth = (cols / 2).coerceAtLeast(1)
+        val rightX = leftWidth + 1
+        val rightWidth = (cols - rightX).coerceAtLeast(1)
+        val requestLines = requestWirePreview(result.request).lines()
+        val responseLines = responseWirePreview(result).lines()
+        canvas.withStyle(styleSheet.getStyle("splitter").withDefaults(base.fg, base.bg)) {
+            drawText(leftWidth, start, "│")
+            for (row in 1 until height.coerceAtLeast(1)) drawText(leftWidth, start + row, "│")
+        }
+        drawLine(canvas, base, start, "CLIENT", leftWidth)
+        drawLineAt(canvas, base, rightX, start, "SERVER", rightWidth)
+        val rows = (height - 1).coerceAtLeast(0)
+        repeat(rows) { index ->
+            drawLine(canvas, base, start + index + 1, requestLines.getOrNull(index).orEmpty(), leftWidth)
+            drawLineAt(canvas, base, rightX, start + index + 1, responseLines.getOrNull(index).orEmpty(), rightWidth)
+        }
+    }
+
+    private fun requestWirePreview(request: editor.rest.resolve.ResolvedRequest): String {
+        val uri = runCatching { java.net.URI(request.url) }.getOrNull()
+        val target = uri?.let {
+            (it.rawPath.takeIf(String::isNotEmpty) ?: "/") + (it.rawQuery?.let { query -> "?$query" } ?: "")
+        } ?: request.url
+        val headers = request.headers
+            .filterNot { it.name.equals("Host", true) || it.name.equals("Content-Length", true) }
+            .filterNot { it.name.equals("Connection", true) && it.value.equals("keep-alive", true) }
+            .map { it.name + ": " + it.value }
+            .toMutableList()
+        uri?.authority?.let { headers.add(0, "Host: $it") }
+        request.body?.let { headers += "Content-Length: ${it.size}" }
+        return buildString {
+            append(request.method.uppercase()).append(' ').append(target).append(" HTTP/1.1\n")
+            headers.forEach { append(it).append('\n') }
+            append('\n')
+            request.body?.let { append(it.toString(Charsets.UTF_8)) }
+        }
+    }
+
+    private fun responseWirePreview(result: RestResponse): String = buildString {
+        append("HTTP ").append(result.statusCode ?: "ERR").append(' ').append(result.statusText).append('\n')
+        result.headers.forEach { append(it.name).append(": ").append(it.value).append('\n') }
+        append('\n').append(result.bodyText)
+    }
+
+    private fun drawLineAt(canvas: CanvasRenderer, base: StyleSet, x: Int, row: Int, text: String, width: Int) {
+        canvas.withStyle(base) { drawText(x, row, text.take(width).padEnd(width, ' ')) }
     }
 
     private fun responseBody(result: RestResponse): String {
@@ -556,6 +682,15 @@ class RestEditorView(
             return handled
         }
         if (event.kind == "mouse_down" || event.kind == "mouse_scroll") {
+            if (regionContains(environmentEditorRegion, event)) {
+                environmentEditorFocused = true
+                requestBodyEditorFocused = false
+                responseEditorFocused = false
+                headersEditorFocused = false
+                rawRequestEditorFocused = false
+                focused = null
+                return dispatchEditor(environmentEditor, environmentEditorRegion!!, event)
+            }
             when {
                 regionContains(requestBodyEditorRegion, event) -> {
                     requestBodyEditorFocused = true
@@ -570,6 +705,14 @@ class RestEditorView(
                     responseEditorFocused = false
                     focused = null
                     return dispatchEditor(headersEditor, headersEditorRegion!!, event)
+                }
+                regionContains(rawRequestEditorRegion, event) -> {
+                    rawRequestEditorFocused = true
+                    requestBodyEditorFocused = false
+                    responseEditorFocused = false
+                    headersEditorFocused = false
+                    focused = null
+                    return dispatchEditor(rawRequestEditor, rawRequestEditorRegion!!, event)
                 }
                 regionContains(responseEditorRegion, event) -> {
                     responseEditorFocused = true
@@ -621,6 +764,12 @@ class RestEditorView(
         if (headersEditorFocused && headersEditorRegion != null && tab == RestEditorTab.HEADERS) {
             return dispatchEditor(headersEditor, headersEditorRegion!!, event)
         }
+        if (rawRequestEditorFocused && rawRequestEditorRegion != null && tab == RestEditorTab.RAW_REQUEST) {
+            return dispatchEditor(rawRequestEditor, rawRequestEditorRegion!!, event)
+        }
+        if (environmentEditorFocused && environmentEditorRegion != null && environmentId != null) {
+            return dispatchEditor(environmentEditor, environmentEditorRegion!!, event)
+        }
         if (responseEditorFocused && responseEditorRegion != null) {
             return dispatchEditor(responseEditor, responseEditorRegion!!, event)
         }
@@ -645,6 +794,8 @@ class RestEditorView(
         requestBodyEditorFocused = false
         responseEditorFocused = false
         headersEditorFocused = false
+        rawRequestEditorFocused = false
+        environmentEditorFocused = false
         when (action) {
             Action.Send -> if (!running) onSend(currentPath)
             is Action.Tab -> { tab = action.tab; focused = null }
@@ -680,7 +831,7 @@ class RestEditorView(
                 syncFields()
                 response = runResponses[action.path]
                 runSummary = null
-                tab = RestEditorTab.RESPONSE
+                tab = RestEditorTab.PARAMS
                 focused = null
             }
         }
@@ -704,7 +855,7 @@ class RestEditorView(
     }
 
     private fun requestContentType(body: JsonObject?): String? {
-        val header = RestRequestResolver(model.collection, currentPath, workspaceRoot)
+        val header = resolver(currentPath)
             .effectiveHeaders()
             .lastOrNull { it.name.equals("Content-Type", true) && !it.disabled }
             ?.value
@@ -786,6 +937,10 @@ class RestEditorView(
             saveHeadersText(after)
             headersEditorKey = null
         }
+        if (editor === environmentEditor && before != after) {
+            environmentId?.let { model.updateEnvironmentText(it, after) }
+            environmentEditorKey = null
+        }
         if (before != after) onChanged()
         onInvalidate()
         return handled
@@ -810,9 +965,16 @@ class RestEditorView(
     }
 
     private fun nextTab(): RestEditorTab {
-        val options = if (model.node(currentPath)?.isRequestNode() == true) listOf(RestEditorTab.PARAMS, RestEditorTab.AUTHORIZATION, RestEditorTab.HEADERS, RestEditorTab.BODY, RestEditorTab.VARIABLES, RestEditorTab.SETTINGS, RestEditorTab.RESPONSE) else listOf(RestEditorTab.OVERVIEW, RestEditorTab.AUTHORIZATION, RestEditorTab.VARIABLES)
+        val options = if (model.node(currentPath)?.isRequestNode() == true) listOf(RestEditorTab.PARAMS, RestEditorTab.AUTHORIZATION, RestEditorTab.HEADERS, RestEditorTab.BODY, RestEditorTab.VARIABLES, RestEditorTab.SETTINGS, RestEditorTab.RAW_REQUEST) else listOf(RestEditorTab.OVERVIEW, RestEditorTab.AUTHORIZATION, RestEditorTab.VARIABLES)
         return options[(options.indexOf(tab) + 1) % options.size]
     }
+
+    private fun resolver(path: RestNodePath): RestRequestResolver = RestRequestResolver(
+        model.collection,
+        path,
+        workspaceRoot,
+        model.activeEnvironmentVariables()
+    )
 
     private fun syncFields() {
         val node = model.node(currentPath) ?: model.collection

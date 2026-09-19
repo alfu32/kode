@@ -1,6 +1,7 @@
 package editor.rest
 
 import editor.rest.model.RestApiProjectState
+import editor.rest.model.RestEnvironmentCodec
 import editor.rest.model.RestNodePath
 import editor.rest.model.RestWorkspaceModel
 import editor.rest.model.defaultCollection
@@ -16,6 +17,23 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
 class RestModelTest {
+    @Test
+    fun storesEscapedEnvironmentValuesAndManagesActiveEnvironment() {
+        val parsed = RestEnvironmentCodec.parse("base\\=url=https://example.test\\\\api\nname=dev")
+        assertEquals("base=url", parsed[0].key)
+        assertEquals("https://example.test\\api", parsed[0].value)
+        assertEquals("base\\=url=https://example.test\\\\api\nname=dev", RestEnvironmentCodec.format(parsed))
+
+        val model = RestWorkspaceModel()
+        val environment = model.createEnvironment("dev")
+        assertEquals(environment.id, model.activeEnvironmentId)
+        assertTrue(model.renameEnvironment(environment.id, "development"))
+        val copy = model.duplicateEnvironment(environment.id)!!
+        assertTrue(model.activateEnvironment(copy.id))
+        assertTrue(model.removeEnvironment(environment.id))
+        assertEquals(copy.id, model.activeEnvironmentId)
+    }
+
     @Test
     fun createsRenamesDuplicatesAndMovesPostmanItems() {
         val model = RestWorkspaceModel()

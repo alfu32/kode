@@ -16,14 +16,82 @@ class RestWorkspaceModel(
         private set
     var ui: RestApiUiState = initial.ui
         private set
+    var environments: List<RestEnvironment> = initial.environments
+        private set
+    var activeEnvironmentId: String? = initial.activeEnvironmentId
+        private set
 
     fun restore(state: RestApiProjectState) {
         collection = state.collection
         ui = state.ui
+        environments = state.environments
+        activeEnvironmentId = state.activeEnvironmentId?.takeIf { id -> environments.any { it.id == id } }
         onChanged?.invoke()
     }
 
-    fun projectState(): RestApiProjectState = RestApiProjectState(collection = collection, ui = ui)
+    fun projectState(): RestApiProjectState = RestApiProjectState(
+        collection = collection,
+        ui = ui,
+        environments = environments,
+        activeEnvironmentId = activeEnvironmentId
+    )
+
+    fun environment(id: String): RestEnvironment? = environments.firstOrNull { it.id == id }
+
+    fun activeEnvironment(): RestEnvironment? = activeEnvironmentId?.let(::environment)
+
+    fun activeEnvironmentVariables(): Map<String, String> = activeEnvironment()
+        ?.values
+        ?.filter { it.enabled }
+        ?.associate { it.key to it.value }
+        .orEmpty()
+
+    fun createEnvironment(name: String = "New environment"): RestEnvironment {
+        val environment = RestEnvironment(name = name.ifBlank { "New environment" })
+        environments = environments + environment
+        if (activeEnvironmentId == null) activeEnvironmentId = environment.id
+        onChanged?.invoke()
+        return environment
+    }
+
+    fun renameEnvironment(id: String, name: String): Boolean {
+        if (name.isBlank() || environment(id) == null) return false
+        environments = environments.map { if (it.id == id) it.copy(name = name) else it }
+        onChanged?.invoke()
+        return true
+    }
+
+    fun duplicateEnvironment(id: String, name: String? = null): RestEnvironment? {
+        val source = environment(id) ?: return null
+        val copy = source.copy(id = UUID.randomUUID().toString(), name = name ?: "${source.name} copy")
+        environments = environments + copy
+        onChanged?.invoke()
+        return copy
+    }
+
+    fun activateEnvironment(id: String): Boolean {
+        if (environment(id) == null) return false
+        activeEnvironmentId = id
+        onChanged?.invoke()
+        return true
+    }
+
+    fun removeEnvironment(id: String): Boolean {
+        if (environment(id) == null) return false
+        environments = environments.filterNot { it.id == id }
+        if (activeEnvironmentId == id) activeEnvironmentId = environments.firstOrNull()?.id
+        onChanged?.invoke()
+        return true
+    }
+
+    fun updateEnvironmentText(id: String, text: String): Boolean {
+        val current = environment(id) ?: return false
+        environments = environments.map {
+            if (it.id == id) it.copy(values = RestEnvironmentCodec.parse(text)) else it
+        }
+        onChanged?.invoke()
+        return current != environment(id)
+    }
 
     fun selectedPath(): RestNodePath = RestNodePath.decode(ui.selectedPath)
 

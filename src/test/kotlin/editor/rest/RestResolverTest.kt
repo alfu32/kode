@@ -138,6 +138,30 @@ class RestResolverTest {
         assertEquals("request", resolved.headers.first { it.name == "X-Shared" }.value)
     }
 
+    @Test
+    fun environmentVariablesOverrideCollectionVariablesAndSseUrlsNormalize() {
+        val request = buildJsonObject {
+            put("name", "Events")
+            put("request", buildJsonObject {
+                put("method", "GET")
+                put("url", "sse://{{host}}/events")
+            })
+        }
+        val collection = buildJsonObject {
+            put("info", buildJsonObject { put("name", "API") })
+            put("variable", buildJsonArray { add(variable("host", "collection.example.test")) })
+            put("item", buildJsonArray { add(request) })
+        }
+        val resolved = RestRequestResolver(
+            collection,
+            RestNodePath(listOf(0)),
+            kotlin.io.path.createTempDirectory("rest-root"),
+            mapOf("host" to "environment.example.test")
+        ).materialize()
+        assertEquals("http://environment.example.test/events", resolved.url)
+        assertEquals("text/event-stream", resolved.headers.first { it.name == "Accept" }.value)
+    }
+
     private fun variable(key: String, value: String, disabled: Boolean = false) = buildJsonObject {
         put("key", key)
         put("value", value)
