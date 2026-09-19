@@ -134,7 +134,22 @@ fun handleMouseToBuffer(
    END OF FILE
    ===================================================================== */
 fun handleKeyForBuffer(buffer: ITextBuffer, ev: UIEvent, singleLine: Boolean = false): Boolean {
-    val key = ev.key ?: return false
+    val rawKey = ev.key ?: return false
+    // Terminal backends do not agree on the spelling/casing of navigation keys.
+    // Normalize those names before dispatching them to the buffer so embedded
+    // editors behave the same as the main editor.
+    val key = when (rawKey.lowercase()) {
+        "enter", "return" -> "Enter"
+        "backspace" -> "Backspace"
+        "delete" -> "Delete"
+        "left" -> "Left"
+        "right" -> "Right"
+        "up" -> "Up"
+        "down" -> "Down"
+        "home" -> "Home"
+        "end" -> "End"
+        else -> rawKey
+    }
     val ctrl = ev.ctrl
     val shift = ev.shift
     val before = buffer.text()

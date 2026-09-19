@@ -63,6 +63,34 @@ class RestHttpTest {
         }
     }
 
+    @Test
+    fun ignoresTransportManagedHeadersInsteadOfFailingRequestConstruction() {
+        val server = HttpServer.create(InetSocketAddress(0), 0)
+        server.createContext("/") { exchange ->
+            val body = "ok".toByteArray(StandardCharsets.UTF_8)
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            val request = ResolvedRequest(
+                RestNodePath(),
+                "GET",
+                "http://127.0.0.1:${server.address.port}/",
+                listOf(
+                    editor.rest.resolve.ResolvedHeader("Connection", "keep-alive"),
+                    editor.rest.resolve.ResolvedHeader("Host", "example.invalid"),
+                    editor.rest.resolve.ResolvedHeader("X-Test", "accepted")
+                )
+            )
+            val result = execute(RestHttpExecutor(responsePreviewLimit = 1024), request)
+            assertEquals(200, result.statusCode)
+            assertEquals("ok", result.bodyText)
+        } finally {
+            server.stop(0)
+        }
+    }
+
     private fun execute(executor: RestHttpExecutor, request: ResolvedRequest) =
         kotlin.run {
             val latch = CountDownLatch(1)

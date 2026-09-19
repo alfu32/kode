@@ -291,6 +291,30 @@ class CodeEditorViewTest {
     }
 
     @Test
+    fun ctrlClickFallsBackToSourceIdentifierWhenSemanticTokensAreNotReady() {
+        val root = Files.createTempDirectory("kode-definition-fallback")
+        val target = root.resolve("target.c").also { Files.writeString(it, "int foo(void) { return 1; }\n") }
+        val current = root.resolve("current.c")
+        val service = editor.codeintel.CodeIntelService(debounceMs = 0L)
+        try {
+            service.indexDocumentNow(target.toString(), "c", Files.readString(target), 1L)
+            val opened = mutableListOf<String>()
+            val view = CodeEditorView(
+                StyleSheet(),
+                codeIntel = service,
+                navigationHandler = { path, _ -> opened += path }
+            )
+            view.loadVirtualContent(current.toString(), "int main(void) { return foo(); }\n", "c")
+            view.render(StringSnapshotRenderer(cols = 80, rows = 12))
+
+            assertTrue(view.dispatch(UIEvent(kind = "mouse_down", x = 27, y = 1, ctrl = true, cols = 80, rows = 12)))
+            assertEquals(listOf(target.toString()), opened)
+        } finally {
+            service.shutdown()
+        }
+    }
+
+    @Test
     fun usagePopupCapturesWheelAndKeyboardAndShowsAllReferencesThroughOffset() {
         val root = Files.createTempDirectory("kode-usage-popup")
         val refs = (0 until 12).map { index ->

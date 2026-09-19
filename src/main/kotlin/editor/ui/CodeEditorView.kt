@@ -849,7 +849,9 @@ class CodeEditorView(
         val lineText = layout.rawLines.getOrElse(line) { "" }
         val visualLine = layout.visualLines.getOrElse(line) { VisualLine(lineText) }
         val col = visualLine.rawColumn(visualLine.visualColumn(wrapped.startColumn) + (ex - gutterWidth).coerceAtLeast(0))
-        val token = identifyCodeIntelToken(line, col, lineText) ?: return false
+        val token = identifyCodeIntelToken(line, col, lineText)
+            ?: lexicalTokenAt(lineText, col)
+            ?: return false
 
         usagePopup = null
         renderedPopup = null
@@ -860,7 +862,8 @@ class CodeEditorView(
         hoverInfoCandidate = null
 
         val name = token.text
-        val isDeclaration = token.scopes.any { it.contains("codeintel.declaration") }
+        val isDeclaration = token.scopes.any { it.contains("codeintel.declaration") } ||
+            isDefinitionAtCursor(name, line, col)
         if (isDeclaration) {
             val refs = codeIntel?.references(
                 ReferenceRequest(
@@ -911,6 +914,50 @@ class CodeEditorView(
         )
         return tokens.firstOrNull { column in it.start until it.end }
     }
+
+    private fun lexicalTokenAt(lineText: String, column: Int): editor.grammars.Token? {
+        if (lineText.isEmpty()) return null
+        val cursor = column.coerceIn(0, lineText.length)
+        val index = when {
+            cursor < lineText.length && lineText[cursor].isIdentifierPart() -> cursor
+            cursor > 0 && lineText[cursor - 1].isIdentifierPart() -> cursor - 1
+            else -> return null
+        }
+        var start = index
+        var end = index + 1
+        while (start > 0 && lineText[start - 1].isIdentifierPart()) start--
+        while (end < lineText.length && lineText[end].isIdentifierPart()) end++
+        return editor.grammars.Token(
+            start = start,
+            end = end,
+            scopes = emptyList(),
+            line = 0,
+            text = lineText.substring(start, end),
+            fg = null
+        )
+    }
+
+    private fun Char.isIdentifierPart(): Boolean = isLetterOrDigit() || this == '_'
+
+    private fun isDefinitionAtCursor(name: String, line: Int, column: Int): Boolean {
+        val hits = codeIntel?.definitions(
+            DefinitionRequest(
+                filePath = filePath,
+                language = grammarLanguage ?: language,
+                position = TextPosition(line, column),
+                symbol = name
+            )
+        ).orEmpty()
+        return hits.any { target ->
+            samePath(target.filePath, filePath) &&
+                target.range.start.line == line &&
+                column in target.range.start.column until target.range.end.column.coerceAtLeast(target.range.start.column + name.length)
+        }
+    }
+
+    private fun samePath(left: String, right: String): Boolean = runCatching {
+        File(left).absoluteFile.normalize() == File(right).absoluteFile.normalize()
+    }.getOrDefault(left == right)
 
     private fun openDefinition(name: String, position: Position) {
         val lang = grammarLanguage ?: language

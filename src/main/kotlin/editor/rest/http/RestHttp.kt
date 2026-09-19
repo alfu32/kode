@@ -138,7 +138,16 @@ class RestHttpExecutor(
         } else {
             builder.method(request.method, HttpRequest.BodyPublishers.ofByteArray(body))
         }
-        request.headers.forEach { header -> builder.header(header.name, header.value) }
+        request.headers.forEach { header ->
+            // Java's HttpClient owns transport-level headers. Passing these
+            // through builder.header() either changes the wire semantics or
+            // throws (notably for Connection and Host). The request model can
+            // still retain them for editing and export, but execution must let
+            // the client manage them.
+            if (!isClientManagedHeader(header.name)) {
+                builder.header(header.name, header.value)
+            }
+        }
         if (request.headers.none { it.name.equals("Cookie", true) }) {
             cookieJar.headerFor(uri)?.let { builder.header("Cookie", it) }
         }
@@ -221,9 +230,25 @@ class RestHttpExecutor(
 
     private fun statusText(code: Int): String = STATUS_TEXT[code].orEmpty()
 
+    private fun isClientManagedHeader(name: String): Boolean =
+        name.trim().lowercase() in CLIENT_MANAGED_HEADERS
+
     private data class CapturedBody(val bytes: ByteArray, val receivedBytes: Long, val truncated: Boolean)
 
     companion object {
+        private val CLIENT_MANAGED_HEADERS = setOf(
+            "connection",
+            "content-length",
+            "expect",
+            "host",
+            "keep-alive",
+            "proxy-connection",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade"
+        )
+
         private val STATUS_TEXT = mapOf(
             200 to "OK", 201 to "Created", 202 to "Accepted", 204 to "No Content",
             301 to "Moved Permanently", 302 to "Found", 304 to "Not Modified",
