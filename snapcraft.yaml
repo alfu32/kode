@@ -85,7 +85,21 @@ parts:
         --compress=2 \
         --output "$CRAFT_PART_INSTALL/opt/kode/runtime"
 
-      cp -a dist/. "$CRAFT_PART_INSTALL/opt/kode/"
+      # Stage only the Snap application payload. The repository's dist/
+      # directory may also contain release archives produced by the MSIX,
+      # ZIP, or AppImage jobs; those must never become part of the Snap.
+      cp -a dist/kode.jar dist/h2.jar "$CRAFT_PART_INSTALL/opt/kode/"
+      for payload in \
+        token-colors.txt \
+        keyword-patterns.txt \
+        h2-LICENSE.txt \
+        codeintel \
+        lsp \
+        styles; do
+        if [ -e "dist/$payload" ]; then
+          cp -a "dist/$payload" "$CRAFT_PART_INSTALL/opt/kode/"
+        fi
+      done
 
       case "$(dpkg --print-architecture)" in
         amd64) JNA_PLATFORM="linux-x86-64" ;;
