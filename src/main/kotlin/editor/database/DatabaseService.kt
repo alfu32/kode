@@ -64,6 +64,9 @@ class JdbcDatabaseService(
     }
 
     override fun saveDataSource(definition: DataSourceDefinition, password: String?): DataSourceDefinition {
+        if (cachedDataSources.any { it.id == definition.id }) {
+            disconnect(definition.id)
+        }
         if (!password.isNullOrEmpty()) {
             val ref = definition.credentialReference ?: "${definition.id}.password"
             credentialStore.put(ref, password)

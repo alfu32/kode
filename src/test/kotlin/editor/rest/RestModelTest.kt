@@ -1,0 +1,59 @@
+package editor.rest
+
+import editor.rest.model.RestApiProjectState
+import editor.rest.model.RestNodePath
+import editor.rest.model.RestWorkspaceModel
+import editor.rest.model.defaultCollection
+import editor.rest.model.newRestFolder
+import editor.rest.model.newRestRequest
+import editor.rest.model.string
+import editor.rest.model.items
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+
+class RestModelTest {
+    @Test
+    fun createsRenamesDuplicatesAndMovesPostmanItems() {
+        val model = RestWorkspaceModel()
+        val folder = model.addFolder(RestNodePath(), "v1")!!
+        val request = model.addRequest(folder, "List")!!
+        model.rename(request, "List Models")
+        val duplicate = model.duplicate(request)!!
+        model.move(duplicate, RestNodePath())
+
+        assertEquals("List Models", model.node(request)?.string("name"))
+        assertEquals("List Models", model.node(RestNodePath(listOf(1)))?.string("name"))
+        assertTrue(model.collection.items().size == 2)
+        assertTrue(model.collection.items()[1] is JsonObject)
+    }
+
+    @Test
+    fun preservesUnknownPostmanFieldsAcrossImportAndExport() {
+        val source = """
+            {
+              "info": {"name":"Imported","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json","x-info":{"keep":true}},
+              "variable": [{"key":"host","value":"example.test"}],
+              "item": [{
+                "name":"Folder",
+                "event":[{"listen":"test","script":{"exec":["pm.test('kept')"]}}],
+                "item":[{"id":"abc","name":"Call","request":{"method":"GET","url":{"raw":"https://example.test"}},"response":[{"name":"saved"}],"x-item":"keep"}]
+              }]
+            }
+        """.trimIndent()
+        val sourceFile = kotlin.io.path.createTempFile("rest-import", ".json")
+        val exportFile = kotlin.io.path.createTempFile("rest-export", ".json")
+        sourceFile.toFile().writeText(source)
+        val model = RestWorkspaceModel()
+        assertTrue(model.importCollection(sourceFile).isSuccess)
+        assertTrue(model.exportCollection(exportFile).isSuccess)
+        val exported = Json.parseToJsonElement(exportFile.toFile().readText()) as JsonObject
+        assertEquals("Imported", exported["info"]?.let { (it as JsonObject).string("name") })
+        assertEquals("keep", exported["item"]?.toString()?.let { if (it.contains("x-item")) "keep" else null })
+        assertTrue(exported.toString().contains("pm.test"))
+        sourceFile.toFile().delete()
+        exportFile.toFile().delete()
+    }
+}

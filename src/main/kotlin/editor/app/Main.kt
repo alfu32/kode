@@ -49,6 +49,15 @@ import editor.database.ui.JdbcDriverDownloadDialog
 import editor.database.ui.SqlSessionSaveDialog
 import editor.database.ui.SqlResultPanel
 import editor.database.ui.SqlStatementMenu
+import editor.rest.http.RestApiRuntime
+import editor.rest.http.RestExecutionHandle
+import editor.rest.model.RestNodePath
+import editor.rest.model.RestWorkspaceModel
+import editor.rest.model.string
+import editor.rest.model.walkRestTree
+import editor.rest.ui.RestEditorView
+import editor.rest.ui.RestPanelView
+import editor.rest.ui.RestRunSummary
 import editor.db.DbServerManager
 import editor.db.DbStatus
 import editor.codeintel.DbCodeIntelStore
@@ -965,6 +974,10 @@ private class SplitPanelsApp(
     private val sqlConsoleManager = SqlConsoleManager()
     private val sqlStatementLocator = SqlStatementLocator()
     private val sqlResultPanel = SqlResultPanel(styleSheet)
+    private val restWorkspace = RestWorkspaceModel()
+    private val restRuntime = RestApiRuntime(projectRoot)
+    private var restExecution: RestExecutionHandle? = null
+    private val restRunCancel = AtomicBoolean(false)
     private val codeIntelStore = DbCodeIntelStore { dbManager.jdbcUrl() }
     private val codeIntelIndexer = CodeIntelService(store = codeIntelStore)
     private val renderDirty = AtomicBoolean(true)
@@ -1005,6 +1018,7 @@ private class SplitPanelsApp(
         databaseService,
         databaseService.driverRegistry,
         onCreateDataSource = { showDatabaseDialog() },
+        onEditDataSource = { showDatabaseDialog(it) },
         onOpenConsole = { openSqlConsole(it) },
         onOpenSession = { openExistingSqlConsole(it) },
         sessionsProvider = { dataSourceId ->
@@ -1014,6 +1028,24 @@ private class SplitPanelsApp(
         onRemoveSession = { removeSqlSession(it) },
         onInsertSql = { dataSource, sql -> insertSqlSnippet(dataSource, sql) },
         onInspectObject = { ds, obj -> inspectDatabaseObject(ds, obj) },
+        onInvalidate = { renderDirty.set(true) }
+    )
+    private val restEditor = RestEditorView(
+        styleSheet = styleSheet,
+        model = restWorkspace,
+        workspaceRoot = projectRoot,
+        onSend = { path -> sendRestRequest(path) },
+        onClearCookies = { restRuntime.clearCookies(); renderDirty.set(true) },
+        onChanged = { schedulePersist(); renderDirty.set(true) },
+        onInvalidate = { renderDirty.set(true) }
+    )
+    private val restPanel = RestPanelView(
+        styleSheet = styleSheet,
+        model = restWorkspace,
+        workspaceRoot = projectRoot,
+        onOpen = { path -> openRestNode(path) },
+        onRun = { path -> runRestRequests(path) },
+        onChanged = { schedulePersist(); renderDirty.set(true) },
         onInvalidate = { renderDirty.set(true) }
     )
     private val aboutView = AboutView(styleSheet, buildVersion)
@@ -1101,6 +1133,8 @@ private class SplitPanelsApp(
         if (loaded.database.dataSources.isNotEmpty()) {
             databaseService.replaceDataSources(loaded.database.dataSources)
         }
+        restWorkspace.restore(loaded.restApi)
+        restEditor.open(restWorkspace.selectedPath())
         sqlConsoleManager.restore(loaded.database, databaseService.dataSources().map { it.id }.toSet())
         databasePanel.reload()
         recentFiles = loaded.recentFiles.map { entry ->
@@ -1139,12 +1173,13 @@ private class SplitPanelsApp(
     }
     private val leftTabs = TabView(
         styleSheet = styleSheet,
-        titles = listOf("Files", "Project", "Git", "Database", "About", "Settings", "Help"),
+        titles = listOf("Files", "Project", "Git", "Database", "REST", "About", "Settings", "Help"),
         tabComponents = listOf(
             filesTabView,
             projectSettingsView,
             gitPanel,
             databasePanel,
+            restPanel,
             aboutView,
             settingsView,
             helpView
@@ -1417,6 +1452,7 @@ private class SplitPanelsApp(
                 FocusTarget.HEX -> hexViewer.dispatch(event)
                 FocusTarget.IMAGE -> imageViewer.dispatch(event)
                 FocusTarget.DIFF -> diffViewer.dispatch(event)
+                FocusTarget.REST -> restEditor.dispatch(event)
             }
             schedulePersist()
             return handled
@@ -1510,11 +1546,12 @@ private class SplitPanelsApp(
         renderer.invalidateDiffBuffer()
     }
 
-    private fun showDatabaseDialog() {
+    private fun showDatabaseDialog(existing: DataSourceDefinition? = null) {
         databaseDialog = DatabaseConnectionDialog(
             styleSheet = styleSheet,
             service = databaseService,
             registry = databaseService.driverRegistry,
+            existing = existing,
             onApply = { definition, password ->
                 databaseService.saveDataSource(definition, password)
                 databasePanel.reload()
@@ -1560,6 +1597,87 @@ private class SplitPanelsApp(
         driverDownloadDialog = dialog
         dialog.start()
         renderDirty.set(true)
+    }
+
+    private fun openRestNode(path: RestNodePath) {
+        activeSqlConsoleId = null
+        restEditor.open(path)
+        rightFocus = FocusTarget.REST
+        focus = rightFocus
+        renderDirty.set(true)
+    }
+
+    private fun sendRestRequest(path: RestNodePath) {
+        restExecution?.let {
+            it.cancel()
+            restExecution = null
+            renderDirty.set(true)
+            return
+        }
+        restEditor.markRunning()
+        startRestExecution(path) { result ->
+            restEditor.showResponse(result)
+            renderDirty.set(true)
+        }
+        renderDirty.set(true)
+    }
+
+    private fun runRestRequests(root: RestNodePath) {
+        if (restExecution != null) {
+            restRunCancel.set(true)
+            restExecution?.cancel()
+            restExecution = null
+            return
+        }
+        val paths = restWorkspace.collection.walkRestTree()
+            .filter {
+                it.kind == editor.rest.model.RestNodeKind.REQUEST &&
+                    it.path.indices.size >= root.indices.size &&
+                    it.path.indices.take(root.indices.size) == root.indices
+            }
+            .map { it.path }
+        if (paths.isEmpty()) return
+        restRunCancel.set(false)
+        restEditor.clearRunHistory()
+        Thread({
+            val summary = mutableListOf<RestRunSummary>()
+            paths.forEach { path ->
+                if (restRunCancel.get()) return@forEach
+                val complete = java.util.concurrent.CountDownLatch(1)
+                restEditor.open(path)
+                restEditor.markRunning()
+                startRestExecution(path) { result ->
+                    restEditor.showResponse(result)
+                    val node = restWorkspace.node(path)
+                    summary += if (result.error == null) {
+                        RestRunSummary(path, "OK  " + (node?.string("name") ?: "Request") + "  " + result.statusCode + "  " + result.durationMs + " ms")
+                    } else {
+                        RestRunSummary(path, "ERR " + (node?.string("name") ?: "Request") + "  " + result.error)
+                    }
+                    renderDirty.set(true)
+                    complete.countDown()
+                }
+                complete.await()
+            }
+            restEditor.open(root)
+            restEditor.showRunSummary(summary)
+            renderDirty.set(true)
+        }, "rest-collection-run").apply { isDaemon = true }.start()
+        renderDirty.set(true)
+    }
+
+    private fun startRestExecution(path: RestNodePath, onComplete: (editor.rest.http.RestResponse) -> Unit) {
+        val reference = AtomicReference<RestExecutionHandle?>()
+        val completed = AtomicBoolean(false)
+        val handle = restRuntime.executeAsync(restWorkspace.collection, path) { result ->
+            completed.set(true)
+            onComplete(result)
+            reference.get()?.let { current ->
+                if (restExecution === current) restExecution = null
+            }
+        }
+        reference.set(handle)
+        if (!completed.get()) restExecution = handle
     }
 
     private fun openSqlConsole(dataSource: DataSourceDefinition) {
@@ -2416,6 +2534,7 @@ private class SplitPanelsApp(
             FocusTarget.HEX -> hexViewer.dispatch(event)
             FocusTarget.IMAGE -> imageViewer.dispatch(event)
             FocusTarget.DIFF -> diffViewer.dispatch(event)
+            FocusTarget.REST -> restEditor.dispatch(event)
             FocusTarget.FILES -> codeEditor.dispatch(event)
         }
         if (handled && targetFocus != FocusTarget.FILES) {
@@ -2567,7 +2686,8 @@ private class SplitPanelsApp(
                 database = DatabaseProjectState(
                     dataSources = databaseService.dataSources(),
                     sessions = sqlConsoleManager.projectState().sessions
-                )
+                ),
+                restApi = restWorkspace.projectState()
             )
         )
         lastPersistMs = System.currentTimeMillis()
@@ -2707,6 +2827,7 @@ private class SplitPanelsApp(
             FocusTarget.HEX -> hexViewer.render(clipped)
             FocusTarget.IMAGE -> imageViewer.render(clipped)
             FocusTarget.DIFF -> diffViewer.render(clipped)
+            FocusTarget.REST -> restEditor.render(clipped)
             FocusTarget.FILES -> codeEditor.render(clipped)
         }
     }
@@ -2734,7 +2855,7 @@ private class SplitPanelsApp(
 
 }
 
-private enum class FocusTarget { FILES, CODE, HEX, IMAGE, DIFF }
+private enum class FocusTarget { FILES, CODE, HEX, IMAGE, DIFF, REST }
 
 private data class PerfSnapshot(
     val loopFps: Int,

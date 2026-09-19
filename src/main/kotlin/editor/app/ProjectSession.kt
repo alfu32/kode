@@ -10,6 +10,7 @@ import kotlinx.serialization.decodeFromString
 import editor.lib.BufferPersistState
 import editor.lib.PositionState
 import editor.database.model.DatabaseProjectState
+import editor.rest.model.RestApiProjectState
 
 @Serializable
 data class ProjectSession(
@@ -19,6 +20,7 @@ data class ProjectSession(
     val sourceRoots: List<String> = emptyList(),
     val scanExclusions: List<String> = emptyList(),
     val database: DatabaseProjectState = DatabaseProjectState(),
+    val restApi: RestApiProjectState = RestApiProjectState(),
 )
 
 @Serializable
@@ -72,7 +74,19 @@ class ProjectSessionManager(
 
     fun save(session: ProjectSession) {
         val content = json.encodeToString(session)
-        Files.writeString(stateFile, content)
+        Files.createDirectories(stateFile.parent)
+        val temporary = stateFile.resolveSibling(".${stateFile.fileName}.tmp")
+        Files.writeString(temporary, content)
+        runCatching {
+            Files.move(
+                temporary,
+                stateFile,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE
+            )
+        }.getOrElse {
+            Files.move(temporary, stateFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 
     fun toRelative(path: String): String =

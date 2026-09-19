@@ -60,19 +60,20 @@ class DatabaseConnectionDialog(
         }
     }
 
+    private val initialDefinition = existing
     private val drivers = registry.definitions
-    private val sessionId = existing?.id ?: UUID.randomUUID().toString()
+    private val sessionId = initialDefinition?.id ?: UUID.randomUUID().toString()
     private val fields = arrayOf(
-        Field(existing?.name.orEmpty()),
-        Field(existing?.jdbcUrl.orEmpty()),
-        Field(existing?.username.orEmpty()),
+        Field(initialDefinition?.name.orEmpty()),
+        Field(initialDefinition?.jdbcUrl.orEmpty()),
+        Field(initialDefinition?.username.orEmpty()),
         Field(""),
-        Field(existing?.defaultCatalog.orEmpty()),
-        Field(existing?.defaultSchema.orEmpty())
+        Field(initialDefinition?.defaultCatalog.orEmpty()),
+        Field(initialDefinition?.defaultSchema.orEmpty())
     )
     private val customFields = arrayOf(Field(""), Field(""), Field(""), Field(""))
     private val versionField = Field("")
-    private var selectedDriver = drivers.indexOfFirst { it.id == existing?.driver?.id }.takeIf { it >= 0 } ?: 0
+    private var selectedDriver = drivers.indexOfFirst { it.id == initialDefinition?.driver?.id }.takeIf { it >= 0 } ?: 0
     private var focus = 0
     private var driverDropdown = false
     private var status = ""
@@ -83,7 +84,7 @@ class DatabaseConnectionDialog(
     private var dropdownScroll = 0
 
     init {
-        existing?.let {
+        initialDefinition?.let {
             fields[0].set(it.name)
             fields[1].set(it.jdbcUrl)
             fields[2].set(it.username)
@@ -117,7 +118,7 @@ class DatabaseConnectionDialog(
         canvas.withStyle(panel) { drawRect(x, y, width, height) }
         drawBorder(canvas, border, x, y, width, height)
         canvas.withStyle(panel) {
-            drawText(x + 2, y + 1, "New database connection".take(width - 4))
+            drawText(x + 2, y + 1, (if (initialDefinition == null) "New database connection" else "Edit database connection").take(width - 4))
         }
 
         val labels = formLabels()
@@ -319,9 +320,12 @@ class DatabaseConnectionDialog(
             ),
             jdbcUrl = fields[1].value,
             username = fields[2].value,
-            credentialReference = "$id.password".takeIf { fields[3].value.isNotEmpty() },
+            credentialReference = if (fields[3].value.isNotEmpty()) "$id.password" else initialDefinition?.credentialReference,
+            properties = initialDefinition?.properties.orEmpty(),
             defaultCatalog = fields[4].value.takeIf { it.isNotBlank() },
-            defaultSchema = fields[5].value.takeIf { it.isNotBlank() }
+            defaultSchema = fields[5].value.takeIf { it.isNotBlank() },
+            autoCommit = initialDefinition?.autoCommit ?: true,
+            readOnly = initialDefinition?.readOnly ?: false
         )
     }
 

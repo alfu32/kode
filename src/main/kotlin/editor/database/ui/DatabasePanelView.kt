@@ -21,6 +21,7 @@ class DatabasePanelView(
     private val service: DatabaseService,
     private val driverRegistry: JdbcDriverRegistry,
     private val onCreateDataSource: () -> Unit,
+    private val onEditDataSource: (DataSourceDefinition) -> Unit = {},
     private val onOpenConsole: (DataSourceDefinition) -> Unit,
     private val onOpenSession: (SqlConsole) -> Unit,
     private val sessionsProvider: (String) -> List<SqlConsole>,
@@ -43,6 +44,7 @@ class DatabasePanelView(
     private sealed interface Action {
         data object NewDataSource : Action
         data object Refresh : Action
+        data class EditDataSource(val id: String) : Action
         data class Toggle(val key: String) : Action
         data class NewSession(val dataSourceId: String) : Action
         data class RemoveSession(val id: String) : Action
@@ -106,6 +108,15 @@ class DatabasePanelView(
                 )
             }
             when (val ref = line.ref) {
+                is NodeRef.DataSource -> {
+                    val editLabel = " [edit] "
+                    val editX = (cols - editLabel.length).coerceAtLeast(labelStart)
+                    rowHits.getOrPut(row) { mutableListOf() } += Hit(
+                        editX until (editX + editLabel.length),
+                        Action.EditDataSource(ref.id)
+                    )
+                    canvas.withStyle(button) { drawText(editX, row, editLabel) }
+                }
                 is NodeRef.SessionFolder -> {
                     rowHits.getOrPut(row) { mutableListOf() } += Hit(
                         (cols - 5).coerceAtLeast(labelStart) until cols,
@@ -162,9 +173,18 @@ class DatabasePanelView(
             if (index !in lines.indices) return false
             selected = index
             val line = lines[index]
-            if (isSecondary(event) && line.ref is NodeRef.Metadata) {
-                openObjectMenu(line.ref as NodeRef.Metadata)
-                return true
+            if (isSecondary(event)) {
+                when (val ref = line.ref) {
+                    is NodeRef.DataSource -> {
+                        dataSources.firstOrNull { it.id == ref.id }?.let(onEditDataSource)
+                        return true
+                    }
+                    is NodeRef.Metadata -> {
+                        openObjectMenu(ref)
+                        return true
+                    }
+                    else -> Unit
+                }
             }
             if (line.ref is NodeRef.Metadata && isEntity(line.ref as NodeRef.Metadata) &&
                 x >= line.depth * 2 + 3
@@ -260,6 +280,7 @@ class DatabasePanelView(
         when (action) {
             Action.NewDataSource -> onCreateDataSource()
             Action.Refresh -> refreshSelected()
+            is Action.EditDataSource -> dataSources.firstOrNull { it.id == action.id }?.let(onEditDataSource)
             is Action.Toggle -> toggleKey(action.key)
             is Action.NewSession -> dataSources.firstOrNull { it.id == action.dataSourceId }?.let(onCreateSession)
             is Action.RemoveSession -> findSession(action.id)?.let(onRemoveSession)

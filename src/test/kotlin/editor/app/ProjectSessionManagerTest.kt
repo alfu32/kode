@@ -10,6 +10,8 @@ import editor.database.model.DataSourceDefinition
 import editor.database.model.DatabaseProjectState
 import editor.database.model.DatabaseSessionState
 import editor.database.model.DriverSpec
+import editor.rest.model.RestApiProjectState
+import editor.rest.model.defaultCollection
 
 class ProjectSessionManagerTest {
     @Test
@@ -48,5 +50,16 @@ class ProjectSessionManagerTest {
         val loaded = manager.load()
         assertEquals(listOf(dataSource), loaded.database.dataSources)
         assertEquals(listOf(session), loaded.database.sessions)
+    }
+
+    @Test
+    fun persistsRestCollectionAndUiState() {
+        val root = createTempDirectory()
+        val manager = ProjectSessionManager(root)
+        val collection = defaultCollection("Workspace API")
+        manager.save(ProjectSession(restApi = RestApiProjectState(collection = collection)))
+
+        val loaded = manager.load()
+        assertEquals("Workspace API", (loaded.restApi.collection["info"] as kotlinx.serialization.json.JsonObject)["name"]?.toString()?.trim('"'))
     }
 }
