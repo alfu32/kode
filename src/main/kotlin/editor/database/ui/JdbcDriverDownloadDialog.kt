@@ -2,10 +2,10 @@ package editor.database.ui
 
 import editor.database.driver.JdbcDownloadProgress
 import editor.database.driver.JdbcDriverDownloadCancelled
+import editor.ui.ModalDialogFrame
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
 import react.BaseComponent
-import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
@@ -19,6 +19,7 @@ class JdbcDriverDownloadDialog(
     private val onFinished: (success: Boolean, path: Path?, message: String?) -> Unit = { _, _, _ -> },
     private val onInvalidate: () -> Unit = {}
 ) : BaseComponent(styleSheet) {
+    private val frame = ModalDialogFrame(styleSheet)
     private val cancelRequested = AtomicBoolean(false)
     @Volatile private var started = false
     @Volatile private var done = false
@@ -64,13 +65,13 @@ class JdbcDriverDownloadDialog(
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        val width = minOf(cols, 82).coerceAtLeast(34)
-        val height = minOf(rows, 12).coerceAtLeast(9)
-        val x = ((cols - width) / 2).coerceAtLeast(0)
-        val y = ((rows - height) / 2).coerceAtLeast(0)
-        val panel = styleSheet.getStyle("project-search-dialog").withDefaults()
-        val border = styleSheet.getStyle("project-search-dialog-border").withDefaults(panel.fg, panel.bg)
-        val button = styleSheet.getStyle("lsp-button").withDefaults(panel.fg, panel.bg)
+        val bounds = frame.bounds(canvas, minOf(cols, 82).coerceAtLeast(34), minOf(rows, 12).coerceAtLeast(9))
+        val width = bounds.width
+        val height = bounds.height
+        val x = bounds.x
+        val y = bounds.y
+        val panel = frame.panelStyle()
+        val button = frame.buttonStyle()
         val text = styleSheet.getStyle("content").withDefaults(panel.fg, panel.bg)
         val current = progress
         val status = message.replace(Regex("\\s+"), " ")
@@ -79,10 +80,8 @@ class JdbcDriverDownloadDialog(
         val filled = (barWidth * percent / 100).coerceIn(0, barWidth)
         val bar = "[" + "#".repeat(filled) + "-".repeat(barWidth - filled) + "] $percent%"
 
-        canvas.withStyle(panel) { drawRect(x, y, width, height) }
-        drawBorder(canvas, border, x, y, width, height)
+        frame.render(canvas, bounds, "Install JDBC driver: $driverName")
         canvas.withStyle(panel) {
-            drawText(x + 2, y + 1, "Install JDBC driver: $driverName".take(width - 4))
             drawText(x + 2, y + 3, status.take(width - 4))
             drawText(x + 2, y + 4, current.currentArtifact.take(width - 4))
         }
@@ -129,18 +128,4 @@ class JdbcDriverDownloadDialog(
         return ((completed + current) / value.artifactCount * 100.0).toInt().coerceIn(0, 100)
     }
 
-    private fun drawBorder(canvas: CanvasRenderer, style: StyleSet, x: Int, y: Int, width: Int, height: Int) {
-        val right = x + width - 1
-        val bottom = y + height - 1
-        canvas.withStyle(style) {
-            for (px in x..right) {
-                drawText(px, y, if (px == x || px == right) "+" else "-")
-                drawText(px, bottom, if (px == x || px == right) "+" else "-")
-            }
-            for (py in (y + 1) until bottom) {
-                drawText(x, py, "|")
-                drawText(right, py, "|")
-            }
-        }
-    }
 }

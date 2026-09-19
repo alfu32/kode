@@ -11,6 +11,8 @@ import editor.rest.model.nodeKind
 import editor.rest.model.string
 import editor.rest.model.walkRestTree
 import editor.ui.FormFieldRenderer
+import editor.ui.ModalDialogFrame
+import editor.ui.ModalTextInputDialog
 import java.nio.file.Path
 import react.BaseComponent
 import react.StyleSet
@@ -46,7 +48,7 @@ class RestPanelView(
     private var lines: List<RestTreeNode> = emptyList()
     private var hits: Map<Int, List<Hit>> = emptyMap()
     private var menu: RestNodeMenu? = null
-    private var dialog: RestInputDialog? = null
+    private var dialog: ModalTextInputDialog? = null
     private var confirm: RestConfirmDialog? = null
     private var moveDialog: RestMoveDialog? = null
     private var message = ""
@@ -265,10 +267,10 @@ class RestPanelView(
                     RestNodePath(),
                     "Replace the existing REST collection?",
                     onInvalidate,
-                    onConfirm = { openInput("Import Postman collection", workspaceRoot.resolve("collection.postman_collection.json").toString()) }
-                )
-            } else openInput("Import Postman collection", workspaceRoot.resolve("collection.postman_collection.json").toString())
-            Action.Export -> openInput("Export Postman collection", workspaceRoot.resolve("collection.postman_collection.json").toString())
+                onConfirm = { openInput("Import Postman collection", "File", workspaceRoot.resolve("collection.postman_collection.json").toString()) }
+            )
+            } else openInput("Import Postman collection", "File", workspaceRoot.resolve("collection.postman_collection.json").toString())
+            Action.Export -> openInput("Export Postman collection", "File", workspaceRoot.resolve("collection.postman_collection.json").toString())
         }
     }
 
@@ -291,7 +293,11 @@ class RestPanelView(
             RestMenuAction.ADD_REQUEST -> execute(Action.AddRequest(validParent(path)))
             RestMenuAction.ADD_FOLDER -> execute(Action.AddFolder(validParent(path)))
             RestMenuAction.RUN -> onRun(path)
-            RestMenuAction.RENAME -> openInput("Rename", model.node(path)?.string("name") ?: model.collectionName())
+            RestMenuAction.RENAME -> openInput(
+                "Rename \"${model.node(path)?.string("name") ?: model.collectionName()}\"",
+                "Name",
+                model.node(path)?.string("name") ?: model.collectionName()
+            )
             RestMenuAction.DUPLICATE -> model.duplicate(path)?.let { model.select(it); onOpen(it); notifyChanged("Duplicated node") }
             RestMenuAction.MOVE_UP -> model.moveUp(path)?.let { model.select(it); notifyChanged("Moved node") }
             RestMenuAction.MOVE_DOWN -> model.moveDown(path)?.let { model.select(it); notifyChanged("Moved node") }
@@ -312,13 +318,13 @@ class RestPanelView(
         if (model.delete(path)) notifyChanged("Deleted node")
     }
 
-    private fun openInput(title: String, initial: String) {
-        dialog = RestInputDialog(styleSheet, title, "Path", initial, onInvalidate)
+    private fun openInput(title: String, label: String, initial: String) {
+        dialog = ModalTextInputDialog(styleSheet, title, label, initial, onInvalidate = onInvalidate)
     }
 
     private fun handleRenameOrPath(value: String) {
         val title = dialog?.title ?: return
-        if (title == "Rename") {
+        if (title.startsWith("Rename \"")) {
             val path = lines.getOrNull(selected)?.path ?: return
             model.rename(path, value)
             notifyChanged("Renamed node")
@@ -427,109 +433,6 @@ class RestNodeMenu(
     }
 }
 
-class RestInputDialog(
-    styleSheet: StyleSheet,
-    val title: String,
-    private val label: String,
-    initial: String,
-    private val onInvalidate: () -> Unit
-) : BaseComponent(styleSheet) {
-    private var value = initial
-    private var cursor = value.length
-    private var fieldRange: IntRange = IntRange.EMPTY
-    private var fieldRow = -1
-    private var buttonRow = -1
-    private var okRange: IntRange = IntRange.EMPTY
-    private var cancelRange: IntRange = IntRange.EMPTY
-    private var focus = 0 // 0 = field, 1 = OK, 2 = Cancel
-    var result: String? = null
-        private set
-    var finished = false
-        private set
-
-    override fun render(canvas: CanvasRenderer) {
-        val cols = canvas.cols().coerceAtLeast(1)
-        val rows = canvas.rows().coerceAtLeast(1)
-        val width = minOf(cols, 84).coerceAtLeast(32)
-        val x = ((cols - width) / 2).coerceAtLeast(0)
-        val y = (rows / 2 - 3).coerceAtLeast(1)
-        val style = styleSheet.getStyle("project-search-dialog").withDefaults()
-        val button = styleSheet.getStyle("lsp-button").withDefaults(style.fg, style.bg)
-        canvas.withStyle(style) { drawRect(x, y, width, 7) }
-        canvas.withStyle(style) {
-            drawText(x + 2, y + 1, title.take(width - 4))
-        }
-        val labelText = "$label: "
-        canvas.withStyle(style) { drawText(x + 2, y + 3, labelText) }
-        fieldRange = FormFieldRenderer.draw(
-            canvas = canvas,
-            styleSheet = styleSheet,
-            x = x + 2 + labelText.length,
-            y = y + 3,
-            width = width - labelText.length - 4,
-            value = value,
-            cursor = cursor,
-            focused = focus == 0
-        )
-        fieldRow = y + 3
-        buttonRow = y + 5
-        val okLabel = " OK "
-        val cancelLabel = " Cancel "
-        val buttonX = x + width - okLabel.length - cancelLabel.length - 1
-        okRange = buttonX until buttonX + okLabel.length
-        cancelRange = (okRange.last + 1) until (okRange.last + 1 + cancelLabel.length)
-        canvas.withStyle(if (focus == 1) button else style) { drawText(okRange.first, buttonRow, okLabel) }
-        canvas.withStyle(if (focus == 2) button else style) { drawText(cancelRange.first, buttonRow, cancelLabel) }
-    }
-
-    override fun dispatch(event: UIEvent): Boolean {
-        if (event.kind == "mouse_down") {
-            val x = event.x ?: return true
-            val y = event.y ?: return true
-            if (y == fieldRow && x in fieldRange) {
-                focus = 0
-                cursor = (x - fieldRange.first).coerceIn(0, value.length)
-            } else if (y == buttonRow && x in okRange) {
-                focus = 1
-                result = value.trim()
-                finished = true
-            } else if (y == buttonRow && x in cancelRange) {
-                focus = 2
-                finished = true
-            }
-            onInvalidate()
-            return true
-        }
-        if (event.kind != "key_down") return true
-        when (event.key?.lowercase()) {
-            "escape", "esc" -> finished = true
-            "tab", "down" -> focus = (focus + 1) % 3
-            "up" -> focus = (focus + 2) % 3
-            "left" -> when (focus) {
-                0 -> cursor = (cursor - 1).coerceAtLeast(0)
-                2 -> focus = 1
-            }
-            "right" -> when (focus) {
-                0 -> cursor = (cursor + 1).coerceAtMost(value.length)
-                1 -> focus = 2
-            }
-            "enter", "return" -> when (focus) {
-                0, 1 -> { result = value.trim(); finished = true }
-                else -> finished = true
-            }
-            "backspace" -> if (focus == 0 && cursor > 0) { value = value.removeRange(cursor - 1, cursor); cursor-- }
-            else -> if (!event.ctrl && !event.alt && !event.meta && event.key?.length == 1) {
-                if (focus == 0) {
-                    value = value.substring(0, cursor) + event.key + value.substring(cursor)
-                    cursor++
-                }
-            }
-        }
-        onInvalidate()
-        return true
-    }
-}
-
 class RestConfirmDialog(
     styleSheet: StyleSheet,
     val path: RestNodePath,
@@ -537,6 +440,11 @@ class RestConfirmDialog(
     private val onInvalidate: () -> Unit,
     val onConfirm: () -> Unit = {}
 ) : BaseComponent(styleSheet) {
+    private val frame = ModalDialogFrame(styleSheet)
+    private var focus = 0 // 0 = confirm, 1 = cancel
+    private var okRange: IntRange = IntRange.EMPTY
+    private var cancelRange: IntRange = IntRange.EMPTY
+    private var buttonRow = -1
     var confirmed = false
         private set
     var finished = false
@@ -544,24 +452,35 @@ class RestConfirmDialog(
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
-        val rows = canvas.rows().coerceAtLeast(1)
-        val width = minOf(cols, 56).coerceAtLeast(30)
-        val x = ((cols - width) / 2).coerceAtLeast(0)
-        val y = (rows / 2 - 2).coerceAtLeast(1)
-        val style = styleSheet.getStyle("project-search-dialog").withDefaults()
-        val button = styleSheet.getStyle("lsp-button").withDefaults(style.fg, style.bg)
-        canvas.withStyle(style) { drawRect(x, y, width, 5) }
-        canvas.withStyle(style) { drawText(x + 2, y + 1, prompt.take(width - 4)); drawText(x + width - 18, y + 3, "[Delete] [Cancel]") }
-        canvas.withStyle(button) { drawText(x + width - 18, y + 3, "[Delete] [Cancel]") }
+        val bounds = frame.bounds(canvas, minOf(cols, 64).coerceAtLeast(36), 8)
+        val style = frame.panelStyle()
+        val button = frame.buttonStyle()
+        frame.render(canvas, bounds, "Confirm")
+        canvas.withStyle(style) { drawText(bounds.contentX, bounds.y + 3, prompt.take(bounds.contentWidth)) }
+        buttonRow = bounds.bottom - 2
+        val okLabel = " Delete "
+        val cancelLabel = " Cancel "
+        val buttonX = bounds.right - okLabel.length - cancelLabel.length - 1
+        okRange = buttonX until buttonX + okLabel.length
+        cancelRange = (okRange.last + 1) until (okRange.last + 1 + cancelLabel.length)
+        canvas.withStyle(if (focus == 0) button else style) { drawText(okRange.first, buttonRow, okLabel) }
+        canvas.withStyle(if (focus == 1) button else style) { drawText(cancelRange.first, buttonRow, cancelLabel) }
     }
 
     override fun dispatch(event: UIEvent): Boolean {
-        if (event.kind == "mouse_down") { confirmed = true; finished = true; return true }
-        if (event.kind == "key_down") {
-            when (event.key?.lowercase()) {
-                "escape", "esc" -> finished = true
-                "enter", "return", "delete" -> { confirmed = true; finished = true }
+        if (event.kind == "mouse_down") {
+            val x = event.x ?: return true
+            val y = event.y ?: return true
+            when {
+                y == buttonRow && x in okRange -> { focus = 0; confirmed = true; finished = true }
+                y == buttonRow && x in cancelRange -> { focus = 1; finished = true }
             }
+        }
+        if (event.kind == "key_down") when (event.key?.lowercase()) {
+            "escape", "esc" -> { focus = 1; finished = true }
+            "tab", "down", "right" -> focus = (focus + 1) % 2
+            "up", "left" -> focus = (focus + 1) % 2
+            "enter", "return", "delete" -> if (focus == 0) { confirmed = true; finished = true } else finished = true
         }
         onInvalidate()
         return true
@@ -574,8 +493,14 @@ class RestMoveDialog(
     folders: List<RestTreeNode>,
     private val onInvalidate: () -> Unit
 ) : BaseComponent(styleSheet) {
+    private val frame = ModalDialogFrame(styleSheet)
     private val options = folders.filter { it.path.indices != path.indices && !it.path.indices.startsWith(path.indices) }
     private var selected = 0
+    private var focus = 0 // 0 = folder list, 1 = move, 2 = cancel
+    private var moveRange: IntRange = IntRange.EMPTY
+    private var cancelRange: IntRange = IntRange.EMPTY
+    private var buttonRow = -1
+    private var listStart = -1
     var target: RestNodePath? = null
         private set
     var finished = false
@@ -584,34 +509,61 @@ class RestMoveDialog(
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        val width = minOf(cols, 70).coerceAtLeast(34)
-        val height = minOf(rows - 2, options.size + 2).coerceAtLeast(3)
-        val x = ((cols - width) / 2).coerceAtLeast(0)
-        val y = ((rows - height) / 2).coerceAtLeast(1)
-        val style = styleSheet.getStyle("project-search-dialog").withDefaults()
+        val preferredHeight = (options.size + 4).coerceAtMost((rows - 2).coerceAtLeast(7))
+        val bounds = frame.bounds(canvas, minOf(cols, 70).coerceAtLeast(34), preferredHeight.coerceAtLeast(7))
+        val style = frame.panelStyle()
         val active = styleSheet.getStyle("file-entry:selected").withDefaults(style.fg, style.bg)
-        canvas.withStyle(style) { drawRect(x, y, width, height); drawText(x + 2, y + 1, "Move to folder") }
-        options.take(height - 2).forEachIndexed { index, folder ->
+        val button = frame.buttonStyle()
+        frame.render(canvas, bounds, "Move to folder")
+        val visible = (bounds.height - 4).coerceAtLeast(1)
+        listStart = bounds.y + 2
+        selected = selected.coerceIn(0, (options.size - 1).coerceAtLeast(0))
+        options.take(visible).forEachIndexed { index, folder ->
             val label = " ".repeat(folder.depth * 2) + folder.name
-            canvas.withStyle(if (index == selected) active else style) { drawText(x + 2, y + 2 + index, label.take(width - 4)) }
+            val rowStyle = if (index == selected && focus == 0) active else style
+            canvas.withStyle(rowStyle) { drawText(bounds.contentX, bounds.y + 2 + index, label.take(bounds.contentWidth)) }
         }
+        buttonRow = bounds.bottom - 2
+        val moveLabel = " Move "
+        val cancelLabel = " Cancel "
+        val buttonX = bounds.right - moveLabel.length - cancelLabel.length - 1
+        moveRange = buttonX until buttonX + moveLabel.length
+        cancelRange = (moveRange.last + 1) until (moveRange.last + 1 + cancelLabel.length)
+        canvas.withStyle(if (focus == 1) button else style) { drawText(moveRange.first, buttonRow, moveLabel) }
+        canvas.withStyle(if (focus == 2) button else style) { drawText(cancelRange.first, buttonRow, cancelLabel) }
     }
 
     override fun dispatch(event: UIEvent): Boolean {
         if (event.kind == "key_down") {
             when (event.key?.lowercase()) {
-                "escape", "esc" -> finished = true
-                "up" -> selected = (selected - 1).coerceAtLeast(0)
-                "down" -> selected = (selected + 1).coerceAtMost((options.size - 1).coerceAtLeast(0))
-                "enter", "return" -> { target = options.getOrNull(selected)?.path; finished = true }
+                "escape", "esc" -> { focus = 2; finished = true }
+                "tab", "down" -> if (event.key.equals("tab", true) || focus != 0) focus = (focus + 1) % 3 else selected = (selected + 1).coerceAtMost((options.size - 1).coerceAtLeast(0))
+                "up" -> if (focus == 0) selected = (selected - 1).coerceAtLeast(0) else focus = (focus + 2) % 3
+                "left" -> if (focus == 2) focus = 1
+                "right" -> if (focus == 1) focus = 2
+                "enter", "return" -> when (focus) {
+                    0, 1 -> { target = options.getOrNull(selected)?.path; finished = true }
+                    else -> finished = true
+                }
             }
             onInvalidate()
             return true
         }
         if (event.kind == "mouse_down") {
-            val row = (event.y ?: 0) - 2
-            target = options.getOrNull(row)?.path
-            finished = true
+            val x = event.x ?: return true
+            val y = event.y ?: return true
+            when {
+                y == buttonRow && x in moveRange -> { focus = 1; target = options.getOrNull(selected)?.path; finished = true }
+                y == buttonRow && x in cancelRange -> { focus = 2; finished = true }
+                else -> {
+                    val row = y - listStart
+                    if (row in 0 until options.size.coerceAtMost((buttonRow - listStart).coerceAtLeast(0))) {
+                        selected = row
+                        focus = 0
+                    }
+                }
+            }
+            onInvalidate()
             return true
         }
         return true

@@ -8,9 +8,9 @@ import editor.database.model.DriverSpec
 import editor.database.model.JdbcDriverArtifact
 import editor.database.model.JdbcRepositoryType
 import editor.ui.FormFieldRenderer
+import editor.ui.ModalDialogFrame
 import java.util.UUID
 import react.BaseComponent
-import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
@@ -26,6 +26,7 @@ class DatabaseConnectionDialog(
     private val onDownloadDriver: (DataSourceDefinition) -> Unit = {},
     private val onInvalidate: () -> Unit = {}
 ) : BaseComponent(styleSheet) {
+    private val frame = ModalDialogFrame(styleSheet)
     private data class FieldHit(val index: Int, val row: Int, val x: IntRange)
     private data class ButtonHit(val action: Action, val x: IntRange)
     private enum class Action { TEST, DOWNLOAD, APPLY, CANCEL }
@@ -103,24 +104,26 @@ class DatabaseConnectionDialog(
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        val width = minOf(cols, 86).coerceAtLeast(46)
-        val height = minOf(rows, if (customMode()) 23 else 19).coerceAtLeast(if (customMode()) 18 else 14)
-        val x = ((cols - width) / 2).coerceAtLeast(0)
-        val y = ((rows - height) / 2).coerceAtLeast(0)
-        val panel = styleSheet.getStyle("project-search-dialog").withDefaults()
-        val border = styleSheet.getStyle("project-search-dialog-border").withDefaults(panel.fg, panel.bg)
+        val preferredWidth = minOf(cols, 86).coerceAtLeast(46)
+        val preferredHeight = minOf(rows, if (customMode()) 23 else 19).coerceAtLeast(if (customMode()) 18 else 14)
+        val bounds = frame.bounds(canvas, preferredWidth, preferredHeight)
+        val width = bounds.width
+        val height = bounds.height
+        val x = bounds.x
+        val y = bounds.y
+        val panel = frame.panelStyle()
         val input = styleSheet.getStyle("content").withDefaults(panel.fg, panel.bg)
-        val button = styleSheet.getStyle("lsp-button").withDefaults(panel.fg, panel.bg)
+        val button = frame.buttonStyle()
         val active = styleSheet.getStyle("file-entry:selected").withDefaults(panel.fg, panel.bg)
 
         fieldHits = emptyList()
         buttonHits = emptyList()
         dropdownRows = IntRange.EMPTY
-        canvas.withStyle(panel) { drawRect(x, y, width, height) }
-        drawBorder(canvas, border, x, y, width, height)
-        canvas.withStyle(panel) {
-            drawText(x + 2, y + 1, (if (initialDefinition == null) "New database connection" else "Edit database connection").take(width - 4))
-        }
+        frame.render(
+            canvas,
+            bounds,
+            if (initialDefinition == null) "New database connection" else "Edit database connection"
+        )
 
         val labels = formLabels()
         val labelWidth = 16
@@ -461,18 +464,4 @@ class DatabaseConnectionDialog(
         onInvalidate()
     }
 
-    private fun drawBorder(canvas: CanvasRenderer, style: StyleSet, x: Int, y: Int, width: Int, height: Int) {
-        val right = x + width - 1
-        val bottom = y + height - 1
-        canvas.withStyle(style) {
-            for (px in x..right) {
-                drawText(px, y, if (px == x || px == right) "+" else "-")
-                drawText(px, bottom, if (px == x || px == right) "+" else "-")
-            }
-            for (py in (y + 1) until bottom) {
-                drawText(x, py, "|")
-                drawText(right, py, "|")
-            }
-        }
-    }
 }

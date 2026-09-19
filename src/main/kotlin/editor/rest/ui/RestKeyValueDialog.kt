@@ -1,8 +1,8 @@
 package editor.rest.ui
 
 import editor.ui.FormFieldRenderer
+import editor.ui.ModalDialogFrame
 import react.BaseComponent
-import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
 import react.renderer.CanvasRenderer
@@ -28,6 +28,7 @@ class RestKeyValueDialog(
     variableType: String = "string",
     variableEnabled: Boolean = true
 ) : BaseComponent(styleSheet) {
+    private val frame = ModalDialogFrame(styleSheet)
     private val variableMode = variableMode
     private val fields = if (variableMode) {
         arrayOf(Field(key), Field(value), Field(variableType), Field(description), Field(variableEnabled.toString()))
@@ -38,6 +39,8 @@ class RestKeyValueDialog(
     private var fieldRanges: List<IntRange> = emptyList()
     private var okRange: IntRange = IntRange.EMPTY
     private var cancelRange: IntRange = IntRange.EMPTY
+    private var firstFieldRow = -1
+    private var buttonRow = -1
     var result: RestEntryValue? = null
         private set
     var finished = false
@@ -67,20 +70,21 @@ class RestKeyValueDialog(
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        val width = minOf(cols, 76).coerceAtLeast(36)
+        val preferredWidth = minOf(cols, 76).coerceAtLeast(36)
         val height = if (variableMode) 12 else 10
-        val x = ((cols - width) / 2).coerceAtLeast(0)
-        val y = ((rows - height) / 2).coerceAtLeast(1)
-        val panel = styleSheet.getStyle("project-search-dialog").withDefaults()
-        val active = styleSheet.getStyle("file-entry:selected").withDefaults(panel.fg, panel.bg)
-        val button = styleSheet.getStyle("lsp-button").withDefaults(panel.fg, panel.bg)
-        canvas.withStyle(panel) { drawRect(x, y, width, height) }
-        canvas.withStyle(panel) { drawText(x + 2, y + 1, title.take(width - 4)) }
+        val bounds = frame.bounds(canvas, preferredWidth, height)
+        val width = bounds.width
+        val x = bounds.x
+        val y = bounds.y
+        val panel = frame.panelStyle()
+        val button = frame.buttonStyle()
+        frame.render(canvas, bounds, title)
+        firstFieldRow = y + 3
         val labels = if (variableMode) listOf("Key", "Value", "Type", "Description", "Enabled true/false") else listOf("Key", "Value", thirdLabel)
         val labelWidth = labels.maxOf { it.length } + 2
         fieldRanges = labels.mapIndexed { index, label ->
             val field = fields[index]
-            val row = y + 3 + index
+            val row = firstFieldRow + index
             canvas.withStyle(panel) { drawText(x + 2, row, (label + ":").padEnd(labelWidth).take(labelWidth)) }
             FormFieldRenderer.draw(
                 canvas = canvas,
@@ -96,27 +100,24 @@ class RestKeyValueDialog(
         val okLabel = " OK "
         val cancelLabel = " Cancel "
         val buttonX = x + width - okLabel.length - cancelLabel.length - 1
+        buttonRow = bounds.bottom - 2
         okRange = buttonX until buttonX + okLabel.length
         cancelRange = (okRange.last + 1) until (okRange.last + 1 + cancelLabel.length)
-        canvas.withStyle(if (focus == fields.size) button else panel) { drawText(okRange.first, y + height - 2, okLabel) }
-        canvas.withStyle(if (focus == fields.size + 1) button else panel) { drawText(cancelRange.first, y + height - 2, cancelLabel) }
     }
 
     override fun dispatch(event: UIEvent): Boolean {
         if (event.kind == "mouse_down") {
             val row = (event.y ?: 0)
-            val height = if (variableMode) 12 else 10
-            val base = ((event.rows ?: 0) - height) / 2 + 3
-            if (row in base until base + fields.size) {
-                focus = row - base
+            if (row in firstFieldRow until firstFieldRow + fields.size) {
+                focus = row - firstFieldRow
                 fieldRanges.getOrNull(focus)?.let { range ->
                     if (event.x != null && event.x in range) fields[focus].cursor = (event.x - range.first).coerceIn(0, fields[focus].value.length)
                 }
             }
-            else if (row == base + fields.size + 2 && event.x != null && event.x in okRange) {
+            else if (row == buttonRow && event.x != null && event.x in okRange) {
                 focus = fields.size
                 finish(true)
-            } else if (row == base + fields.size + 2 && event.x != null && event.x in cancelRange) {
+            } else if (row == buttonRow && event.x != null && event.x in cancelRange) {
                 focus = fields.size + 1
                 finish(false)
             }

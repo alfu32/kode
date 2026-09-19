@@ -26,8 +26,7 @@ class FileTreeView(
     private val buttonAreas = mutableListOf<ButtonArea>()
     private val headerButtons = mutableListOf<ButtonArea>()
     private var renameTarget: String? = null
-    private var renameRow: Int = -1
-    private val renameInput = InputState()
+    private var renameDialog: ModalTextInputDialog? = null
     private var lastRows: Int = 0
     private val mimeDetector = DefaultMimeTypeDetector()
     private val mimeCache = mutableMapOf<String, MimeCacheEntry>()
@@ -48,9 +47,7 @@ class FileTreeView(
         selectedPath = null
         scrollOffset = 0
         renameTarget = null
-        renameRow = -1
-        renameInput.text = ""
-        renameInput.cursor = 0
+        renameDialog = null
         mimeCache.clear()
         folderStatusCache.clear()
         preclassifySubtree(tree.root, depth = 2)
@@ -157,11 +154,9 @@ class FileTreeView(
                     cursor += label.length
                 }
 
-                if (renameTarget == entry.fullPath && rowY == renameRow) {
-                    renderRenameInput(canvas, rowY, baseText.length, nameSpace, cols)
-                }
             }
         }
+        renameDialog?.render(canvas)
     }
 
     private fun renderHeader(canvas: CanvasRenderer, cols: Int) {
@@ -191,6 +186,16 @@ class FileTreeView(
     }
 
     override fun dispatch(event: UIEvent): Boolean {
+        renameDialog?.let { active ->
+            val handled = active.dispatch(event)
+            if (active.finished) {
+                val target = renameTarget
+                renameDialog = null
+                renameTarget = null
+                active.result?.let { target?.let { path -> performRename(path, it) } }
+            }
+            return handled
+        }
         val entries = tree.flattened()
         if (entries.isEmpty()) return false
         val rows = (event.rows ?: 0).coerceAtLeast(0)
@@ -209,9 +214,6 @@ class FileTreeView(
             "mouse_down" -> {
                 val y = event.y ?: return false
                 val x = event.x ?: -1
-                if (renameTarget != null && y != renameRow) {
-                    cancelRename()
-                }
                 headerButtons.firstOrNull { it.row == y && it.range.contains(x) }?.let { btn ->
                     handleButton(btn.button)
                     return true
@@ -224,8 +226,6 @@ class FileTreeView(
                 val buttonHit = buttonAreas.firstOrNull { it.row == y && it.range.contains(x) }
                 if (buttonHit != null) {
                     handleButton(buttonHit.button)
-                } else if (renameTarget == entry.fullPath && y == renameRow) {
-                    // keep editing
                 } else if (entry.typ == "folder") {
                     preclassifySubtree(entry.fullPath, depth = 2)
                     tree.toggle(entry.fullPath)
@@ -245,21 +245,6 @@ class FileTreeView(
     }
 
     private fun handleKeys(event: UIEvent, entries: List<FileTreeEntry>, visibleCount: Int): Boolean {
-        if (renameTarget != null) {
-            val key = event.key ?: event.raw ?: return true
-            val lower = key.lowercase()
-            if (lower == "enter") {
-                performRename()
-                return true
-            }
-            if (key.equals("Escape", ignoreCase = true)) {
-                cancelRename()
-                return true
-            }
-            renameInput.handleKey(key, event)
-            return true
-        }
-
         val key = event.key?.lowercase() ?: return false
         if (entries.isEmpty()) return false
 
@@ -365,26 +350,6 @@ class FileTreeView(
         }
     }
 
-    private fun renderRenameInput(canvas: CanvasRenderer, row: Int, startX: Int, width: Int, cols: Int) {
-        val cursor = renameInput.cursor.coerceIn(0, renameInput.text.length)
-        val available = width.coerceAtLeast(1)
-        val windowStart = (cursor - available + 1).coerceAtLeast(0)
-        val visibleText = renameInput.text.substring(windowStart).take(available)
-        val padText = visibleText.padEnd(available, ' ')
-        val style = styleSheet.getStyle("file-entry:selected")
-        val cursorStyle = styleSheet.getStyle("code-search-cursor").withDefaults(style.bg, style.fg)
-        canvas.withStyle(style) {
-            drawText(startX, row, padText.take(cols - startX))
-        }
-        val cursorX = startX + (cursor - windowStart).coerceAtLeast(0).coerceAtMost(available - 1)
-        if (cursorX < cols) {
-            canvas.withStyle(cursorStyle) {
-                val ch = padText.getOrElse(cursorX - startX) { ' ' }
-                drawText(cursorX, row, ch.toString())
-            }
-        }
-    }
-
     private fun handleButton(button: Button) {
         when (button.type) {
             ButtonType.NEW_DIR -> createEntry(button.path, isDir = true)
@@ -396,32 +361,20 @@ class FileTreeView(
 
     private fun startRename(path: String) {
         renameTarget = path
-        renameInput.text = File(path).name
-        renameInput.cursor = renameInput.text.length
-        val entries = tree.flattened()
-        val idx = entries.indexOfFirst { it.fullPath == path }
-        if (idx >= 0) {
-            val availableRows = (lastRows - 1).coerceAtLeast(1)
-            val maxOffset = (entries.size - availableRows).coerceAtLeast(0)
-            if (idx < scrollOffset) {
-                scrollOffset = idx
-            } else if (idx >= scrollOffset + availableRows) {
-                scrollOffset = (idx - availableRows + 1).coerceIn(0, maxOffset)
-            }
-            renameRow = 1 + (idx - scrollOffset)
-        } else {
-            renameRow = -1
-        }
+        renameDialog = ModalTextInputDialog(
+            styleSheet = styleSheet,
+            title = "Rename \"${File(path).name}\"",
+            label = "Name",
+            initial = File(path).name
+        )
     }
 
     private fun cancelRename() {
         renameTarget = null
-        renameRow = -1
+        renameDialog = null
     }
 
-    private fun performRename() {
-        val target = renameTarget ?: return
-        val newName = renameInput.text.trim()
+    private fun performRename(target: String, newName: String) {
         if (newName.isEmpty()) {
             cancelRename()
             return
@@ -499,27 +452,4 @@ class FileTreeView(
 
     private enum class ButtonType { NEW_DIR, NEW_FILE, DELETE, RENAME }
 
-    private class InputState(var text: String = "", var cursor: Int = 0) {
-        fun handleKey(key: String, ev: UIEvent) {
-            val normalized = key.lowercase()
-            when (normalized) {
-                "left" -> if (cursor > 0) cursor--
-                "right" -> if (cursor < text.length) cursor++
-                "home" -> cursor = 0
-                "end" -> cursor = text.length
-                "backspace" -> if (cursor > 0) {
-                    text = text.removeRange(cursor - 1, cursor)
-                    cursor--
-                }
-                "delete" -> if (cursor < text.length) {
-                    text = text.removeRange(cursor, cursor + 1)
-                }
-                else -> if (!ev.ctrl && !ev.alt && !ev.meta) {
-                    val ch = if (key.length == 1) key else ev.raw?.takeIf { it.length == 1 } ?: return
-                    text = text.substring(0, cursor) + ch + text.substring(cursor)
-                    cursor++
-                }
-            }
-        }
-    }
 }
