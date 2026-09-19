@@ -102,12 +102,27 @@ class CodeEditorView(
     private val collapsedFoldStarts = mutableSetOf<Int>()
     private var paintedText: String = ""
     private var observedSemanticRevision: Long? = null
+    private var transientHighlight: SelectionRange? = null
     private data class PendingFileLoad(val requestId: Long, val content: String)
     private val fileLoadSequence = AtomicLong(0L)
     private val pendingFileLoad = AtomicReference<PendingFileLoad?>(null)
     private var loadingFile = false
 
     fun textContent(): String = buffer.text()
+
+    fun currentSelectionRange(): SelectionRange? = buffer.selectionRange()
+
+    fun setTransientHighlight(range: SelectionRange?) {
+        val next = range?.let {
+            SelectionRange(
+                Position(it.start.line, it.start.column),
+                Position(it.end.line, it.end.column)
+            )
+        }
+        if (transientHighlight == next) return
+        transientHighlight = next
+        onInvalidate()
+    }
 
     fun insertTextAtCursor(text: String): Boolean {
         if (readOnly || text.isEmpty()) return false
@@ -119,6 +134,7 @@ class CodeEditorView(
     }
 
     fun loadTextContent(text: String) {
+        transientHighlight = null
         buffer.loadText(text)
         collapsedFoldStarts.clear()
         foldRegions = emptyList()
@@ -174,6 +190,7 @@ class CodeEditorView(
     }
 
     fun restoreState(state: EditorSessionState) {
+        transientHighlight = null
         filePath = state.path
         mime = state.mime
         language = state.language
@@ -201,6 +218,7 @@ class CodeEditorView(
     }
 
     fun loadVirtualContent(label: String, content: String, language: String? = null) {
+        transientHighlight = null
         filePath = label
         mime = "text/plain"
         this.language = language
@@ -229,6 +247,7 @@ class CodeEditorView(
         grammarAvailable: Boolean = false,
         grammarLanguage: String? = null
     ) {
+        transientHighlight = null
         val requestId = fileLoadSequence.incrementAndGet()
         pendingFileLoad.set(null)
         filePath = path
@@ -451,7 +470,9 @@ class CodeEditorView(
                 }
                 val highlights = searchTokensByLine[lineNumber]?.mapNotNull {
                     trimVisualHighlightToChunk(it, visualLine, wrapped.startColumn, wrapped.endColumn)
-                } ?: emptyList()
+                }.orEmpty() + transientHighlightToken(lineNumber, lineText).orEmpty().mapNotNull {
+                    trimVisualHighlightToChunk(it, visualLine, wrapped.startColumn, wrapped.endColumn)
+                }
                 val hoveredUsageRange = hoveredUsage?.takeIf { it.line == lineNumber }?.let { hu ->
                     val start = maxOf(hu.startColumn, wrapped.startColumn)
                     val end = minOf(hu.endColumn, wrapped.endColumn)
@@ -1636,6 +1657,21 @@ class CodeEditorView(
     private fun computeGutterWidth(): Int {
         val digits = buffer.totalLines().coerceAtLeast(1).toString().length
         return (digits + 2).coerceAtMost(12) // number + space; cap to avoid overrun
+    }
+
+    private fun transientHighlightToken(line: Int, lineText: String): List<FoundToken>? {
+        val range = transientHighlight ?: return null
+        val start = when {
+            line < range.start.line || line > range.end.line -> return emptyList()
+            line == range.start.line -> range.start.column
+            else -> 0
+        }
+        val end = when {
+            line == range.end.line -> range.end.column
+            else -> lineText.length
+        }.coerceIn(start, lineText.length)
+        if (end <= start) return emptyList()
+        return listOf(FoundToken(line, start, end, active = true))
     }
 
     private fun grammarLabel(): String {

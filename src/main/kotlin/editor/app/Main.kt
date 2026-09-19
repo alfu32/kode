@@ -43,6 +43,7 @@ import editor.database.query.SqlExecutionError
 import editor.database.query.SqlExecutionRequest
 import editor.database.query.SqlExecutionResult
 import editor.database.query.SqlStatementLocator
+import editor.database.query.LocatedSqlStatement
 import editor.database.ui.DatabasePanelView
 import editor.database.ui.DatabaseConnectionDialog
 import editor.database.ui.JdbcDriverDownloadDialog
@@ -1121,7 +1122,7 @@ private class SplitPanelsApp(
     private var driverDownloadDialog: JdbcDriverDownloadDialog? = null
     private var saveSessionDialog: SqlSessionSaveDialog? = null
     private var statementMenu: SqlStatementMenu? = null
-    private enum class SqlToolbarAction { SAVE, COMMIT, ROLLBACK, AUTOCOMMIT, CANCEL }
+    private enum class SqlToolbarAction { EXECUTE, SAVE, COMMIT, ROLLBACK, AUTOCOMMIT, CANCEL }
     private data class SqlToolbarHit(val range: IntRange, val action: SqlToolbarAction)
     private var sqlToolbarHits: List<SqlToolbarHit> = emptyList()
     private val rescanCancelRequested = AtomicBoolean(false)
@@ -1806,11 +1807,7 @@ private class SplitPanelsApp(
         val sql = if (all) {
             console.buffer.trim()
         } else {
-            sqlStatementLocator.locate(
-                text = console.buffer,
-                cursor = codeEditor.currentCursorPosition(),
-                selection = codeEditor.currentSelectionText()
-            ).sql
+            locateActiveSqlStatement(console.buffer)?.sql.orEmpty()
         }
         if (sql.isBlank()) return
         if (databaseService.status(console.dataSourceId).state != ConnectionState.CONNECTED) {
@@ -1823,6 +1820,56 @@ private class SplitPanelsApp(
             return
         }
         executeSqlInBackground(console.id, sql)
+    }
+
+    private fun locateActiveSqlStatement(text: String): LocatedSqlStatement? {
+        val selection = codeEditor.currentSelectionRange()
+        val selectedText = codeEditor.currentSelectionText()
+        if (selection != null && !selectedText.isNullOrBlank()) {
+            val start = sqlOffsetFor(text, selection.start)
+            val end = sqlOffsetFor(text, selection.end).coerceAtLeast(start)
+            return LocatedSqlStatement(selectedText.trim(), start, end)
+        }
+        return sqlStatementLocator.locate(
+            text = text,
+            cursor = codeEditor.currentCursorPosition(),
+            selection = null
+        ).takeIf { it.sql.isNotBlank() }
+    }
+
+    private fun sqlOffsetFor(text: String, position: editor.lib.Position): Int {
+        var offset = 0
+        var line = 0
+        while (line < position.line && offset < text.length) {
+            val next = text.indexOf('\n', offset)
+            if (next < 0) return text.length
+            offset = next + 1
+            line++
+        }
+        return (offset + position.column).coerceIn(0, text.length)
+    }
+
+    private fun sqlPositionAt(text: String, offset: Int): editor.lib.Position {
+        val safe = offset.coerceIn(0, text.length)
+        val line = text.substring(0, safe).count { it == '\n' }
+        val lineStart = text.lastIndexOf('\n', safe - 1).let { if (it < 0) 0 else it + 1 }
+        return editor.lib.Position(line, safe - lineStart)
+    }
+
+    private fun updateSqlExecutionPreview(hovered: Boolean) {
+        if (!hovered || activeSqlConsoleId == null) {
+            codeEditor.setTransientHighlight(null)
+            return
+        }
+        val text = codeEditor.textContent()
+        val located = locateActiveSqlStatement(text)
+        val range = located?.let {
+            editor.lib.SelectionRange(
+                sqlPositionAt(text, it.startOffset),
+                sqlPositionAt(text, it.endOffset)
+            )
+        }
+        codeEditor.setTransientHighlight(range)
     }
 
     private fun executeSqlInBackground(consoleId: String, sql: String) {
@@ -2553,10 +2600,19 @@ private class SplitPanelsApp(
         val editorHeight = (remainingRows - resultHeight - 1).coerceAtLeast(1)
         if (event.kind.startsWith("mouse")) {
             val y = event.y ?: return false
+            if (event.kind == "mouse_move") {
+                val x = event.x ?: -1
+                val hoveredExecute = y == 0 && sqlToolbarHits.any { hit ->
+                    hit.action == SqlToolbarAction.EXECUTE && x in hit.range
+                }
+                updateSqlExecutionPreview(hoveredExecute)
+                if (y < toolbarHeight) return true
+            }
             if (event.kind == "mouse_down" && y == 0) {
                 val x = event.x ?: return true
                 sqlToolbarHits.firstOrNull { x in it.range }?.let { hit ->
                     when (hit.action) {
+                        SqlToolbarAction.EXECUTE -> executeActiveSqlConsole(all = false)
                         SqlToolbarAction.SAVE -> showSaveSessionDialog()
                         SqlToolbarAction.COMMIT -> runActiveSqlControl("Commit") { id -> databaseService.commit(id) }
                         SqlToolbarAction.ROLLBACK -> runActiveSqlControl("Rollback") { id -> databaseService.rollback(id) }
@@ -2633,6 +2689,7 @@ private class SplitPanelsApp(
         val base = styleSheet.getStyle("content").withDefaults()
         val button = styleSheet.getStyle("lsp-button").withDefaults(base.fg, base.bg)
         val labels = listOf(
+            " [execute] " to SqlToolbarAction.EXECUTE,
             " [save] " to SqlToolbarAction.SAVE,
             " [commit] " to SqlToolbarAction.COMMIT,
             " [rollback] " to SqlToolbarAction.ROLLBACK,

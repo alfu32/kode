@@ -80,6 +80,9 @@ class RestHttpTest {
                 listOf(
                     editor.rest.resolve.ResolvedHeader("Connection", "keep-alive"),
                     editor.rest.resolve.ResolvedHeader("Host", "example.invalid"),
+                    editor.rest.resolve.ResolvedHeader("Content-Length", "999"),
+                    editor.rest.resolve.ResolvedHeader("Expect", "100-continue"),
+                    editor.rest.resolve.ResolvedHeader("Upgrade", "websocket"),
                     editor.rest.resolve.ResolvedHeader("X-Test", "accepted")
                 )
             )

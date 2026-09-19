@@ -138,14 +138,28 @@ class RestHttpExecutor(
         } else {
             builder.method(request.method, HttpRequest.BodyPublishers.ofByteArray(body))
         }
+        if (request.headers.any { header ->
+                header.name.equals("Expect", true) &&
+                    header.value.split(',').any { it.trim().equals("100-continue", true) }
+            }) {
+            builder.expectContinue(true)
+        }
         request.headers.forEach { header ->
-            // Java's HttpClient owns transport-level headers. Passing these
-            // through builder.header() either changes the wire semantics or
-            // throws (notably for Connection and Host). The request model can
-            // still retain them for editing and export, but execution must let
-            // the client manage them.
-            if (!isClientManagedHeader(header.name)) {
-                builder.header(header.name, header.value)
+            when (header.name.trim().lowercase()) {
+                // The body publisher owns the correct byte count.
+                "content-length" -> Unit
+                // java.net.http derives Host/:authority from the URI. It has no
+                // safe per-request Host override API; the global restricted-
+                // header switch is intentionally not enabled by the editor.
+                "host" -> Unit
+                // Upgrade requires the WebSocket API (or a lower-level client),
+                // so it cannot be expressed by HttpRequest.Builder.
+                "upgrade" -> Unit
+                // Connection and Expect are applied through the request/client
+                // builder APIs below, because header() rejects both headers.
+                "connection", "expect", "keep-alive", "proxy-connection",
+                "te", "trailer", "transfer-encoding" -> Unit
+                else -> builder.header(header.name, header.value)
             }
         }
         if (request.headers.none { it.name.equals("Cookie", true) }) {
@@ -158,6 +172,12 @@ class RestHttpExecutor(
         val builder = HttpClient.newBuilder()
             .connectTimeout(Duration.ofMillis(request.timeoutMs.coerceAtLeast(1)))
             .followRedirects(if (request.followRedirects) HttpClient.Redirect.NORMAL else HttpClient.Redirect.NEVER)
+        val connectionHeader = request.headers.firstOrNull { it.name.equals("Connection", true) }
+        if (connectionHeader != null) {
+            // Connection is an HTTP/1.1 hop-by-hop header. HTTP/2 forbids it,
+            // while HTTP/1.1 keep-alive is the client's normal behavior.
+            builder.version(HttpClient.Version.HTTP_1_1)
+        }
         if (!request.sslValidation) {
             val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
                 override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = emptyArray()
@@ -230,25 +250,9 @@ class RestHttpExecutor(
 
     private fun statusText(code: Int): String = STATUS_TEXT[code].orEmpty()
 
-    private fun isClientManagedHeader(name: String): Boolean =
-        name.trim().lowercase() in CLIENT_MANAGED_HEADERS
-
     private data class CapturedBody(val bytes: ByteArray, val receivedBytes: Long, val truncated: Boolean)
 
     companion object {
-        private val CLIENT_MANAGED_HEADERS = setOf(
-            "connection",
-            "content-length",
-            "expect",
-            "host",
-            "keep-alive",
-            "proxy-connection",
-            "te",
-            "trailer",
-            "transfer-encoding",
-            "upgrade"
-        )
-
         private val STATUS_TEXT = mapOf(
             200 to "OK", 201 to "Created", 202 to "Accepted", 204 to "No Content",
             301 to "Moved Permanently", 302 to "Found", 304 to "Not Modified",

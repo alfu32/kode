@@ -38,7 +38,7 @@ class SqlStatementMenu(
         canvas.withStyle(panel) {
             drawText(x + 2, y + 1, "Execute SQL".take(width - 4))
         }
-        val a = " Execute statement "
+        val a = " Execute "
         val b = " Execute entire script "
         statementRange = (x + 2) until (x + 2 + a.length)
         scriptRange = (x + 2) until (x + 2 + b.length)
