@@ -31,6 +31,18 @@ import editor.ui.ProjectSettingsView
 import editor.ui.SourceFolderPickerDialog
 import editor.ui.RescanProgress
 import editor.ui.RescanProgressDialog
+import editor.database.JdbcDatabaseService
+import editor.database.console.SqlConsoleManager
+import editor.database.model.ConnectionState
+import editor.database.model.DataSourceDefinition
+import editor.database.model.DatabaseObject
+import editor.database.model.DatabaseObjectType
+import editor.database.query.SqlExecutionError
+import editor.database.query.SqlExecutionRequest
+import editor.database.query.SqlExecutionResult
+import editor.database.query.SqlStatementLocator
+import editor.database.ui.DatabasePanelView
+import editor.database.ui.SqlResultPanel
 import editor.db.DbServerManager
 import editor.db.DbStatus
 import editor.codeintel.DbCodeIntelStore
@@ -943,6 +955,10 @@ private class SplitPanelsApp(
     private val lspManager = LspManager()
     private val lspService = LspService(lspManager, projectRoot)
     private val dbManager = DbServerManager()
+    private val databaseService = JdbcDatabaseService()
+    private val sqlConsoleManager = SqlConsoleManager()
+    private val sqlStatementLocator = SqlStatementLocator()
+    private val sqlResultPanel = SqlResultPanel(styleSheet)
     private val codeIntelStore = DbCodeIntelStore { dbManager.jdbcUrl() }
     private val codeIntelIndexer = CodeIntelService(store = codeIntelStore)
     private val renderDirty = AtomicBoolean(true)
@@ -977,6 +993,14 @@ private class SplitPanelsApp(
         gitServiceState.service,
         gitServiceState.error,
         onShowDiff = { showDiffInMain(it) }
+    )
+    private val databasePanel = DatabasePanelView(
+        styleSheet,
+        databaseService,
+        databaseService.driverRegistry,
+        onOpenConsole = { openSqlConsole(it) },
+        onInspectObject = { ds, obj -> inspectDatabaseObject(ds, obj) },
+        onInvalidate = { renderDirty.set(true) }
     )
     private val aboutView = AboutView(styleSheet, buildVersion)
     private val projectSearchDialog = ProjectSearchDialog(
@@ -1045,6 +1069,7 @@ private class SplitPanelsApp(
     private var sourcePickerVisible = false
     private var sourcePicker: SourceFolderPickerDialog? = null
     private var rescanVisible = false
+    private var activeSqlConsoleId: String? = null
     private val rescanCancelRequested = AtomicBoolean(false)
     private val rescanStatus = AtomicReference(RescanProgress("Rescan: preparing", "", done = false))
     private var activeDiff: GitDiff? = null
@@ -1088,11 +1113,12 @@ private class SplitPanelsApp(
     }
     private val leftTabs = TabView(
         styleSheet = styleSheet,
-        titles = listOf("Files", "Project", "Git", "About", "Settings", "Help"),
+        titles = listOf("Files", "Project", "Git", "Database", "About", "Settings", "Help"),
         tabComponents = listOf(
             filesTabView,
             projectSettingsView,
             gitPanel,
+            databasePanel,
             aboutView,
             settingsView,
             helpView
@@ -1211,6 +1237,28 @@ private class SplitPanelsApp(
                 openShell()
                 return true
             }
+            if (key != null && activeSqlConsoleId != null) {
+                if (key.equals("Esc", ignoreCase = true)) {
+                    cancelActiveSqlConsole()
+                    return true
+                }
+                if (event.ctrl && event.alt && key.equals("a", ignoreCase = true)) {
+                    toggleActiveSqlAutoCommit()
+                    return true
+                }
+                if (event.ctrl && event.alt && key.equals("c", ignoreCase = true)) {
+                    runActiveSqlControl("Commit") { id -> databaseService.commit(id) }
+                    return true
+                }
+                if (event.ctrl && event.alt && key.equals("r", ignoreCase = true)) {
+                    runActiveSqlControl("Rollback") { id -> databaseService.rollback(id) }
+                    return true
+                }
+            }
+            if (key != null && event.ctrl && key.equals("Enter", ignoreCase = true) && activeSqlConsoleId != null) {
+                executeActiveSqlConsole(all = event.shift)
+                return true
+            }
         }
 
         if (event.kind.startsWith("mouse") && lastRows > 0) {
@@ -1315,7 +1363,7 @@ private class SplitPanelsApp(
         if (event.kind == "key_down") {
             val handled = when (focus) {
                 FocusTarget.FILES -> leftTabs.dispatch(event)
-                FocusTarget.CODE -> codeEditor.dispatch(event)
+                FocusTarget.CODE -> if (activeSqlConsoleId != null) dispatchToSqlConsole(event) else codeEditor.dispatch(event)
                 FocusTarget.HEX -> hexViewer.dispatch(event)
                 FocusTarget.IMAGE -> imageViewer.dispatch(event)
                 FocusTarget.DIFF -> diffViewer.dispatch(event)
@@ -1348,6 +1396,8 @@ private class SplitPanelsApp(
 
     private fun openInViewer(path: String, detected: MimeTypeResult) {
         saveCurrentEditorState()
+        activeSqlConsoleId = null
+        codeEditor.setReadOnly(false)
         clearDiffViewer()
         when (detected.mimeTypeCategory) {
             MimeTypeCategory.IMAGE -> {
@@ -1408,6 +1458,161 @@ private class SplitPanelsApp(
         renderer.enableMouseTracking()
         renderer.hideCursor()
         renderer.invalidateDiffBuffer()
+    }
+
+    private fun openSqlConsole(dataSource: DataSourceDefinition) {
+        saveCurrentEditorState()
+        clearDiffViewer()
+        val console = sqlConsoleManager.create(dataSource.id, dataSource.name)
+        console.autoCommit = dataSource.autoCommit
+        activeSqlConsoleId = console.id
+        codeEditor.setReadOnly(false)
+        codeEditor.loadVirtualContent(console.title, console.buffer, language = "sql")
+        sqlResultPanel.clear()
+        rightFocus = FocusTarget.CODE
+        focus = rightFocus
+        currentOpenPath = console.title
+        renderDirty.set(true)
+    }
+
+    private fun inspectDatabaseObject(dataSource: DataSourceDefinition, obj: DatabaseObject) {
+        saveCurrentEditorState()
+        clearDiffViewer()
+        activeSqlConsoleId = null
+        val content = buildString {
+            appendLine(obj.qualifiedName)
+            appendLine()
+            appendLine("Type: ${obj.objectType}")
+            obj.catalog?.let { appendLine("Catalog: $it") }
+            obj.schema?.let { appendLine("Schema: $it") }
+            appendLine("Data source: ${dataSource.name}")
+            appendLine()
+            if (obj.attributes.isNotEmpty()) {
+                appendLine("Attributes")
+                appendLine("----------")
+                obj.attributes.forEach { (key, value) -> appendLine("$key: $value") }
+            }
+            if (obj.objectType == DatabaseObjectType.TABLE || obj.objectType == DatabaseObjectType.VIEW) {
+                appendLine()
+                appendLine("DDL unavailable for this driver.")
+                appendLine()
+                appendLine("Use Select Rows from a future context action, or open a SQL console and run:")
+                appendLine("SELECT *")
+                appendLine("FROM ${obj.qualifiedName};")
+            }
+        }
+        codeEditor.loadVirtualContent("db@${dataSource.name}:${obj.name}", content, language = "sql")
+        codeEditor.setReadOnly(true)
+        rightFocus = FocusTarget.CODE
+        focus = rightFocus
+        currentOpenPath = codeEditor.currentPath()
+        renderDirty.set(true)
+    }
+
+    private fun executeActiveSqlConsole(all: Boolean) {
+        val console = sqlConsoleManager.get(activeSqlConsoleId) ?: return
+        console.buffer = codeEditor.textContent()
+        val sql = if (all) {
+            console.buffer.trim()
+        } else {
+            sqlStatementLocator.locate(
+                text = console.buffer,
+                cursor = codeEditor.currentCursorPosition(),
+                selection = codeEditor.currentSelectionText()
+            ).sql
+        }
+        if (sql.isBlank()) return
+        if (databaseService.status(console.dataSourceId).state != ConnectionState.CONNECTED) {
+            sqlResultPanel.showResult(
+                SqlExecutionResult(
+                    error = SqlExecutionError("Data source is disconnected. Connect it from the Database panel, then execute again.")
+                )
+            )
+            renderDirty.set(true)
+            return
+        }
+        executeSqlInBackground(console.id, sql)
+    }
+
+    private fun executeSqlInBackground(consoleId: String, sql: String) {
+        val console = sqlConsoleManager.get(consoleId) ?: return
+        console.running = true
+        sqlResultPanel.showRunning(console.title)
+        renderDirty.set(true)
+        Thread({
+            val result = databaseService.execute(
+                SqlExecutionRequest(
+                    dataSourceId = console.dataSourceId,
+                    consoleId = console.id,
+                    sql = sql,
+                    catalog = console.catalog,
+                    schema = console.schema
+                )
+            )
+            sqlConsoleManager.recordResult(console.id, sql, result)
+            sqlResultPanel.showResult(result)
+            if (result.success && looksLikeSchemaChange(sql)) {
+                databaseService.refreshAll(console.dataSourceId)
+            }
+            renderDirty.set(true)
+        }, "database-sql-execute").apply { isDaemon = true }.start()
+    }
+
+    private fun cancelActiveSqlConsole() {
+        val console = sqlConsoleManager.get(activeSqlConsoleId) ?: return
+        if (!console.running) return
+        val requested = databaseService.cancelExecution()
+        sqlResultPanel.showMessage(
+            listOf(
+                if (requested) "Cancellation requested." else "No cancellable JDBC statement is currently active.",
+                "The driver may still need time to stop the query."
+            )
+        )
+        renderDirty.set(true)
+    }
+
+    private fun toggleActiveSqlAutoCommit() {
+        val console = sqlConsoleManager.get(activeSqlConsoleId) ?: return
+        val next = !console.autoCommit
+        runActiveSqlControl("Auto Commit ${if (next) "ON" else "OFF"}") { id ->
+            databaseService.setAutoCommit(id, next)
+            console.autoCommit = databaseService.autoCommit(id) ?: next
+        }
+    }
+
+    private fun runActiveSqlControl(label: String, action: (String) -> Unit) {
+        val console = sqlConsoleManager.get(activeSqlConsoleId) ?: return
+        sqlResultPanel.showRunning(label.lowercase(Locale.ROOT))
+        renderDirty.set(true)
+        Thread({
+            runCatching {
+                action(console.dataSourceId)
+            }.onSuccess {
+                if (label == "Commit" || label == "Rollback") {
+                    console.autoCommit = databaseService.autoCommit(console.dataSourceId) ?: console.autoCommit
+                }
+                sqlResultPanel.showMessage(listOf("$label completed."))
+            }.onFailure { ex ->
+                sqlResultPanel.showResult(
+                    SqlExecutionResult(
+                        error = SqlExecutionError(ex.message ?: ex::class.simpleName ?: "$label failed")
+                    )
+                )
+            }
+            renderDirty.set(true)
+        }, "database-sql-control").apply { isDaemon = true }.start()
+    }
+
+    private fun looksLikeSchemaChange(sql: String): Boolean {
+        val first = sql.trimStart()
+            .lineSequence()
+            .firstOrNull { it.trimStart().let { line -> line.isNotBlank() && !line.startsWith("--") } }
+            ?.trimStart()
+            ?.substringBefore(' ')
+            ?.substringBefore('\n')
+            ?.uppercase(Locale.ROOT)
+            ?: return false
+        return first in setOf("CREATE", "ALTER", "DROP", "TRUNCATE", "COMMENT", "RENAME")
     }
 
     private fun showDiffInMain(diff: GitDiff) {
@@ -1513,6 +1718,8 @@ private class SplitPanelsApp(
         savedEditors.clear()
         pendingEditorRestores.clear()
         currentOpenPath = ""
+        activeSqlConsoleId = null
+        sqlResultPanel.clear()
         projectSearchVisible = false
         codeIntelIndexer.clear()
         dbManager.stop()
@@ -1719,6 +1926,18 @@ private class SplitPanelsApp(
     }
 
     override fun statusRight(): String {
+        sqlConsoleManager.get(activeSqlConsoleId)?.let { console ->
+            val ds = databaseService.dataSources().firstOrNull { it.id == console.dataSourceId }
+            val state = databaseService.status(console.dataSourceId).state
+            val stateLabel = when (state) {
+                ConnectionState.CONNECTED -> "up"
+                ConnectionState.CONNECTING -> "connecting"
+                ConnectionState.ERROR -> "err"
+                ConnectionState.DISCONNECTED -> "down"
+            }
+            val tx = if (console.autoCommit) "AUTO" else "TX"
+            return "DB:${ds?.name ?: console.dataSourceId} $stateLabel ${console.schema ?: ""} $tx"
+        }
         val dbStatus = dbManager.status()
         val dbLabel = when (dbStatus.state) {
             DbStatus.State.RUNNING -> "DB:up"
@@ -1747,6 +1966,7 @@ private class SplitPanelsApp(
 
     override fun shutdownApp() {
         cancelCurrentScan()
+        databaseService.close()
         dbManager.stop()
     }
 
@@ -1997,6 +2217,8 @@ private class SplitPanelsApp(
 
     private fun openEditorState(state: EditorSessionState) {
         clearDiffViewer()
+        activeSqlConsoleId = null
+        codeEditor.setReadOnly(false)
         codeEditor.restoreState(state)
         rightFocus = FocusTarget.CODE
         focus = rightFocus
@@ -2007,6 +2229,11 @@ private class SplitPanelsApp(
         val targetFocus = if (focus == FocusTarget.FILES) rightFocus else focus
         if (event.kind == "mouse_down" || event.kind == "mouse_up" || event.kind == "mouse_move") {
             focus = targetFocus
+        }
+        if (activeSqlConsoleId != null && targetFocus == FocusTarget.CODE) {
+            val handled = dispatchToSqlConsole(event)
+            schedulePersist()
+            return handled
         }
         val handled = when (targetFocus) {
             FocusTarget.CODE -> codeEditor.dispatch(event)
@@ -2020,6 +2247,48 @@ private class SplitPanelsApp(
         }
         schedulePersist()
         return handled
+    }
+
+    private fun dispatchToSqlConsole(event: UIEvent): Boolean {
+        val rows = (event.rows ?: rightHeightState).coerceAtLeast(1)
+        val resultHeight = sqlResultHeight(rows)
+        val editorHeight = (rows - resultHeight - 1).coerceAtLeast(1)
+        if (event.kind.startsWith("mouse")) {
+            val y = event.y ?: return false
+            if (y > editorHeight) {
+                val forwarded = event.alterCopy(
+                    UIEvent(
+                        kind = event.kind,
+                        x = event.x,
+                        y = y - editorHeight - 1,
+                        relX = event.relX,
+                        relY = event.relY,
+                        button = event.button,
+                        scrollDelta = event.scrollDelta,
+                        key = event.key,
+                        ctrl = event.ctrl,
+                        alt = event.alt,
+                        shift = event.shift,
+                        meta = event.meta,
+                        focusId = event.focusId,
+                        cols = event.cols,
+                        rows = resultHeight,
+                        raw = event.raw,
+                        timeMs = event.timeMs
+                    )
+                )
+                return sqlResultPanel.dispatch(forwarded)
+            }
+        }
+        if (event.kind == "key_down" && event.alt) {
+            val key = event.key?.lowercase(Locale.ROOT)
+            if (key in setOf("up", "down", "left", "right", "pageup", "pagedown", "home", "tab")) {
+                val forwarded = event.alterCopy(event.copy(rows = resultHeight))
+                return sqlResultPanel.dispatch(forwarded)
+            }
+        }
+        val editorEvent = event.alterCopy(event.copy(rows = editorHeight))
+        return codeEditor.dispatch(editorEvent)
     }
 
     private fun clampWidth(value: Int, cols: Int): Int {
@@ -2116,8 +2385,13 @@ private class SplitPanelsApp(
     }
 
     private fun saveCurrentEditorState() {
+        activeSqlConsoleId?.let { id ->
+            sqlConsoleManager.updateBuffer(id, codeEditor.textContent())
+            return
+        }
         val currentPath = codeEditor.currentPath()
         if (currentPath.isEmpty()) return
+        if (currentPath.startsWith("db@")) return
         val mtime = fileLastModified(currentPath)
         codeEditor.captureState(mtime)?.let { state ->
             val abs = sessionManager.toAbsolute(state.path)
@@ -2174,6 +2448,10 @@ private class SplitPanelsApp(
 
     private fun renderRightPane(canvas: CanvasRenderer, startX: Int, height: Int, width: Int, totalCols: Int, viewer: FocusTarget) {
         if (height <= 0 || width <= 0) return
+        if (viewer == FocusTarget.CODE && activeSqlConsoleId != null) {
+            renderSqlConsolePane(canvas, startX, height, width)
+            return
+        }
         val clipped = ClippedCanvasRenderer(
             base = canvas,
             offsetX = startX,
@@ -2189,6 +2467,22 @@ private class SplitPanelsApp(
             FocusTarget.FILES -> codeEditor.render(clipped)
         }
     }
+
+    private fun renderSqlConsolePane(canvas: CanvasRenderer, startX: Int, height: Int, width: Int) {
+        val resultHeight = sqlResultHeight(height)
+        val editorHeight = (height - resultHeight - 1).coerceAtLeast(1)
+        val editorClip = ClippedCanvasRenderer(canvas, startX, 0, width, editorHeight)
+        codeEditor.render(editorClip)
+        val dividerY = editorHeight
+        canvas.withStyle(styleSheet.getStyle("splitter")) {
+            drawText(startX, dividerY, "-".repeat(width).take(width))
+        }
+        val resultClip = ClippedCanvasRenderer(canvas, startX, dividerY + 1, width, resultHeight)
+        sqlResultPanel.render(resultClip)
+    }
+
+    private fun sqlResultHeight(totalRows: Int): Int =
+        (totalRows / 3).coerceIn(4, (totalRows - 2).coerceAtLeast(1))
 
 }
 

@@ -1659,6 +1659,8 @@ class CodeEditorView(
 
     fun currentSelectionText(): String? = if (buffer.hasSelection()) buffer.selectionText() else null
 
+    fun currentCursorPosition(): Position = buffer.cursorPosition()
+
     private fun openSearch(selectionText: String? = null) {
         searchVisible = true
         searchHasFocus = true
