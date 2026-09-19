@@ -3,6 +3,7 @@ package editor.rest.resolve
 import editor.rest.model.RestNodePath
 import editor.rest.model.array
 import editor.rest.model.items
+import editor.rest.model.isRequestNode
 import editor.rest.model.jsonObject
 import editor.rest.model.nodeAt
 import editor.rest.model.string
@@ -43,6 +44,14 @@ data class RestAuthResolution(
 )
 
 data class ResolvedHeader(val name: String, val value: String)
+
+data class RestHeaderValue(
+    val name: String,
+    val value: String,
+    val source: String,
+    val editable: Boolean,
+    val disabled: Boolean = false
+)
 
 data class ResolvedRequest(
     val path: RestNodePath,
@@ -141,6 +150,27 @@ class RestRequestResolver(
 
     fun resolve(value: String): RestVariableResolution = variables.resolve(value)
 
+    /** Includes the app's x-kode-headers extension on collections/folders and request.header. */
+    fun effectiveHeaders(): List<RestHeaderValue> {
+        val result = mutableListOf<RestHeaderValue>()
+        fun append(node: JsonObject, source: String, editable: Boolean) {
+            val entries = if (node.isRequestNode()) node.jsonObject("request")?.array("header")
+            else node.array("x-kode-headers") ?: node.array("header")
+            entries.orEmpty().mapNotNull { it as? JsonObject }.forEach { header ->
+                val name = header.string("key")?.trim().orEmpty()
+                if (name.isNotBlank()) result += RestHeaderValue(name, header.string("value").orEmpty(), source, editable, header.boolean("disabled"))
+            }
+        }
+        append(collection, "Collection", path.isRoot)
+        var current = collection
+        path.indices.forEachIndexed { index, itemIndex ->
+            current = current.items().getOrNull(itemIndex) as? JsonObject ?: return@forEachIndexed
+            val isCurrent = index == path.indices.lastIndex
+            append(current, current.string("name") ?: if (current.isRequestNode()) "Request" else "Folder", isCurrent)
+        }
+        return result
+    }
+
     fun effectiveAuth(): RestAuthResolution? {
         var result: RestAuthResolution? = null
         var current = collection
@@ -170,7 +200,14 @@ class RestRequestResolver(
         if (uri.scheme?.lowercase(Locale.ROOT) !in setOf("http", "https")) {
             throw RestRequestValidationException("Unsupported URL scheme: ${uri.scheme ?: "missing"}")
         }
-        val headers = readHeaders(request)
+        val headers = effectiveHeaders()
+            .filter { !it.disabled }
+            .fold(linkedMapOf<String, ResolvedHeader>()) { values, header ->
+                values[header.name.lowercase(Locale.ROOT)] = ResolvedHeader(header.name, resolveValue(header.value))
+                values
+            }
+            .values
+            .toMutableList()
         val auth = effectiveAuth()
         val authQuery = applyAuth(headers, auth)
         val body = buildBody(request, headers)
@@ -226,14 +263,6 @@ class RestRequestResolver(
         val path = (url["path"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty().joinToString("/")
         return "$protocol://$host/${path.trimStart('/')}"
     }
-
-    private fun readHeaders(request: JsonObject): MutableList<ResolvedHeader> =
-        (request.array("header") ?: JsonArray(emptyList())).mapNotNullTo(mutableListOf()) { element ->
-            val header = element as? JsonObject ?: return@mapNotNullTo null
-            if (header.boolean("disabled")) return@mapNotNullTo null
-            val name = resolveValue(header.string("key").orEmpty())
-            if (name.isBlank()) null else ResolvedHeader(name, resolveValue(header.string("value").orEmpty()))
-        }
 
     private fun applyAuth(headers: MutableList<ResolvedHeader>, auth: RestAuthResolution?): Pair<String, String>? {
         val definition = auth ?: return null

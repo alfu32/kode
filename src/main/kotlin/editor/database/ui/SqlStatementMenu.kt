@@ -10,7 +10,9 @@ class SqlStatementMenu(
     styleSheet: StyleSheet,
     private val onStatement: () -> Unit,
     private val onScript: () -> Unit,
-    private val onDismiss: () -> Unit
+    private val onDismiss: () -> Unit,
+    private val anchorX: Int? = null,
+    private val anchorY: Int? = null
 ) : BaseComponent(styleSheet) {
     private var x = 0
     private var y = 0
@@ -23,10 +25,11 @@ class SqlStatementMenu(
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        width = minOf(cols - 2, 42).coerceAtLeast(26)
+        width = minOf(cols, 42).coerceAtLeast(1)
         val height = 7.coerceAtMost(rows).coerceAtLeast(5)
-        x = ((cols - width) / 2).coerceAtLeast(0)
-        y = ((rows - height) / 2).coerceAtLeast(0)
+        x = (anchorX ?: (cols - width) / 2).coerceIn(0, (cols - width).coerceAtLeast(0))
+        val below = (anchorY ?: 0) + 1
+        y = if (below + height <= rows) below else ((anchorY ?: rows) - height).coerceAtLeast(0)
         val panel = styleSheet.getStyle("project-search-dialog").withDefaults()
         val border = styleSheet.getStyle("project-search-dialog-border").withDefaults(panel.fg, panel.bg)
         val button = styleSheet.getStyle("lsp-button").withDefaults(panel.fg, panel.bg)

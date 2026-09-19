@@ -36,6 +36,7 @@ dependencies {
     implementation("com.soywiz.korlibs.korio:korio:4.0.10")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation("org.yaml:snakeyaml:2.2")
     implementation("com.h2database:h2:$h2Version")
     implementation("net.java.dev.jna:jna:5.14.0")
     // Tree-sitter bindings and grammars

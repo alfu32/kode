@@ -12,6 +12,8 @@ import editor.rest.model.withField
 import editor.rest.model.withoutField
 import editor.rest.model.withOptionalField
 import editor.rest.resolve.RestRequestResolver
+import editor.grammars.SyntaxProvider
+import editor.ui.CodeEditorView
 import editor.ui.FormFieldRenderer
 import java.nio.file.Path
 import kotlinx.serialization.json.JsonArray
@@ -22,6 +24,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import react.BaseComponent
+import react.ClippedCanvasRenderer
 import react.StyleSet
 import react.StyleSheet
 import react.UIEvent
@@ -38,7 +41,8 @@ class RestEditorView(
     private val onSend: (RestNodePath) -> Unit,
     private val onClearCookies: () -> Unit = {},
     private val onChanged: () -> Unit,
-    private val onInvalidate: () -> Unit = {}
+    private val onInvalidate: () -> Unit = {},
+    private val syntaxProvider: SyntaxProvider? = null
 ) : BaseComponent(styleSheet) {
     private sealed interface Action {
         data object Send : Action
@@ -50,13 +54,13 @@ class RestEditorView(
         data object FocusUrl : Action
         data object FocusBody : Action
         data object AddVariable : Action
-        data object AddHeader : Action
         data object AddQuery : Action
         data object AddBodyEntry : Action
         data class EditVariable(val index: Int) : Action
-        data class EditHeader(val index: Int) : Action
         data class EditQuery(val index: Int) : Action
         data class EditPath(val index: Int) : Action
+        data class RemoveQuery(val index: Int) : Action
+        data class RemovePath(val index: Int) : Action
         data class EditBodyEntry(val index: Int) : Action
         data class ToggleEntry(val kind: String, val index: Int) : Action
         data class Auth(val type: String?) : Action
@@ -69,6 +73,7 @@ class RestEditorView(
         data class OpenRunResult(val path: RestNodePath) : Action
         data class EditAuth(val index: Int) : Action
         data object FocusGraphqlVariables : Action
+        data object TogglePrettyPrint : Action
     }
 
     private data class Hit(val row: Int, val range: IntRange, val action: Action)
@@ -124,6 +129,24 @@ class RestEditorView(
     private var entryIndex: Int = -1
     private var draggingResponse = false
     private var revealSecrets = false
+    private var requestBodyEditorFocused = false
+    private var responseEditorFocused = false
+    private var headersEditorFocused = false
+    private var requestBodyEditorKey: String? = null
+    private var responseEditorKey: String? = null
+    private var headersEditorKey: String? = null
+    private var requestBodyEditorRegion: EditorRegion? = null
+    private var responseEditorRegion: EditorRegion? = null
+    private var headersEditorRegion: EditorRegion? = null
+    private val requestBodyEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
+    private val responseEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
+    private val headersEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
+
+    private data class EditorRegion(val x: Int, val y: Int, val width: Int, val height: Int)
+
+    init {
+        responseEditor.setReadOnly(true)
+    }
 
     fun open(path: RestNodePath) {
         currentPath = path
@@ -132,6 +155,9 @@ class RestEditorView(
         runSummary = null
         running = false
         focused = null
+        requestBodyEditorFocused = false
+        responseEditorFocused = false
+        headersEditorFocused = false
         syncFields()
         tab = if (path.isRoot || model.node(path)?.isRequestNode() != true) RestEditorTab.OVERVIEW else RestEditorTab.PARAMS
         onInvalidate()
@@ -176,6 +202,9 @@ class RestEditorView(
         val button = styleSheet.getStyle("lsp-button").withDefaults(base.fg, base.bg)
         canvas.withStyle(base) { drawRect(0, 0, cols, rows) }
         hits.clear()
+        requestBodyEditorRegion = null
+        responseEditorRegion = null
+        headersEditorRegion = null
         val node = model.node(currentPath)
         if (currentPath.isRoot || node?.isRequestNode() != true) renderNodeEditor(canvas, cols, base, active, node)
         else renderRequestEditor(canvas, cols, rows, base, active, button, node)
@@ -186,7 +215,7 @@ class RestEditorView(
         val title = if (currentPath.isRoot) model.collection.jsonObject("info")?.string("name") ?: "REST API" else node?.string("name") ?: "Folder"
         val kind = if (currentPath.isRoot) "COLLECTION" else "FOLDER"
         drawLine(canvas, base, 0, kind + " | " + title, cols)
-        drawTabs(canvas, cols, base, active, listOf(RestEditorTab.OVERVIEW, RestEditorTab.AUTHORIZATION, RestEditorTab.VARIABLES), 2)
+        drawTabs(canvas, cols, base, active, listOf(RestEditorTab.OVERVIEW, RestEditorTab.AUTHORIZATION, RestEditorTab.HEADERS, RestEditorTab.VARIABLES), 2)
         when (tab) {
             RestEditorTab.OVERVIEW -> {
                 renderLabeledField(canvas, base, 5, "Name", name, cols, Action.FocusName)
@@ -194,6 +223,7 @@ class RestEditorView(
                 drawLine(canvas, base, 8, if (currentPath.isRoot) "Postman Collection Format v2.1.0" else "Folder items: " + (node?.items()?.size ?: 0), cols)
             }
             RestEditorTab.AUTHORIZATION -> renderAuth(canvas, cols, base, currentPath)
+            RestEditorTab.HEADERS -> renderHeaders(canvas, cols, base, styleSheet.getStyle("lsp-button").withDefaults(base.fg, base.bg), canvas.rows())
             RestEditorTab.VARIABLES -> renderVariables(canvas, cols, base, currentPath)
             else -> Unit
         }
@@ -226,8 +256,8 @@ class RestEditorView(
         when (tab) {
             RestEditorTab.PARAMS -> renderParams(canvas, cols, base)
             RestEditorTab.AUTHORIZATION -> renderAuth(canvas, cols, base, currentPath)
-            RestEditorTab.HEADERS -> renderHeaders(canvas, cols, base, button)
-            RestEditorTab.BODY -> renderBody(canvas, cols, base)
+            RestEditorTab.HEADERS -> renderHeaders(canvas, cols, base, button, editorRows)
+            RestEditorTab.BODY -> renderBody(canvas, cols, base, editorRows)
             RestEditorTab.VARIABLES -> renderVariables(canvas, cols, base, currentPath)
             RestEditorTab.SETTINGS -> renderSettings(canvas, cols, base)
             RestEditorTab.RESPONSE -> drawLine(canvas, base, 5, "Response is displayed below.", cols)
@@ -304,13 +334,17 @@ class RestEditorView(
     private fun renderParams(canvas: CanvasRenderer, cols: Int, base: StyleSet) {
         val request = model.node(currentPath)?.jsonObject("request") ?: return
         val urlObject = request["url"] as? JsonObject
-        drawLine(canvas, base, 5, "Query Parameters", cols)
+        drawLine(canvas, base, 5, "Query Parameters  [on] = sent, [off] = disabled", cols)
         val query = urlObject?.array("query").orEmpty().mapNotNull { it as? JsonObject }
         query.forEachIndexed { index, value ->
-            val enabled = if (value.booleanValue("disabled")) "[ ]" else "[x]"
-            drawLine(canvas, base, 6 + index, enabled + " " + value.string("key").orEmpty() + " = " + value.string("value").orEmpty(), cols)
-            hits += Hit(6 + index, 0 until 4, Action.ToggleEntry("query", index))
-            hits += Hit(6 + index, 4 until cols, Action.EditQuery(index))
+            val enabled = if (value.booleanValue("disabled")) "[off]" else "[on]"
+            val remove = " [remove]"
+            val row = 6 + index
+            drawLine(canvas, base, row, enabled + " " + value.string("key").orEmpty() + " = " + value.string("value").orEmpty(), cols)
+            if (cols > remove.length + 8) canvas.withStyle(styleSheet.getStyle("lsp-button").withDefaults(base.fg, base.bg)) { drawText(cols - remove.length, row, remove) }
+            hits += Hit(row, 0 until enabled.length, Action.ToggleEntry("query", index))
+            hits += Hit(row, enabled.length until (cols - remove.length).coerceAtLeast(enabled.length), Action.EditQuery(index))
+            if (cols > remove.length + 8) hits += Hit(row, cols - remove.length until cols, Action.RemoveQuery(index))
         }
         val add = "[+ query]"
         drawLine(canvas, base, 7 + query.size, add, cols)
@@ -318,26 +352,37 @@ class RestEditorView(
         drawLine(canvas, base, 9 + query.size, "Path Variables", cols)
         urlObject?.array("variable").orEmpty().mapNotNull { it as? JsonObject }.forEachIndexed { index, value ->
             val row = 10 + query.size + index
+            val remove = " [remove]"
             drawLine(canvas, base, row, ":" + value.string("key").orEmpty() + " = " + value.string("value").orEmpty(), cols)
-            hits += Hit(row, 0 until cols, Action.EditPath(index))
+            if (cols > remove.length + 8) canvas.withStyle(styleSheet.getStyle("lsp-button").withDefaults(base.fg, base.bg)) { drawText(cols - remove.length, row, remove) }
+            hits += Hit(row, 0 until (cols - remove.length).coerceAtLeast(0), Action.EditPath(index))
+            if (cols > remove.length + 8) hits += Hit(row, cols - remove.length until cols, Action.RemovePath(index))
         }
     }
 
-    private fun renderHeaders(canvas: CanvasRenderer, cols: Int, base: StyleSet, button: StyleSet) {
-        val headers = model.node(currentPath)?.jsonObject("request")?.array("header").orEmpty().mapNotNull { it as? JsonObject }
-        drawLine(canvas, base, 5, "Enabled Header Value Description", cols)
-        headers.forEachIndexed { index, header ->
-            val enabled = if (header.booleanValue("disabled")) "[ ]" else "[x]"
-            drawLine(canvas, base, 6 + index, enabled + " " + header.string("key").orEmpty() + ": " + header.string("value").orEmpty(), cols)
-            hits += Hit(6 + index, 0 until 4, Action.ToggleEntry("header", index))
-            hits += Hit(6 + index, 4 until cols, Action.EditHeader(index))
+    private fun renderHeaders(canvas: CanvasRenderer, cols: Int, base: StyleSet, button: StyleSet, editorRows: Int) {
+        val resolver = RestRequestResolver(model.collection, currentPath, workspaceRoot)
+        val inherited = resolver.effectiveHeaders().filter { !it.editable }
+        val local = resolver.effectiveHeaders().filter { it.editable }
+        drawLine(canvas, base, 5, "Inherited headers (read-only)", cols)
+        inherited.forEachIndexed { index, header ->
+            val state = if (header.disabled) "[off]" else "[on]"
+            drawLine(canvas, base, 6 + index, "$state ${header.name}: ${header.value}  (${header.source})", cols)
         }
-        val y = 7 + headers.size
-        canvas.withStyle(button) { drawText(0, y, "[+ header]") }
-        hits += Hit(y, 0 until 10, Action.AddHeader)
+        val editorTop = 7 + inherited.size
+        drawLine(canvas, base, editorTop, "Local headers (Name: Value, prefix # to disable)", cols)
+        val region = EditorRegion(0, editorTop + 1, cols, (editorRows - editorTop - 1).coerceAtLeast(1))
+        headersEditorRegion = region
+        val source = localHeadersText()
+        val key = currentPath.encode() + "|" + source
+        if (headersEditorKey != key && headersEditor.textContent() != source) {
+            headersEditor.loadVirtualContent("<headers:${currentPath.encode()}>", source, "text")
+        }
+        headersEditorKey = key
+        renderCodeEditor(canvas, headersEditor, region)
     }
 
-    private fun renderBody(canvas: CanvasRenderer, cols: Int, base: StyleSet) {
+    private fun renderBody(canvas: CanvasRenderer, cols: Int, base: StyleSet, editorRows: Int) {
         val body = model.node(currentPath)?.jsonObject("request")?.jsonObject("body")
         val mode = body?.string("mode") ?: "none"
         drawLine(canvas, base, 5, "Body mode: " + mode, cols)
@@ -364,14 +409,16 @@ class RestEditorView(
                 hits += Hit(addRow, 0 until cols, Action.AddBodyEntry)
             }
             "graphql" -> {
-                renderLabeledField(canvas, base, 8, "Query", rawBody, cols, Action.FocusBody)
-                renderLabeledField(canvas, base, 9, "Variables", graphqlVariables, cols, Action.FocusGraphqlVariables)
+                renderRequestBodyCodeEditor(canvas, cols, base, editorRows, body, "GraphQL query", bottomReservedRows = 1)
+                renderLabeledField(canvas, base, (editorRows - 1).coerceAtLeast(8), "Variables", graphqlVariables, cols, Action.FocusGraphqlVariables)
             }
             "file" -> {
                 renderLabeledField(canvas, base, 8, "File", rawBody, cols, Action.FocusBody)
             }
+            "raw" -> renderRequestBodyCodeEditor(canvas, cols, base, editorRows, body, "Raw request body")
             else -> {
-                renderLabeledField(canvas, base, 8, "Raw", rawBody, cols, Action.FocusBody)
+                drawLine(canvas, base, 8, "No request body", cols)
+                requestBodyEditorRegion = null
             }
         }
     }
@@ -385,6 +432,38 @@ class RestEditorView(
         hits += Hit(7, 0 until cols, Action.ToggleSsl)
         drawLine(canvas, base, 9, "[clear cookies]  Cookie jar is runtime state and is not persisted.", cols)
         hits += Hit(9, 0 until 15, Action.ClearCookies)
+    }
+
+    private fun renderRequestBodyCodeEditor(
+        canvas: CanvasRenderer,
+        cols: Int,
+        base: StyleSet,
+        editorRows: Int,
+        body: JsonObject?,
+        title: String,
+        bottomReservedRows: Int = 0
+    ) {
+        val contentType = requestContentType(body)
+        val language = restLanguageForContentType(contentType) ?: body?.jsonObject("options")?.jsonObject("raw")?.string("language")
+        val source = requestBodySource(body)
+        val displayed = restPrettyPrint(source, contentType, model.ui.prettyPrintResponses)
+        drawLine(canvas, base, 7, "$title | ${contentType ?: "text/plain"} | ${language ?: "text"}", cols)
+        val pretty = "[pretty:${if (model.ui.prettyPrintResponses) "on" else "off"}]"
+        if (cols > pretty.length + 2) canvas.withStyle(styleSheet.getStyle("lsp-button").withDefaults(base.fg, base.bg)) { drawText(cols - pretty.length, 7, pretty) }
+        if (cols > pretty.length + 2) hits += Hit(7, cols - pretty.length until cols, Action.TogglePrettyPrint)
+        val region = EditorRegion(0, 8, cols, (editorRows - 8 - bottomReservedRows).coerceAtLeast(1))
+        requestBodyEditorRegion = region
+        val key = currentPath.encode() + "|" + body?.string("mode") + "|" + contentType + "|" + displayed
+        if (requestBodyEditorKey != key && requestBodyEditor.textContent() != displayed) {
+            requestBodyEditor.loadVirtualContent("<request:${currentPath.encode()}>", displayed, language)
+        }
+        requestBodyEditorKey = key
+        renderCodeEditor(canvas, requestBodyEditor, region)
+    }
+
+    private fun renderCodeEditor(canvas: CanvasRenderer, editor: CodeEditorView, region: EditorRegion) {
+        val clipped = ClippedCanvasRenderer(canvas, region.x, region.y, region.width, region.height)
+        editor.render(clipped)
     }
 
     private fun renderResponse(canvas: CanvasRenderer, cols: Int, start: Int, height: Int, base: StyleSet, active: StyleSet) {
@@ -412,6 +491,11 @@ class RestEditorView(
             hits += Hit(start + 1, x until (x + label.length).coerceAtMost(cols), Action.ResponseTab(candidate))
             x += label.length + 1
         }
+        val pretty = "[pretty:${if (model.ui.prettyPrintResponses) "on" else "off"}]"
+        if (cols > pretty.length + 2) {
+            canvas.withStyle(styleSheet.getStyle("lsp-button").withDefaults(base.fg, base.bg)) { drawText(cols - pretty.length, start + 1, pretty) }
+            hits += Hit(start + 1, cols - pretty.length until cols, Action.TogglePrettyPrint)
+        }
         if (result == null) return
         val body = when (responseTab) {
             RestResponseTab.BODY -> responseBody(result)
@@ -419,12 +503,20 @@ class RestEditorView(
             RestResponseTab.COOKIES -> result.cookies.joinToString("\n")
             RestResponseTab.RAW -> "HTTP " + (result.statusCode ?: "ERR") + " " + result.statusText + "\n" + result.headers.joinToString("\n") { it.name + ": " + it.value } + "\n\n" + result.bodyText
         }
-        body.lines().take((height - 3).coerceAtLeast(0)).forEachIndexed { index, line -> drawLine(canvas, base, start + 3 + index, line, cols) }
+        val language = restLanguageForContentType(result.contentType)
+        val displayed = restPrettyPrint(body, result.contentType, model.ui.prettyPrintResponses && responseTab == RestResponseTab.BODY)
+        val region = EditorRegion(0, start + 2, cols, (height - 2).coerceAtLeast(1))
+        responseEditorRegion = region
+        val key = result.startedAt.toString() + "|" + responseTab.name + "|" + model.ui.prettyPrintResponses + "|" + displayed
+        if (responseEditorKey != key && responseEditor.textContent() != displayed) {
+            responseEditor.loadVirtualContent("<response:${responseTab.name.lowercase()}>", displayed, language)
+        }
+        responseEditorKey = key
+        renderCodeEditor(canvas, responseEditor, region)
     }
 
     private fun responseBody(result: RestResponse): String {
         if (result.truncated) return "Response body truncated for display. Received: " + result.receivedBytes + " bytes\n\n" + result.bodyText
-        if (result.contentType.orEmpty().contains("json", true)) return runCatching { kotlinx.serialization.json.Json { prettyPrint = true }.parseToJsonElement(result.bodyText).toString() }.getOrDefault(result.bodyText)
         if (result.contentType.orEmpty().startsWith("image/") || result.contentType.orEmpty().contains("octet-stream")) return "Binary response\nContent-Type: " + result.contentType + "\nSize: " + result.receivedBytes + " bytes"
         return result.bodyText
     }
@@ -463,6 +555,31 @@ class RestEditorView(
             onInvalidate()
             return handled
         }
+        if (event.kind == "mouse_down" || event.kind == "mouse_scroll") {
+            when {
+                regionContains(requestBodyEditorRegion, event) -> {
+                    requestBodyEditorFocused = true
+                    responseEditorFocused = false
+                    headersEditorFocused = false
+                    focused = null
+                    return dispatchEditor(requestBodyEditor, requestBodyEditorRegion!!, event)
+                }
+                regionContains(headersEditorRegion, event) -> {
+                    headersEditorFocused = true
+                    requestBodyEditorFocused = false
+                    responseEditorFocused = false
+                    focused = null
+                    return dispatchEditor(headersEditor, headersEditorRegion!!, event)
+                }
+                regionContains(responseEditorRegion, event) -> {
+                    responseEditorFocused = true
+                    requestBodyEditorFocused = false
+                    headersEditorFocused = false
+                    focused = null
+                    return dispatchEditor(responseEditor, responseEditorRegion!!, event)
+                }
+            }
+        }
         if (event.kind == "mouse_down") {
             val x = event.x ?: return true
             val y = event.y ?: return true
@@ -498,6 +615,15 @@ class RestEditorView(
             onSend(currentPath)
             return true
         }
+        if (requestBodyEditorFocused && requestBodyEditorRegion != null && tab == RestEditorTab.BODY) {
+            return dispatchEditor(requestBodyEditor, requestBodyEditorRegion!!, event)
+        }
+        if (headersEditorFocused && headersEditorRegion != null && tab == RestEditorTab.HEADERS) {
+            return dispatchEditor(headersEditor, headersEditorRegion!!, event)
+        }
+        if (responseEditorFocused && responseEditorRegion != null) {
+            return dispatchEditor(responseEditor, responseEditorRegion!!, event)
+        }
         if (key == "tab") {
             tab = nextTab()
             onInvalidate()
@@ -516,6 +642,9 @@ class RestEditorView(
     }
 
     private fun activate(action: Action) {
+        requestBodyEditorFocused = false
+        responseEditorFocused = false
+        headersEditorFocused = false
         when (action) {
             Action.Send -> if (!running) onSend(currentPath)
             is Action.Tab -> { tab = action.tab; focused = null }
@@ -527,13 +656,13 @@ class RestEditorView(
             Action.FocusBody -> focused = rawBody
             Action.FocusGraphqlVariables -> focused = graphqlVariables
             Action.AddVariable -> addVariable()
-            Action.AddHeader -> addHeader()
             Action.AddQuery -> addQuery()
             Action.AddBodyEntry -> addBodyEntry()
             is Action.EditVariable -> openEntryDialog("Edit variable", "variable", action.index)
-            is Action.EditHeader -> openEntryDialog("Edit header", "header", action.index)
             is Action.EditQuery -> openEntryDialog("Edit query parameter", "query", action.index)
             is Action.EditPath -> openEntryDialog("Edit path variable", "path", action.index)
+            is Action.RemoveQuery -> removeQuery(action.index)
+            is Action.RemovePath -> removePath(action.index)
             is Action.EditBodyEntry -> openEntryDialog("Edit body field", if (bodyMode() == "formdata") "formdata" else "urlencoded", action.index)
             is Action.EditAuth -> openEntryDialog("Edit auth value", "auth", action.index)
             is Action.ToggleEntry -> toggleEntry(action.kind, action.index)
@@ -544,6 +673,7 @@ class RestEditorView(
             Action.ClearCookies -> onClearCookies()
             Action.RevealSecrets -> revealSecrets = !revealSecrets
             Action.FocusTimeout -> focused = timeout
+            Action.TogglePrettyPrint -> model.setPrettyPrintResponses(!model.ui.prettyPrintResponses)
             is Action.OpenRunResult -> {
                 currentPath = action.path
                 model.select(action.path)
@@ -571,6 +701,112 @@ class RestEditorView(
         val innerWidth = range.count().coerceAtLeast(1)
         val windowStart = (field.cursor - innerWidth + 1).coerceAtLeast(0)
         field.cursor = (windowStart + (x - range.first)).coerceIn(0, field.value.length)
+    }
+
+    private fun requestContentType(body: JsonObject?): String? {
+        val header = RestRequestResolver(model.collection, currentPath, workspaceRoot)
+            .effectiveHeaders()
+            .lastOrNull { it.name.equals("Content-Type", true) && !it.disabled }
+            ?.value
+        return header ?: body?.jsonObject("options")?.jsonObject("raw")?.string("language")?.let {
+            when (it.lowercase()) {
+                "json" -> "application/json"
+                "xml" -> "application/xml"
+                "html" -> "text/html"
+                "javascript", "js" -> "application/javascript"
+                "yaml", "yml" -> "application/yaml"
+                else -> null
+            }
+        }
+    }
+
+    private fun requestBodySource(body: JsonObject?): String = when (body?.string("mode")) {
+        "graphql" -> body.jsonObject("graphql")?.string("query").orEmpty()
+        "file" -> body.jsonObject("file")?.string("src").orEmpty()
+        else -> body?.string("raw").orEmpty()
+    }
+
+    private fun localHeadersText(): String {
+        val node = model.node(currentPath) ?: model.collection
+        val headers = if (node.isRequestNode()) node.jsonObject("request")?.array("header") else node.array("x-kode-headers")
+        return headers.orEmpty().mapNotNull { it as? JsonObject }.joinToString("\n") { header ->
+            val prefix = if (header.booleanValue("disabled")) "# " else ""
+            prefix + header.string("key").orEmpty() + ": " + header.string("value").orEmpty()
+        }
+    }
+
+    private fun saveHeadersText(text: String) {
+        val entries = text.lines().mapNotNull { line ->
+            val trimmed = line.trim()
+            if (trimmed.isBlank()) return@mapNotNull null
+            val disabled = trimmed.startsWith("#")
+            val valueLine = trimmed.removePrefix("#").trim()
+            val separator = valueLine.indexOf(':')
+            if (separator <= 0) return@mapNotNull null
+            val key = valueLine.substring(0, separator).trim()
+            if (key.isBlank()) return@mapNotNull null
+            buildJsonObject {
+                put("key", key)
+                put("value", valueLine.substring(separator + 1).trim())
+                if (disabled) put("disabled", true)
+            }
+        }
+        val node = model.node(currentPath) ?: model.collection
+        if (node.isRequestNode()) {
+            model.updateNode(currentPath) { item ->
+                val request = item.jsonObject("request") ?: return@updateNode item
+                item.withField("request", request.withField("header", JsonArray(entries)))
+            }
+        } else if (currentPath.isRoot) {
+            model.updateCollection { it.withField("x-kode-headers", JsonArray(entries)) }
+        } else {
+            model.updateNode(currentPath) { it.withField("x-kode-headers", JsonArray(entries)) }
+        }
+    }
+
+    private fun regionContains(region: EditorRegion?, event: UIEvent): Boolean {
+        val x = event.x ?: return false
+        val y = event.y ?: return false
+        return region != null && x in region.x until (region.x + region.width) && y in region.y until (region.y + region.height)
+    }
+
+    private fun dispatchEditor(editor: CodeEditorView, region: EditorRegion, event: UIEvent): Boolean {
+        val local = event.alterCopy(UIEvent(
+            kind = event.kind,
+            x = event.x?.minus(region.x),
+            y = event.y?.minus(region.y),
+            cols = region.width,
+            rows = region.height
+        ))
+        val before = editor.textContent()
+        val handled = editor.dispatch(local)
+        val after = editor.textContent()
+        if (editor === requestBodyEditor && before != after) saveRequestBody(after)
+        if (editor === headersEditor && before != after) {
+            saveHeadersText(after)
+            headersEditorKey = null
+        }
+        if (before != after) onChanged()
+        onInvalidate()
+        return handled
+    }
+
+    private fun saveRequestBody(text: String) {
+        val body = model.node(currentPath)?.jsonObject("request")?.jsonObject("body") ?: return
+        val mode = body.string("mode") ?: "raw"
+        model.updateNode(currentPath) { item ->
+            val request = item.jsonObject("request") ?: return@updateNode item
+            val currentBody = request.jsonObject("body") ?: return@updateNode item
+            val updatedBody = when (mode) {
+                "graphql" -> {
+                    val graphql = currentBody.jsonObject("graphql") ?: buildJsonObject {}
+                    currentBody.withField("graphql", graphql.withField("query", JsonPrimitive(text)))
+                }
+                else -> currentBody.withField("raw", JsonPrimitive(text))
+            }
+            item.withField("request", request.withField("body", updatedBody))
+        }
+        requestBodyEditorKey = null
     }
 
     private fun nextTab(): RestEditorTab {
@@ -667,6 +903,29 @@ class RestEditorView(
         values += buildJsonObject { put("key", "parameter"); put("value", "") }
         val updatedUrl = urlObject.withField("query", JsonArray(values)).withField("raw", JsonPrimitive(rawWithQuery(urlObject.string("raw").orEmpty(), values)))
         model.updateNode(currentPath) { it.withField("request", request.withField("url", updatedUrl)) }
+        onChanged()
+    }
+
+    private fun removeQuery(index: Int) {
+        val item = model.node(currentPath) ?: return
+        val request = item.jsonObject("request") ?: return
+        val urlObject = request["url"] as? JsonObject ?: return
+        val values = urlObject.array("query").orEmpty().toMutableList()
+        if (index !in values.indices) return
+        values.removeAt(index)
+        val updatedUrl = urlObject.withField("query", JsonArray(values)).withField("raw", JsonPrimitive(rawWithQuery(urlObject.string("raw").orEmpty(), values)))
+        model.updateNode(currentPath) { it.withField("request", request.withField("url", updatedUrl)) }
+        onChanged()
+    }
+
+    private fun removePath(index: Int) {
+        val item = model.node(currentPath) ?: return
+        val request = item.jsonObject("request") ?: return
+        val urlObject = request["url"] as? JsonObject ?: return
+        val values = urlObject.array("variable").orEmpty().toMutableList()
+        if (index !in values.indices) return
+        values.removeAt(index)
+        model.updateNode(currentPath) { it.withField("request", request.withField("url", urlObject.withField("variable", JsonArray(values)))) }
         onChanged()
     }
 

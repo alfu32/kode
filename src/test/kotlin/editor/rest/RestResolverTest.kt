@@ -112,6 +112,32 @@ class RestResolverTest {
         }
     }
 
+    @Test
+    fun inheritsCollectionAndFolderHeadersAndLetsRequestOverrideThem() {
+        val request = buildJsonObject {
+            put("name", "Headers")
+            put("request", buildJsonObject {
+                put("method", "GET")
+                put("header", buildJsonArray { add(variable("X-Request", "request")); add(variable("X-Shared", "request")) })
+                put("url", "https://example.test")
+            })
+        }
+        val folder = buildJsonObject {
+            put("name", "v1")
+            put("x-kode-headers", buildJsonArray { add(variable("X-Folder", "folder")); add(variable("X-Shared", "folder")) })
+            put("item", buildJsonArray { add(request) })
+        }
+        val collection = buildJsonObject {
+            put("info", buildJsonObject { put("name", "API") })
+            put("x-kode-headers", buildJsonArray { add(variable("X-Collection", "collection")); add(variable("X-Shared", "collection")) })
+            put("item", buildJsonArray { add(folder) })
+        }
+        val resolved = RestRequestResolver(collection, RestNodePath(listOf(0, 0)), kotlin.io.path.createTempDirectory("rest-root")).materialize()
+        assertEquals("collection", resolved.headers.first { it.name == "X-Collection" }.value)
+        assertEquals("folder", resolved.headers.first { it.name == "X-Folder" }.value)
+        assertEquals("request", resolved.headers.first { it.name == "X-Shared" }.value)
+    }
+
     private fun variable(key: String, value: String, disabled: Boolean = false) = buildJsonObject {
         put("key", key)
         put("value", value)

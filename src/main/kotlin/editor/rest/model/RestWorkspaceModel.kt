@@ -37,6 +37,11 @@ class RestWorkspaceModel(
         onChanged?.invoke()
     }
 
+    fun setPrettyPrintResponses(enabled: Boolean) {
+        ui = ui.copy(prettyPrintResponses = enabled)
+        onChanged?.invoke()
+    }
+
     fun collectionName(): String = collection.infoName()
 
     fun node(path: RestNodePath): JsonObject? = collection.nodeAt(path)
@@ -133,6 +138,20 @@ class RestWorkspaceModel(
         collection = parsed
         select(RestNodePath())
         onChanged?.invoke()
+    }
+
+    fun importOpenApi(file: Path, parent: RestNodePath = RestNodePath()): Result<Int> = runCatching {
+        val target = collection.nodeAt(parent) ?: error("Import target does not exist")
+        require(parent.isRoot || target.isFolderNode()) { "OpenAPI can only be imported into a collection or folder" }
+        val imported = RestOpenApiImporter.read(file)
+        var updated = collection
+        var index = target.items().size
+        imported.forEach { item ->
+            updated = updated.insertAt(parent, index++, item)
+        }
+        collection = updated
+        onChanged?.invoke()
+        imported.size
     }
 
     fun exportCollection(file: Path): Result<Unit> = runCatching {

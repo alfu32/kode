@@ -6,6 +6,7 @@ import editor.rest.model.RestWorkspaceModel
 import editor.rest.model.defaultCollection
 import editor.rest.model.newRestFolder
 import editor.rest.model.newRestRequest
+import editor.rest.model.jsonObject
 import editor.rest.model.string
 import editor.rest.model.items
 import kotlin.test.Test
@@ -55,5 +56,52 @@ class RestModelTest {
         assertTrue(exported.toString().contains("pm.test"))
         sourceFile.toFile().delete()
         exportFile.toFile().delete()
+    }
+
+    @Test
+    fun importsOpenApiJsonIntoTheRequestedFolder() {
+        val sourceFile = kotlin.io.path.createTempFile("openapi", ".json")
+        sourceFile.toFile().writeText(
+            """
+            {
+              "openapi":"3.0.0",
+              "info":{"title":"Pets"},
+              "servers":[{"url":"https://api.example.test"}],
+              "paths":{
+                "/pets/{id}":{
+                  "get":{"tags":["Pets"],"summary":"Get pet","parameters":[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}]}
+                }
+              }
+            }
+            """.trimIndent()
+        )
+        val model = RestWorkspaceModel()
+        val folder = model.addFolder(RestNodePath(), "Imported")!!
+        assertEquals(1, model.importOpenApi(sourceFile, folder).getOrThrow())
+        val importedFolder = model.node(folder.child(0))!!
+        val request = importedFolder.items().first() as JsonObject
+        assertEquals("GET", request.jsonObject("request")?.string("method"))
+        assertTrue(request.jsonObject("request")?.jsonObject("url")?.string("raw")?.contains(":id") == true)
+        sourceFile.toFile().delete()
+    }
+
+    @Test
+    fun importsOpenApiYaml() {
+        val sourceFile = kotlin.io.path.createTempFile("openapi", ".yaml")
+        sourceFile.toFile().writeText(
+            """
+            openapi: 3.0.0
+            info:
+              title: YAML API
+            paths:
+              /health:
+                get:
+                  summary: Health
+            """.trimIndent()
+        )
+        val model = RestWorkspaceModel()
+        assertEquals(1, model.importOpenApi(sourceFile).getOrThrow())
+        assertTrue(model.collection.items().isNotEmpty())
+        sourceFile.toFile().delete()
     }
 }

@@ -19,7 +19,8 @@ const val POSTMAN_COLLECTION_SCHEMA =
 @Serializable
 data class RestApiUiState(
     val selectedPath: String? = null,
-    val responsePanelHeight: Int = 12
+    val responsePanelHeight: Int = 12,
+    val prettyPrintResponses: Boolean = true
 )
 
 @Serializable

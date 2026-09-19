@@ -46,6 +46,12 @@ class AboutView(
             sourceUrl = "https://github.com/Kotlin/kotlinx.serialization"
         ),
         Credit(
+            name = "SnakeYAML 2.2",
+            license = "Apache-2.0",
+            licenseUrl = "https://www.apache.org/licenses/LICENSE-2.0",
+            sourceUrl = "https://bitbucket.org/snakeyaml/snakeyaml"
+        ),
+        Credit(
             name = "H2 Database 2.2.224",
             license = "MPL-2.0 / EPL-1.0",
             licenseUrl = "https://h2database.com/html/license.html",

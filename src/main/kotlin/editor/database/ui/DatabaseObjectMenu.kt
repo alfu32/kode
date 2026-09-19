@@ -14,7 +14,9 @@ class DatabaseObjectMenu(
     private val dataSource: DataSourceDefinition,
     private val objectInfo: DatabaseObject,
     private val onAction: (String) -> Unit,
-    private val onDismiss: () -> Unit
+    private val onDismiss: () -> Unit,
+    private val anchorX: Int? = null,
+    private val anchorY: Int? = null
 ) : BaseComponent(styleSheet) {
     private data class Hit(val index: Int, val y: Int, val x: IntRange)
     private var hits: List<Hit> = emptyList()
@@ -36,10 +38,11 @@ class DatabaseObjectMenu(
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        val width = minOf(cols - 2, 44).coerceAtLeast(24)
+        val width = minOf(cols, 44).coerceAtLeast(1)
         val height = (actions.size + 4).coerceAtMost(rows).coerceAtLeast(6)
-        menuX = ((cols - width) / 2).coerceAtLeast(0)
-        menuY = ((rows - height) / 2).coerceAtLeast(0)
+        menuX = (anchorX ?: (cols - width) / 2).coerceIn(0, (cols - width).coerceAtLeast(0))
+        val below = (anchorY ?: 0) + 1
+        menuY = if (below + height <= rows) below else ((anchorY ?: rows) - height).coerceAtLeast(0)
         val panel = styleSheet.getStyle("project-search-dialog").withDefaults()
         val border = styleSheet.getStyle("project-search-dialog-border").withDefaults(panel.fg, panel.bg)
         val active = styleSheet.getStyle("file-entry:selected").withDefaults(panel.fg, panel.bg)

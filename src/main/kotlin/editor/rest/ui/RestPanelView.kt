@@ -12,6 +12,7 @@ import editor.rest.model.string
 import editor.rest.model.walkRestTree
 import editor.ui.FormFieldRenderer
 import editor.ui.ModalDialogFrame
+import editor.ui.ModalDialogBounds
 import editor.ui.ModalTextInputDialog
 import java.nio.file.Path
 import react.BaseComponent
@@ -32,11 +33,12 @@ class RestPanelView(
     private sealed interface Action {
         data class Open(val path: RestNodePath) : Action
         data class Toggle(val path: RestNodePath) : Action
-        data class Menu(val path: RestNodePath) : Action
+        data class Menu(val path: RestNodePath, val anchorX: Int? = null, val anchorY: Int? = null) : Action
         data class AddRequest(val path: RestNodePath) : Action
         data class AddFolder(val path: RestNodePath) : Action
         data class Run(val path: RestNodePath) : Action
         data object Import : Action
+        data class ImportOpenApi(val parent: RestNodePath) : Action
         data object Export : Action
     }
 
@@ -56,6 +58,8 @@ class RestPanelView(
     private var filterCursor = 0
     private var filtering = false
     private var filterRange: IntRange = IntRange.EMPTY
+    private var pendingImportParent = RestNodePath()
+    private var pendingRenamePath: RestNodePath? = null
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
@@ -88,7 +92,8 @@ class RestPanelView(
         renderButton(canvas, button, 13, 1, " [+folder] ", Action.AddFolder(RestNodePath()), toolbar, cols)
         renderButton(canvas, button, 24, 1, " [run] ", Action.Run(RestNodePath()), toolbar, cols)
         renderButton(canvas, button, 32, 1, " [import] ", Action.Import, toolbar, cols)
-        renderButton(canvas, button, 43, 1, " [export] ", Action.Export, toolbar, cols)
+        renderButton(canvas, button, 43, 1, " [openapi] ", Action.ImportOpenApi(RestNodePath()), toolbar, cols)
+        renderButton(canvas, button, 55, 1, " [export] ", Action.Export, toolbar, cols)
 
         lines = visibleTreeNodes()
         selected = selected.coerceIn(0, (lines.size - 1).coerceAtLeast(0))
@@ -123,7 +128,7 @@ class RestPanelView(
             val menuLabel = " [...] "
             if (cols > menuLabel.length + 8) {
                 val x = cols - menuLabel.length - if (addParent) addLabelLength() else 0
-                rowHits.getOrPut(row) { mutableListOf() } += Hit(x until x + menuLabel.length, Action.Menu(line.path))
+                rowHits.getOrPut(row) { mutableListOf() } += Hit(x until x + menuLabel.length, Action.Menu(line.path, x, row))
                 canvas.withStyle(button) { drawText(x, row, menuLabel) }
             }
         }
@@ -194,7 +199,7 @@ class RestPanelView(
             selected = index
             val line = lines[index]
             if (event.button == 1 || event.button == 2) {
-                openMenu(line.path)
+                openMenu(line.path, x, y)
             } else {
                 openOrToggle(line)
             }
@@ -257,7 +262,7 @@ class RestPanelView(
         when (action) {
             is Action.Open -> onOpen(action.path)
             is Action.Toggle -> if (!expanded.add(action.path.encode())) expanded.remove(action.path.encode())
-            is Action.Menu -> openMenu(action.path)
+            is Action.Menu -> openMenu(action.path, action.anchorX, action.anchorY)
             is Action.AddRequest -> model.addRequest(validParent(action.path))?.let { path -> model.select(path); onOpen(path); notifyChanged("Added request") }
             is Action.AddFolder -> model.addFolder(validParent(action.path))?.let { path -> model.select(path); onOpen(path); notifyChanged("Added folder") }
             is Action.Run -> onRun(action.path)
@@ -267,9 +272,15 @@ class RestPanelView(
                     RestNodePath(),
                     "Replace the existing REST collection?",
                     onInvalidate,
-                onConfirm = { openInput("Import Postman collection", "File", workspaceRoot.resolve("collection.postman_collection.json").toString()) }
+                onConfirm = { openInput("Import Postman collection", "File", workspaceRoot.resolve("collection.postman_collection.json").toString(), RestNodePath()) }
             )
-            } else openInput("Import Postman collection", "File", workspaceRoot.resolve("collection.postman_collection.json").toString())
+            } else openInput("Import Postman collection", "File", workspaceRoot.resolve("collection.postman_collection.json").toString(), RestNodePath())
+            is Action.ImportOpenApi -> openInput(
+                "Import OpenAPI into ${model.node(action.parent)?.string("name") ?: model.collectionName()}",
+                "File",
+                workspaceRoot.resolve("openapi.yaml").toString(),
+                action.parent
+            )
             Action.Export -> openInput("Export Postman collection", "File", workspaceRoot.resolve("collection.postman_collection.json").toString())
         }
     }
@@ -283,8 +294,14 @@ class RestPanelView(
         model.select(line.path)
     }
 
-    private fun openMenu(path: RestNodePath) {
-        menu = RestNodeMenu(styleSheet, path, model.node(path)?.let { if (path.isRoot) RestNodeKind.COLLECTION else it.nodeKind() } ?: RestNodeKind.REQUEST)
+    private fun openMenu(path: RestNodePath, anchorX: Int? = null, anchorY: Int? = null) {
+        menu = RestNodeMenu(
+            styleSheet,
+            path,
+            model.node(path)?.let { if (path.isRoot) RestNodeKind.COLLECTION else it.nodeKind() } ?: RestNodeKind.REQUEST,
+            anchorX,
+            anchorY
+        )
     }
 
     private fun executeMenu(action: RestMenuAction, path: RestNodePath) {
@@ -296,14 +313,15 @@ class RestPanelView(
             RestMenuAction.RENAME -> openInput(
                 "Rename \"${model.node(path)?.string("name") ?: model.collectionName()}\"",
                 "Name",
-                model.node(path)?.string("name") ?: model.collectionName()
+                model.node(path)?.string("name") ?: model.collectionName(),
+                path
             )
             RestMenuAction.DUPLICATE -> model.duplicate(path)?.let { model.select(it); onOpen(it); notifyChanged("Duplicated node") }
             RestMenuAction.MOVE_UP -> model.moveUp(path)?.let { model.select(it); notifyChanged("Moved node") }
             RestMenuAction.MOVE_DOWN -> model.moveDown(path)?.let { model.select(it); notifyChanged("Moved node") }
             RestMenuAction.MOVE_TO -> moveDialog = RestMoveDialog(styleSheet, path, model.collection.walkRestTree().filter { it.kind != RestNodeKind.REQUEST }, onInvalidate)
             RestMenuAction.DELETE -> requestDelete(path)
-            RestMenuAction.IMPORT -> execute(Action.Import)
+            RestMenuAction.IMPORT -> execute(Action.ImportOpenApi(if (model.node(path)?.isRequestNode() == true) path.parent else path))
             RestMenuAction.EXPORT -> execute(Action.Export)
         }
     }
@@ -318,20 +336,26 @@ class RestPanelView(
         if (model.delete(path)) notifyChanged("Deleted node")
     }
 
-    private fun openInput(title: String, label: String, initial: String) {
+    private fun openInput(title: String, label: String, initial: String, context: RestNodePath? = null) {
+        pendingImportParent = context ?: RestNodePath()
+        pendingRenamePath = if (title.startsWith("Rename \"")) context else null
         dialog = ModalTextInputDialog(styleSheet, title, label, initial, onInvalidate = onInvalidate)
     }
 
     private fun handleRenameOrPath(value: String) {
         val title = dialog?.title ?: return
         if (title.startsWith("Rename \"")) {
-            val path = lines.getOrNull(selected)?.path ?: return
+            val path = pendingRenamePath ?: lines.getOrNull(selected)?.path ?: return
             model.rename(path, value)
             notifyChanged("Renamed node")
             return
         }
         val file = Path.of(value)
-        if (title.startsWith("Import")) {
+        if (title.startsWith("Import OpenAPI")) {
+            model.importOpenApi(file, pendingImportParent)
+                .onSuccess { count -> notifyChanged("Imported $count OpenAPI folder(s)") }
+                .onFailure { message = it.message ?: "OpenAPI import failed" }
+        } else if (title.startsWith("Import")) {
             model.importCollection(file).onSuccess { notifyChanged("Imported collection") }.onFailure { message = it.message ?: "Import failed" }
         } else {
             model.exportCollection(file).onSuccess { message = "Exported collection to $file" }.onFailure { message = it.message ?: "Export failed" }
@@ -379,11 +403,14 @@ enum class RestMenuAction {
 class RestNodeMenu(
     styleSheet: StyleSheet,
     val path: RestNodePath,
-    kind: RestNodeKind
+    kind: RestNodeKind,
+    private val anchorX: Int? = null,
+    private val anchorY: Int? = null
 ) : BaseComponent(styleSheet) {
+    private val frame = ModalDialogFrame(styleSheet)
     private val actions = when (kind) {
         RestNodeKind.COLLECTION -> listOf(RestMenuAction.ADD_REQUEST, RestMenuAction.ADD_FOLDER, RestMenuAction.RUN, RestMenuAction.RENAME, RestMenuAction.IMPORT, RestMenuAction.EXPORT)
-        RestNodeKind.FOLDER -> listOf(RestMenuAction.OPEN, RestMenuAction.ADD_REQUEST, RestMenuAction.ADD_FOLDER, RestMenuAction.RUN, RestMenuAction.RENAME, RestMenuAction.DUPLICATE, RestMenuAction.MOVE_UP, RestMenuAction.MOVE_DOWN, RestMenuAction.MOVE_TO, RestMenuAction.DELETE)
+        RestNodeKind.FOLDER -> listOf(RestMenuAction.OPEN, RestMenuAction.ADD_REQUEST, RestMenuAction.ADD_FOLDER, RestMenuAction.RUN, RestMenuAction.RENAME, RestMenuAction.IMPORT, RestMenuAction.DUPLICATE, RestMenuAction.MOVE_UP, RestMenuAction.MOVE_DOWN, RestMenuAction.MOVE_TO, RestMenuAction.DELETE)
         RestNodeKind.REQUEST -> listOf(RestMenuAction.OPEN, RestMenuAction.RUN, RestMenuAction.RENAME, RestMenuAction.DUPLICATE, RestMenuAction.MOVE_UP, RestMenuAction.MOVE_DOWN, RestMenuAction.MOVE_TO, RestMenuAction.DELETE)
     }
     var action: RestMenuAction? = null
@@ -393,29 +420,35 @@ class RestNodeMenu(
     private var selected = 0
     private var firstRow = 0
     private var lastRange: IntRange = IntRange.EMPTY
+    private var bounds = ModalDialogBounds(0, 0, 1, 1)
+    private var visibleActionCount = 0
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
         val rows = canvas.rows().coerceAtLeast(1)
-        val style = styleSheet.getStyle("project-search-dialog").withDefaults()
-        val button = styleSheet.getStyle("lsp-button").withDefaults(style.fg, style.bg)
-        val width = actions.maxOfOrNull { it.name.length }?.plus(6)?.coerceAtMost(cols)?.coerceAtLeast(18) ?: 18
-        val height = actions.size.coerceAtMost(rows - 2).coerceAtLeast(1)
-        val x = ((cols - width) / 2).coerceAtLeast(0)
-        firstRow = ((rows - height) / 2).coerceAtLeast(1)
-        canvas.withStyle(style) { drawRect(x, firstRow, width, height) }
-        actions.take(height).forEachIndexed { index, item ->
-            val label = " ${item.name.lowercase().replace('_', ' ')} ".padEnd(width, ' ')
-            canvas.withStyle(if (index == selected) button else style) { drawText(x, firstRow + index, label.take(width)) }
+        val style = frame.panelStyle()
+        val button = frame.buttonStyle()
+        val width = actions.maxOfOrNull { it.name.lowercase().replace('_', ' ').length }?.plus(6)?.coerceAtMost(cols)?.coerceAtLeast(18) ?: 18
+        val height = (actions.size + 2).coerceAtMost(rows).coerceAtLeast(3)
+        val x = (anchorX ?: (cols - width) / 2).coerceIn(0, (cols - width).coerceAtLeast(0))
+        val below = (anchorY ?: 0) + 1
+        val y = if (below + height <= rows) below else ((anchorY ?: rows) - height).coerceAtLeast(0)
+        bounds = ModalDialogBounds(x, y, width, height)
+        firstRow = bounds.y + 1
+        frame.render(canvas, bounds, "Actions")
+        visibleActionCount = (height - 2).coerceAtLeast(0).coerceAtMost(actions.size)
+        actions.take(visibleActionCount).forEachIndexed { index, item ->
+            val label = " ${item.name.lowercase().replace('_', ' ')} ".padEnd(bounds.contentWidth, ' ')
+            canvas.withStyle(if (index == selected) button else style) { drawText(bounds.contentX, firstRow + index, label.take(bounds.contentWidth)) }
         }
-        lastRange = x until x + width
+        lastRange = bounds.x until bounds.x + bounds.width
     }
 
     override fun dispatch(event: UIEvent): Boolean {
         if (event.kind == "mouse_down") {
             val x = event.x ?: return true
             val y = event.y ?: return true
-            if (y in firstRow until firstRow + actions.size && x in lastRange) {
+            if (y in firstRow until firstRow + visibleActionCount && x in lastRange) {
                 selected = y - firstRow
                 action = actions[selected]
                 finished = true

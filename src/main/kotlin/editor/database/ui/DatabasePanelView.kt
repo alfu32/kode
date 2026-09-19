@@ -180,7 +180,7 @@ class DatabasePanelView(
                         return true
                     }
                     is NodeRef.Metadata -> {
-                        openObjectMenu(ref)
+                        openObjectMenu(ref, x, y)
                         return true
                     }
                     else -> Unit
@@ -189,7 +189,7 @@ class DatabasePanelView(
             if (line.ref is NodeRef.Metadata && isEntity(line.ref as NodeRef.Metadata) &&
                 x >= line.depth * 2 + 3
             ) {
-                openObjectMenu(line.ref as NodeRef.Metadata)
+                openObjectMenu(line.ref as NodeRef.Metadata, x, y)
                 return true
             }
             return activate(line)
@@ -301,14 +301,16 @@ class DatabasePanelView(
         return true
     }
 
-    private fun openObjectMenu(ref: NodeRef.Metadata) {
+    private fun openObjectMenu(ref: NodeRef.Metadata, anchorX: Int? = null, anchorY: Int? = null) {
         val ds = dataSources.firstOrNull { it.id == ref.dataSourceId } ?: return
         objectMenu = DatabaseObjectMenu(
             styleSheet,
             ds,
             ref.objectInfo,
             onAction = { sql -> onInsertSql(ds, sql) },
-            onDismiss = { objectMenu = null }
+            onDismiss = { objectMenu = null },
+            anchorX = anchorX,
+            anchorY = anchorY
         )
     }
 

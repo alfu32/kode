@@ -1037,7 +1037,8 @@ private class SplitPanelsApp(
         onSend = { path -> sendRestRequest(path) },
         onClearCookies = { restRuntime.clearCookies(); renderDirty.set(true) },
         onChanged = { schedulePersist(); renderDirty.set(true) },
-        onInvalidate = { renderDirty.set(true) }
+        onInvalidate = { renderDirty.set(true) },
+        syntaxProvider = regexProvider
     )
     private val restPanel = RestPanelView(
         styleSheet = styleSheet,
@@ -2577,7 +2578,9 @@ private class SplitPanelsApp(
                         statementMenu = null
                         executeActiveSqlConsole(all = true)
                     },
-                    onDismiss = { statementMenu = null }
+                    onDismiss = { statementMenu = null },
+                    anchorX = event.x,
+                    anchorY = y
                 )
                 renderDirty.set(true)
                 return true
