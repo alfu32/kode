@@ -1,0 +1,25 @@
+-- H2
+
+create or replace table test_stuff(ID NUMERIC,CODE TEXT);
+
+create or replace VIEW v_TEST_STUFF AS SELECT ID,CODE FROM TEST_STUFF;
+
+INSERT INTO TEST_STUFF(ID,CODE) VALUES (1,'application.access');
+INSERT INTO TEST_STUFF(ID,CODE) VALUES (2,'application.read');
+INSERT INTO TEST_STUFF(ID,CODE) VALUES (3,'applicaition.write');
+
+UPDATE test_stuff set code='application.write' where id=3;
+
+INSERT INTO TEST_STUFF(ID,CODE) VALUES (4,'module.access');
+INSERT INTO TEST_STUFF(ID,CODE) VALUES (5,'module.read');
+INSERT INTO TEST_STUFF(ID,CODE) VALUES (6,'module..write');
+
+
+SELECT * FROM test_stuff;
+
+
+
+
+
+
+

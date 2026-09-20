@@ -85,6 +85,7 @@ class CodeEditorView(
     private var usageDragStartOffset = 0
     private var suggestionPopup: SuggestionPopup? = null
     private var renderedSuggestion: RenderedPopup? = null
+    private var suggestionScrollOffset = 0
     private var infoPopup: InfoPopup? = null
     private var renderedInfo: RenderedPopup? = null
     private var hoveredDefinitionControl: DefinitionControl? = null
@@ -1042,8 +1043,16 @@ class CodeEditorView(
         val ex = event.x ?: return false
         val ey = event.y ?: return false
         if (ex !in rs.x until (rs.x + rs.width) || ey !in rs.y until (rs.y + rs.height)) return false
-        val idx = ey - rs.y - 1
+        val visible = suggestionVisibleCount(rs)
+        val row = ey - rs.y - 1
+        if (row !in 0 until visible) return true
+        if (ex == rs.x + rs.width - 1 && popup.entries.size > visible) {
+            handleSuggestionScrollbarClick(event)
+            return true
+        }
+        val idx = suggestionScrollOffset + row
         if (idx !in popup.entries.indices) return true
+        hoveredSuggestionIndex = idx
         val entry = popup.entries[idx]
         applySuggestion(entry.name, popup.prefix)
         suggestionPopup = null
@@ -1097,6 +1106,7 @@ class CodeEditorView(
             renderedSuggestion = null
             return
         }
+        suggestionScrollOffset = 0
         hoveredSuggestionIndex = 0
         suggestionPopup = SuggestionPopup(buffer.cursorPosition(), prefix, entries)
     }
@@ -1171,6 +1181,16 @@ class CodeEditorView(
         val suggestionBox = renderedSuggestion
         fun inside(box: RenderedPopup?): Boolean =
             box != null && ex in box.x until (box.x + box.width) && ey in box.y until (box.y + box.height)
+
+        if (event.kind == "mouse_scroll" && suggestionPopup != null && inside(suggestionBox)) {
+            val popup = suggestionPopup ?: return true
+            val visible = suggestionVisibleCount(suggestionBox!!)
+            suggestionScrollOffset = (suggestionScrollOffset - (event.scrollDelta ?: 0)).coerceIn(
+                0, (popup.entries.size - visible).coerceAtLeast(0)
+            )
+            hoveredSuggestionIndex = -1
+            return true
+        }
 
         if (event.kind == "mouse_scroll" && infoPopup != null) {
             if (inside(infoBox)) return true
@@ -1251,6 +1271,33 @@ class CodeEditorView(
     }
 
     private fun usageVisibleCount(box: RenderedPopup): Int = (box.height - 2).coerceAtLeast(0)
+
+    private fun suggestionVisibleCount(box: RenderedPopup): Int = (box.height - 1).coerceAtLeast(1)
+
+    private fun handleSuggestionScrollbarClick(event: UIEvent): Boolean {
+        val box = renderedSuggestion ?: return false
+        val popup = suggestionPopup ?: return false
+        if (event.x != box.x + box.width - 1) return false
+        val visible = suggestionVisibleCount(box)
+        val maxOffset = (popup.entries.size - visible).coerceAtLeast(0)
+        if (maxOffset == 0) return true
+        val trackHeight = visible.coerceAtLeast(1)
+        val pos = ((event.y ?: box.y) - box.y - 1).coerceIn(0, trackHeight - 1)
+        suggestionScrollOffset = (pos * maxOffset / (trackHeight - 1).coerceAtLeast(1)).coerceIn(0, maxOffset)
+        hoveredSuggestionIndex = suggestionScrollOffset
+        return true
+    }
+
+    private fun clampSuggestionSelectionToVisible(visible: Int) {
+        val popup = suggestionPopup ?: return
+        if (popup.entries.isEmpty() || visible <= 0) return
+        val maxOffset = (popup.entries.size - visible).coerceAtLeast(0)
+        suggestionScrollOffset = suggestionScrollOffset.coerceIn(0, maxOffset)
+        if (hoveredSuggestionIndex < suggestionScrollOffset) hoveredSuggestionIndex = suggestionScrollOffset
+        if (hoveredSuggestionIndex >= suggestionScrollOffset + visible) {
+            hoveredSuggestionIndex = suggestionScrollOffset + visible - 1
+        }
+    }
 
     private fun clampUsageSelectionToVisible(visible: Int) {
         val popup = usagePopup ?: return
@@ -1334,7 +1381,16 @@ class CodeEditorView(
             hoveredUsageIndex = -1
         }
         if (sp != null && ey in sp.y until (sp.y + sp.height) && ex in sp.x until (sp.x + sp.width)) {
-            hoveredSuggestionIndex = (ey - sp.y - 1).coerceIn(0, (suggestionPopup?.entries?.lastIndex ?: -1))
+            val popup = suggestionPopup
+            val visible = suggestionVisibleCount(sp)
+            val row = ey - sp.y - 1
+            hoveredSuggestionIndex = if (popup != null && row in 0 until visible &&
+                ex < sp.x + sp.width - if (popup.entries.size > visible) 1 else 0
+            ) {
+                suggestionScrollOffset + row
+            } else {
+                -1
+            }
             consumed = true
         } else {
             hoveredSuggestionIndex = -1
@@ -1510,7 +1566,7 @@ class CodeEditorView(
     private fun handlePopupKeys(key: String?): Boolean {
         val k = key?.lowercase() ?: return false
         val hasUsage = usagePopup != null
-        val hasSuggestion = suggestionPopup != null && renderedSuggestion != null
+        val hasSuggestion = suggestionPopup != null
         val hasInfo = infoPopup != null
         if (!hasUsage && !hasSuggestion && !hasInfo) return false
         if (hasInfo && !hasUsage && !hasSuggestion && k != "escape") return false
@@ -1528,6 +1584,13 @@ class CodeEditorView(
             val max = popup.entries.lastIndex
             if (max < 0) return
             hoveredSuggestionIndex = (if (hoveredSuggestionIndex < 0) 0 else hoveredSuggestionIndex + delta).coerceIn(0, max)
+            val visible = renderedSuggestion?.let(::suggestionVisibleCount) ?: MAX_USAGE_VISIBLE_ROWS
+            val maxOffset = (popup.entries.size - visible).coerceAtLeast(0)
+            suggestionScrollOffset = when {
+                hoveredSuggestionIndex < suggestionScrollOffset -> hoveredSuggestionIndex
+                hoveredSuggestionIndex >= suggestionScrollOffset + visible -> hoveredSuggestionIndex - visible + 1
+                else -> suggestionScrollOffset
+            }.coerceIn(0, maxOffset)
         }
 
         when (k) {
@@ -1594,6 +1657,11 @@ class CodeEditorView(
                     usageScrollOffset = (usageScrollOffset - visible).coerceAtLeast(0)
                     return true
                 }
+                if (hasSuggestion) {
+                    val visible = renderedSuggestion?.let(::suggestionVisibleCount) ?: MAX_USAGE_VISIBLE_ROWS
+                    clampSuggestion(-visible)
+                    return true
+                }
             }
             "pagedown" -> {
                 if (hasUsage) {
@@ -1601,6 +1669,11 @@ class CodeEditorView(
                     clampUsage(visible)
                     val maxOffset = ((usagePopup?.entries?.size ?: 0) - visible).coerceAtLeast(0)
                     usageScrollOffset = (usageScrollOffset + visible).coerceAtMost(maxOffset)
+                    return true
+                }
+                if (hasSuggestion) {
+                    val visible = renderedSuggestion?.let(::suggestionVisibleCount) ?: MAX_USAGE_VISIBLE_ROWS
+                    clampSuggestion(visible)
                     return true
                 }
             }
@@ -1611,6 +1684,11 @@ class CodeEditorView(
                     usageScrollOffset = 0
                     return true
                 }
+                if (hasSuggestion) {
+                    hoveredSuggestionIndex = 0
+                    suggestionScrollOffset = 0
+                    return true
+                }
             }
             "end" -> {
                 if (hasUsage) {
@@ -1619,6 +1697,13 @@ class CodeEditorView(
                     hoveredUsageIndex = -1
                     val visible = renderedPopup?.let(::usageVisibleCount) ?: MAX_USAGE_VISIBLE_ROWS
                     usageScrollOffset = (last - visible + 1).coerceAtLeast(0)
+                    return true
+                }
+                if (hasSuggestion) {
+                    val last = suggestionPopup?.entries?.lastIndex ?: 0
+                    hoveredSuggestionIndex = last
+                    val visible = renderedSuggestion?.let(::suggestionVisibleCount) ?: MAX_USAGE_VISIBLE_ROWS
+                    suggestionScrollOffset = (last - visible + 1).coerceAtLeast(0)
                     return true
                 }
             }
@@ -2504,31 +2589,57 @@ class CodeEditorView(
             return
         }
         val anchorRow = visualRowForPosition(popup.anchor, layout)
-        val screenRow = bodyStartRow + (anchorRow - scrollTop)
+        val screenRow = (bodyStartRow + (anchorRow - scrollTop)).coerceIn(bodyStartRow, (rows - 1).coerceAtLeast(bodyStartRow))
         val x = (gutterWidth + visualColumnAt(popup.anchor, layout)).coerceAtLeast(gutterWidth)
-        val maxLabel = popup.entries.take(10).maxOfOrNull { it.name.length + (it.detail?.length ?: 0) + 3 } ?: 0
-        val width = (maxLabel + 2).coerceAtMost((cols - x).coerceAtLeast(12))
-        val height = (popup.entries.size + 1).coerceAtMost((rows - screenRow - 1).coerceAtLeast(2))
+        val availableBelow = (rows - screenRow - 1).coerceAtLeast(0)
+        val availableAbove = (screenRow - bodyStartRow).coerceAtLeast(0)
+        val maxHeight = maxOf(availableBelow, availableAbove).coerceAtLeast(2)
+        val height = (popup.entries.size + 1).coerceAtMost(maxHeight)
         if (height < 2) {
             renderedSuggestion = null
             return
         }
+        val visible = (height - 1).coerceAtLeast(1)
+        suggestionScrollOffset = suggestionScrollOffset.coerceIn(0, (popup.entries.size - visible).coerceAtLeast(0))
+        clampSuggestionSelectionToVisible(visible)
+        val needsScrollbar = popup.entries.size > visible
+        val maxLabel = popup.entries.maxOfOrNull { it.name.length + (it.detail?.length ?: 0) + 3 } ?: 0
+        val width = (maxLabel + 2 + if (needsScrollbar) 1 else 0)
+            .coerceAtMost((cols - x).coerceAtLeast(1))
+            .coerceAtLeast(1)
         val finalX = x.coerceIn(0, (cols - width).coerceAtLeast(0))
-        val finalY = screenRow.coerceIn(bodyStartRow, (rows - height).coerceAtLeast(bodyStartRow))
+        val finalY = when {
+            screenRow + height <= rows -> screenRow
+            screenRow - height >= bodyStartRow -> screenRow - height
+            else -> bodyStartRow
+        }
         val style = localStyleSheet.getStyle("code-search-bar").withDefaults()
         val hoverStyle = localStyleSheet.getStyle("code-search-active").withDefaults(style.fg, style.bg)
+        val scrollbarStyle = localStyleSheet.getStyle("code-popup-scrollbar").withDefaults(style.fg, style.bg)
         canvas.withStyle(style) {
             drawRect(finalX, finalY, width, height)
-            val entries = popup.entries.take(height - 1)
+            val entries = popup.entries.drop(suggestionScrollOffset).take(visible)
             entries.forEachIndexed { idx, entry ->
                 val label = buildString {
                     append(entry.name)
                     entry.detail?.let { append("  ").append(it) }
                 }
-                val text = label.take(width - 2).padEnd(width - 2, ' ')
-                val rowStyle = if (idx == hoveredSuggestionIndex) hoverStyle else style
+                val textWidth = (width - 2 - if (needsScrollbar) 1 else 0).coerceAtLeast(0)
+                val text = label.take(textWidth).padEnd(textWidth, ' ')
+                val rowStyle = if (suggestionScrollOffset + idx == hoveredSuggestionIndex) hoverStyle else style
                 canvas.withStyle(rowStyle) {
                     drawText(finalX + 1, finalY + idx + 1, text)
+                }
+            }
+            if (needsScrollbar) {
+                val trackHeight = visible.coerceAtLeast(1)
+                val maxOffset = (popup.entries.size - visible).coerceAtLeast(1)
+                val indicatorRow = suggestionScrollOffset * (trackHeight - 1) / maxOffset
+                val scrollbarX = finalX + width - 1
+                canvas.withStyle(scrollbarStyle) {
+                    (0 until trackHeight).forEach { row ->
+                        drawText(scrollbarX, finalY + row + 1, if (row == indicatorRow) "█" else "│")
+                    }
                 }
             }
         }

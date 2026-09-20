@@ -41,6 +41,41 @@ class CodeEditorViewTest {
     }
 
     @Test
+    fun suggestionPopupScrollsAndSelectsEntriesBeyondVisibleRows() {
+        val names = (0 until 24).map { "Header$it" }
+        val view = CodeEditorView(StyleSheet())
+        view.setExternalSuggestions(autoShow = false) {
+            names.map { CodeEditorView.ExternalSuggestion(it, "HTTP header") }
+        }
+        view.loadVirtualContent("<headers>", "H", "text")
+        view.dispatch(UIEvent(kind = "key_down", key = "End"))
+        view.dispatch(UIEvent(kind = "key_down", key = "space", ctrl = true))
+        val renderer = StringSnapshotRenderer(cols = 40, rows = 8)
+        view.render(renderer)
+
+        val popup = privateFieldValue(view, "suggestionPopup")!!
+        val entryCount = (privateFieldValue(popup, "entries") as List<*>).size
+        assertTrue(entryCount >= names.size, "suggestion entries: $entryCount")
+        assertTrue(renderer.snapshot().lines().any { it.contains("│") || it.contains("█") })
+        val popupBox = privateFieldValue(view, "renderedSuggestion")!!
+        assertTrue(view.dispatch(UIEvent(
+            kind = "mouse_scroll",
+            x = privateInt(popupBox, "x") + 1,
+            y = privateInt(popupBox, "y") + 1,
+            scrollDelta = -2
+        )))
+        assertTrue(privateIntValue(view, "suggestionScrollOffset") > 0)
+        assertTrue(view.dispatch(UIEvent(kind = "key_down", key = "home")))
+
+        repeat(6) {
+            assertTrue(view.dispatch(UIEvent(kind = "key_down", key = "down")))
+        }
+        assertTrue(privateIntValue(view, "suggestionScrollOffset") > 0)
+        assertTrue(view.dispatch(UIEvent(kind = "key_down", key = "enter")))
+        assertEquals("Header6", view.textContent())
+    }
+
+    @Test
     fun pageKeysTraverseWrappedRowsWithinOneLogicalLine() {
         val buffer = TextBuffer().apply { loadText("\t".repeat(100)) }
         val view = CodeEditorView(StyleSheet(), buffer)
@@ -441,8 +476,8 @@ class CodeEditorViewTest {
         return privateFieldValue(view, name)!!
     }
 
-    private fun privateFieldValue(view: CodeEditorView, name: String): Any? {
-        return CodeEditorView::class.java.getDeclaredField(name).apply { isAccessible = true }.get(view)
+    private fun privateFieldValue(target: Any, name: String): Any? {
+        return target.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(target)
     }
 
     private fun privateInt(value: Any, name: String): Int =
