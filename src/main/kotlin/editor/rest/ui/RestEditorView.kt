@@ -558,7 +558,7 @@ class RestEditorView(
         val region = EditorRegion(0, 5, cols, (rows - 5).coerceAtLeast(1))
         environmentEditorRegion = region
         val key = environment.id + "|" + source
-        if (environmentEditorKey != key && environmentEditor.textContent() != source) {
+        if (!environmentEditorFocused && environmentEditorKey != key && environmentEditor.textContent() != source) {
             environmentEditor.loadVirtualContent("<environment:${environment.id}>", source, "properties")
         }
         environmentEditorKey = key
@@ -972,13 +972,12 @@ class RestEditorView(
     }
 
     private fun dispatchEditor(editor: CodeEditorView, region: EditorRegion, event: UIEvent): Boolean {
-        val local = event.alterCopy(UIEvent(
-            kind = event.kind,
+        val local = event.copy(
             x = event.x?.minus(region.x),
             y = event.y?.minus(region.y),
             cols = region.width,
             rows = region.height
-        ))
+        )
         val before = editor.textContent()
         val handled = editor.dispatch(local)
         val after = editor.textContent()
