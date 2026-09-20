@@ -26,7 +26,8 @@ data class JdbcDriverDefinition(
     val defaultJdbcUrlTemplate: String = "",
     val urlPrefixes: List<String> = emptyList(),
     val artifact: JdbcDriverArtifact? = null,
-    val aliasOf: String? = null
+    val aliasOf: String? = null,
+    val jdbcUrlTemplates: List<JdbcUrlTemplate> = emptyList()
 )
 
 data class ResolvedJdbcDriver(

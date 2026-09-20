@@ -1,6 +1,7 @@
 package editor.ui
 
 import editor.lib.SearchState
+import editor.lib.SystemClipboard
 import react.BaseComponent
 import react.StyleSet
 import react.StyleSheet
@@ -31,6 +32,18 @@ class SearchReplaceBar(
 
         fun handleKey(key: String, ev: UIEvent): Boolean {
             val normalized = key.lowercase()
+            if (ev.ctrl) {
+                when (normalized) {
+                    "c" -> { SystemClipboard.setText(text); return true }
+                    "x" -> { SystemClipboard.setText(text); text = ""; cursor = 0; return true }
+                    "v" -> {
+                        val paste = SystemClipboard.getText()
+                        text = text.substring(0, cursor) + paste + text.substring(cursor)
+                        cursor += paste.length
+                        return true
+                    }
+                }
+            }
             when (normalized) {
                 "left" -> {
                     if (cursor > 0) {

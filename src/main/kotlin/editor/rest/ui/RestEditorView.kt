@@ -14,6 +14,7 @@ import editor.rest.model.withoutField
 import editor.rest.model.withOptionalField
 import editor.rest.resolve.RestRequestResolver
 import editor.grammars.SyntaxProvider
+import editor.lib.SystemClipboard
 import editor.ui.CodeEditorView
 import editor.ui.FormFieldRenderer
 import java.nio.file.Path
@@ -90,6 +91,18 @@ class RestEditorView(
 
         fun edit(event: UIEvent): Boolean {
             val key = event.key ?: return false
+            if (event.ctrl) {
+                when (key.lowercase()) {
+                    "c" -> { SystemClipboard.setText(value); return true }
+                    "x" -> { SystemClipboard.setText(value); value = ""; cursor = 0; return true }
+                    "v" -> {
+                        val paste = SystemClipboard.getText()
+                        value = value.substring(0, cursor) + paste + value.substring(cursor)
+                        cursor += paste.length
+                        return true
+                    }
+                }
+            }
             when (key.lowercase()) {
                 "left" -> if (cursor > 0) cursor-- else return false
                 "right" -> if (cursor < value.length) cursor++ else return false
@@ -160,6 +173,17 @@ class RestEditorView(
     init {
         responseEditor.setReadOnly(true)
         rawRequestEditor.setReadOnly(true)
+        headersEditor.setExternalSuggestions { prefix ->
+            val cursor = headersEditor.currentCursorPosition()
+            val used = headersEditor.textContent().lineSequence().mapIndexedNotNull { index, line ->
+                if (index == cursor.line) return@mapIndexedNotNull null
+                line.substringBefore(':', missingDelimiterValue = "").trim()
+                    .takeIf { it.isNotEmpty() && it != line.trim() }
+            }.map { it.lowercase() }.toSet()
+            HttpHeaderCatalog.names
+                .filter { it.lowercase().startsWith(prefix.lowercase()) && it.lowercase() !in used }
+                .map { CodeEditorView.ExternalSuggestion(it, "HTTP header") }
+        }
     }
 
     fun open(path: RestNodePath) {
@@ -423,7 +447,8 @@ class RestEditorView(
         headersEditorRegion = region
         val source = localHeadersText()
         val key = currentPath.encode() + "|" + source
-        if (headersEditorKey != key && headersEditor.textContent() != source) {
+        headersEditor.setWarningLines(duplicateHeaderLines(headersEditor.textContent()))
+        if (!headersEditorFocused && headersEditorKey != key && headersEditor.textContent() != source) {
             headersEditor.loadVirtualContent("<headers:${currentPath.encode()}>", source, "text")
         }
         headersEditorKey = key
@@ -968,7 +993,22 @@ class RestEditorView(
         }
         if (before != after) onChanged()
         onInvalidate()
-        return handled
+        val plainTab = event.kind == "key_down" && event.key?.equals("tab", ignoreCase = true) == true &&
+            !event.ctrl && !event.shift && !event.alt && !event.meta
+        return handled || (event.kind == "key_down" && !plainTab)
+    }
+
+    private fun duplicateHeaderLines(text: String): Set<Int> {
+        val seen = mutableMapOf<String, Int>()
+        val duplicates = mutableSetOf<Int>()
+        text.lineSequence().forEachIndexed { index, line ->
+            val name = line.substringBefore(':', missingDelimiterValue = "").trim()
+                .removePrefix("#").trim().takeIf { it.isNotEmpty() && it != line.trim() } ?: return@forEachIndexed
+            val normalized = name.lowercase()
+            seen[normalized]?.let { duplicates += it }
+            seen[normalized] = index
+        }
+        return duplicates
     }
 
     private fun saveRequestBody(text: String) {

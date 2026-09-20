@@ -2,6 +2,7 @@ package editor.rest.ui
 
 import editor.ui.FormFieldRenderer
 import editor.ui.ModalDialogFrame
+import editor.lib.SystemClipboard
 import react.BaseComponent
 import react.StyleSheet
 import react.UIEvent
@@ -51,6 +52,18 @@ class RestKeyValueDialog(
         var cursor = initial.length
         fun edit(event: UIEvent): Boolean {
             val key = event.key ?: return false
+            if (event.ctrl) {
+                when (key.lowercase()) {
+                    "c" -> { SystemClipboard.setText(value); return true }
+                    "x" -> { SystemClipboard.setText(value); value = ""; cursor = 0; return true }
+                    "v" -> {
+                        val paste = SystemClipboard.getText()
+                        value = value.substring(0, cursor) + paste + value.substring(cursor)
+                        cursor += paste.length
+                        return true
+                    }
+                }
+            }
             when (key.lowercase()) {
                 "left" -> cursor = (cursor - 1).coerceAtLeast(0)
                 "right" -> cursor = (cursor + 1).coerceAtMost(value.length)

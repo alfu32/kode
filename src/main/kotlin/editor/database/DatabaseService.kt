@@ -7,6 +7,7 @@ import editor.database.driver.JdbcDriverDownloader
 import editor.database.driver.JdbcDriverRegistry
 import editor.database.driver.JdbcDriverResolver
 import editor.database.driver.JdbcDownloadProgress
+import editor.database.driver.JdbcUrlSuggestionService
 import editor.database.metadata.DatabaseMetadataService
 import editor.database.model.ConnectionStatus
 import editor.database.model.ConnectionTestResult
@@ -20,6 +21,7 @@ import editor.database.query.SqlExecutionService
 import java.nio.file.Path
 
 interface DatabaseService {
+    val jdbcUrlSuggestionService: JdbcUrlSuggestionService
     fun dataSources(): List<DataSourceDefinition>
     fun saveDataSource(definition: DataSourceDefinition, password: String? = null): DataSourceDefinition
     fun removeDataSource(id: DataSourceId)
@@ -57,6 +59,12 @@ class JdbcDatabaseService(
     @Volatile
     private var cachedDataSources: List<DataSourceDefinition> = repository.load()
 
+    override val jdbcUrlSuggestionService = JdbcUrlSuggestionService(driverRegistry)
+
+    init {
+        jdbcUrlSuggestionService.seed(cachedDataSources)
+    }
+
     override fun dataSources(): List<DataSourceDefinition> = cachedDataSources
 
     override fun replaceDataSources(definitions: List<DataSourceDefinition>) {
@@ -73,10 +81,12 @@ class JdbcDatabaseService(
             val withRef = definition.copy(credentialReference = ref)
             cachedDataSources = cachedDataSources.filterNot { it.id == withRef.id } + withRef
             repository.save(cachedDataSources)
+            jdbcUrlSuggestionService.remember(withRef)
             return withRef
         }
         cachedDataSources = cachedDataSources.filterNot { it.id == definition.id } + definition
         repository.save(cachedDataSources)
+        jdbcUrlSuggestionService.remember(definition)
         return definition
     }
 
@@ -91,7 +101,9 @@ class JdbcDatabaseService(
     override fun connect(id: DataSourceId): ConnectionStatus {
         val definition = cachedDataSources.firstOrNull { it.id == id }
             ?: return ConnectionStatus(id, editor.database.model.ConnectionState.ERROR, "Unknown data source: $id")
-        return connections.connect(definition)
+        return connections.connect(definition).also { status ->
+            if (status.state == editor.database.model.ConnectionState.CONNECTED) jdbcUrlSuggestionService.remember(definition)
+        }
     }
 
     override fun disconnect(id: DataSourceId): ConnectionStatus =
@@ -101,7 +113,9 @@ class JdbcDatabaseService(
         connections.status(id)
 
     override fun testConnection(definition: DataSourceDefinition, password: String?): ConnectionTestResult =
-        connections.testConnection(definition, password)
+        connections.testConnection(definition, password).also { result ->
+            if (result.success) jdbcUrlSuggestionService.remember(definition)
+        }
 
     override fun introspect(id: DataSourceId, request: MetadataRequest, refresh: Boolean): MetadataResult =
         metadata.introspect(id, request, refresh)

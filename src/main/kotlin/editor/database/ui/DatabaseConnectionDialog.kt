@@ -9,6 +9,7 @@ import editor.database.model.JdbcDriverArtifact
 import editor.database.model.JdbcRepositoryType
 import editor.ui.FormFieldRenderer
 import editor.ui.ModalDialogFrame
+import editor.lib.SystemClipboard
 import java.util.UUID
 import react.BaseComponent
 import react.StyleSheet
@@ -29,6 +30,8 @@ class DatabaseConnectionDialog(
     private val frame = ModalDialogFrame(styleSheet)
     private data class FieldHit(val index: Int, val row: Int, val x: IntRange)
     private data class ButtonHit(val action: Action, val x: IntRange)
+    private data class UrlSuggestionRow(val group: String, val index: Int, val label: String?, val value: String?)
+    private data class UrlSuggestionHit(val group: String, val index: Int, val row: Int)
     private enum class Action { TEST, DOWNLOAD, APPLY, CANCEL }
 
     private class Field(var value: String) {
@@ -41,6 +44,18 @@ class DatabaseConnectionDialog(
 
         fun edit(event: UIEvent): Boolean {
             val key = event.key ?: return false
+            if (event.ctrl) {
+                when (key.lowercase()) {
+                    "c" -> { SystemClipboard.setText(value); return true }
+                    "x" -> { SystemClipboard.setText(value); value = ""; cursor = 0; return true }
+                    "v" -> {
+                        val paste = SystemClipboard.getText()
+                        value = value.substring(0, cursor) + paste + value.substring(cursor)
+                        cursor += paste.length
+                        return true
+                    }
+                }
+            }
             when (key.lowercase()) {
                 "left" -> if (cursor > 0) cursor-- else return false
                 "right" -> if (cursor < value.length) cursor++ else return false
@@ -84,6 +99,11 @@ class DatabaseConnectionDialog(
     private var buttonHits: List<ButtonHit> = emptyList()
     private var dropdownRows: IntRange = IntRange.EMPTY
     private var dropdownScroll = 0
+    private var urlDropdown = false
+    private var urlSuggestionHits: List<UrlSuggestionHit> = emptyList()
+    private var urlDropdownRows: IntRange = IntRange.EMPTY
+    private var urlDropdownScroll = 0
+    private var urlSelectionOrdinal = 0
 
     init {
         initialDefinition?.let {
@@ -98,7 +118,7 @@ class DatabaseConnectionDialog(
             customFields[3].set(it.driver.jarPath.orEmpty())
             versionField.set(it.driver.artifact?.version ?: it.driver.coordinates?.split(':')?.getOrNull(2).orEmpty())
         }
-        if (existing == null) selectDriver(0)
+        if (existing == null) fields[1].set(drivers[selectedDriver].defaultJdbcUrlTemplate)
     }
 
     override fun render(canvas: CanvasRenderer) {
@@ -119,6 +139,7 @@ class DatabaseConnectionDialog(
         fieldHits = emptyList()
         buttonHits = emptyList()
         dropdownRows = IntRange.EMPTY
+        urlDropdownRows = IntRange.EMPTY
         frame.render(
             canvas,
             bounds,
@@ -199,6 +220,76 @@ class DatabaseConnectionDialog(
                 }
             }
         }
+        if (urlDropdown && focus == 2) {
+            renderUrlSuggestions(canvas, panel, active, x + 2 + labelWidth, startRow + 3, available, rows)
+        }
+    }
+
+    private fun renderUrlSuggestions(
+        canvas: CanvasRenderer,
+        panel: react.StyleSet,
+        active: react.StyleSet,
+        dropdownX: Int,
+        dropdownY: Int,
+        available: Int,
+        rows: Int
+    ) {
+        val entries = urlSuggestionRows()
+        if (entries.isEmpty()) return
+        val maxHeight = (rows - dropdownY - 1).coerceAtLeast(1)
+        val height = entries.size.coerceAtMost(maxHeight)
+        val maxScroll = (entries.size - height).coerceAtLeast(0)
+        urlDropdownScroll = urlDropdownScroll.coerceIn(0, maxScroll)
+        val visible = entries.drop(urlDropdownScroll).take(height)
+        urlDropdownRows = dropdownY until (dropdownY + visible.size)
+        val hits = mutableListOf<UrlSuggestionHit>()
+        canvas.withStyle(panel) {
+            drawRect(dropdownX, dropdownY, available, height)
+            visible.forEachIndexed { offset, entry ->
+                val row = dropdownY + offset
+                val ordinal = entries.take(urlDropdownScroll + offset + 1).count { it.value != null } - 1
+                if (entry.value == null) {
+                    withStyle(active) { drawText(dropdownX, row, "[${entry.label}]".take(available).padEnd(available, ' ')) }
+                } else {
+                    val text = "${entry.label}: ${entry.value}".take(available - 2).padEnd(available - 2, ' ')
+                    withStyle(if (ordinal == urlSelectionOrdinal) active else panel) {
+                        drawText(dropdownX, row, ("  " + text).take(available).padEnd(available, ' '))
+                    }
+                    hits += UrlSuggestionHit(entry.group, entry.index, row)
+                }
+            }
+        }
+        urlSuggestionHits = hits
+    }
+
+    private fun urlSuggestionRows(): List<UrlSuggestionRow> {
+        val suggestions = service.jdbcUrlSuggestionService.forDriver(selectedDriverDef().id)
+        return buildList {
+            if (suggestions.recents.isNotEmpty()) {
+                add(UrlSuggestionRow("Recents", -1, "Recents", null))
+                suggestions.recents.forEachIndexed { index, value -> add(UrlSuggestionRow("recent", index, value, value)) }
+            }
+            if (suggestions.standard.isNotEmpty()) {
+                add(UrlSuggestionRow("Standard", -1, "Standard", null))
+                suggestions.standard.forEachIndexed { index, value -> add(UrlSuggestionRow("standard", index, value.label, value.template)) }
+            }
+        }
+    }
+
+    private fun openUrlSuggestions() {
+        if (urlSuggestionRows().none { it.value != null }) return
+        urlDropdown = true
+        urlSelectionOrdinal = 0
+        urlDropdownScroll = 0
+        driverDropdown = false
+        onInvalidate()
+    }
+
+    private fun selectUrlSuggestion(hit: UrlSuggestionHit) {
+        val entry = urlSuggestionRows().firstOrNull { it.group == hit.group && it.index == hit.index } ?: return
+        entry.value?.let { fields[1].set(it) }
+        urlDropdown = false
+        focus = 2
     }
 
     override fun dispatch(event: UIEvent): Boolean {
@@ -209,6 +300,11 @@ class DatabaseConnectionDialog(
             buttonHits.firstOrNull { my == lastButtonRow && mx in it.x }?.let {
                 focus = buttonStart() + buttonHits.indexOf(it)
                 activate(it.action)
+                return true
+            }
+            if (urlDropdown && urlDropdownRows.contains(my)) {
+                urlSuggestionHits.firstOrNull { it.row == my }?.let(::selectUrlSuggestion)
+                onInvalidate()
                 return true
             }
             if (driverDropdown && dropdownRows.contains(my)) {
@@ -222,6 +318,7 @@ class DatabaseConnectionDialog(
                 focus = it.index
                 setCursorForFocus(it.index, (mx - it.x.first).coerceAtLeast(0))
                 if (focus == 0) driverDropdown = !driverDropdown
+                if (focus == 2 && mx >= it.x.last - 2) openUrlSuggestions()
                 onInvalidate()
                 return true
             }
@@ -229,6 +326,31 @@ class DatabaseConnectionDialog(
         }
         if (event.kind != "key_down") return true
         val key = event.key?.lowercase() ?: return true
+        if (urlDropdown && focus == 2) {
+            when (key) {
+                "escape", "esc" -> {
+                    urlDropdown = false
+                    onInvalidate()
+                    return true
+                }
+                "up", "down" -> {
+                    val count = urlSuggestionRows().count { it.value != null }
+                    if (count > 0) {
+                        val delta = if (key == "up") -1 else 1
+                        urlSelectionOrdinal = (urlSelectionOrdinal + delta).coerceIn(0, count - 1)
+                        onInvalidate()
+                    }
+                    return true
+                }
+                "enter", "return" -> {
+                    val selected = urlSuggestionRows().filter { it.value != null }.getOrNull(urlSelectionOrdinal)
+                    selected?.let { selectUrlSuggestion(UrlSuggestionHit(it.group, it.index, -1)) }
+                    onInvalidate()
+                    return true
+                }
+                else -> urlDropdown = false
+            }
+        }
         if (key == "escape" || key == "esc") {
             onDismiss()
             return true
@@ -251,6 +373,10 @@ class DatabaseConnectionDialog(
                     return true
                 }
             }
+        }
+        if (focus == 2 && key == "down") {
+            openUrlSuggestions()
+            return true
         }
         if (key == "tab" || key == "down") {
             focus = (focus + 1).coerceAtMost(buttonStart() + 3)
@@ -350,9 +476,8 @@ class DatabaseConnectionDialog(
     private fun selectDriver(index: Int) {
         val previous = selectedDriver
         selectedDriver = index.coerceIn(drivers.indices)
+        urlDropdown = false
         if (previous != selectedDriver) versionField.set("")
-        val definition = selectedDriverDef()
-        if (fields[1].value.isBlank() || fields[1].value.startsWith("jdbc:")) fields[1].set(definition.defaultJdbcUrlTemplate)
     }
 
     private fun selectedDriverDef(): JdbcDriverDefinition = drivers[selectedDriver]

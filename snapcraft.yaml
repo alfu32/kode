@@ -32,6 +32,10 @@ apps:
       - removable-media
       - network
       - network-bind
+      - desktop
+      - desktop-legacy
+      - x11
+      - wayland
 
 parts:
   kode:

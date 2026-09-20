@@ -139,7 +139,7 @@ fun handleKeyForBuffer(buffer: ITextBuffer, ev: UIEvent, singleLine: Boolean = f
     // Normalize those names before dispatching them to the buffer so embedded
     // editors behave the same as the main editor.
     val key = when (rawKey.lowercase()) {
-        "enter", "return" -> "Enter"
+        "enter", "return", "\r", "\n" -> "Enter"
         "backspace" -> "Backspace"
         "delete" -> "Delete"
         "left" -> "Left"
@@ -153,41 +153,48 @@ fun handleKeyForBuffer(buffer: ITextBuffer, ev: UIEvent, singleLine: Boolean = f
     val ctrl = ev.ctrl
     val shift = ev.shift
     val before = buffer.text()
+    var handled = false
 
     when (key) {
         "Backspace" -> {
             buffer.deleteBackspace()
+            handled = true
         }
         "Delete" -> {
             buffer.deleteForward()
+            handled = true
         }
-        "Enter" -> if (!singleLine) buffer.insertNewline()
-        "Left" -> buffer.moveLeft(expand = shift, word = ctrl)
-        "Right" -> buffer.moveRight(expand = shift, word = ctrl)
-        "Up" -> buffer.moveUp(expand = shift)
-        "Down" -> buffer.moveDown(expand = shift)
-        "Home" -> buffer.moveStartOfLine(expand = shift)
-        "End" -> buffer.moveEndOfLine(expand = shift)
+        "Enter" -> if (!singleLine) { buffer.insertNewline(); handled = true }
+        "Left" -> { buffer.moveLeft(expand = shift, word = ctrl); handled = true }
+        "Right" -> { buffer.moveRight(expand = shift, word = ctrl); handled = true }
+        "Up" -> { buffer.moveUp(expand = shift); handled = true }
+        "Down" -> { buffer.moveDown(expand = shift); handled = true }
+        "Home" -> { buffer.moveStartOfLine(expand = shift); handled = true }
+        "End" -> { buffer.moveEndOfLine(expand = shift); handled = true }
         else -> {
-            if (ev.alt) {
+            if (ctrl) {
                 when (key.lowercase()) {
-                    "c" -> buffer.copySelection()
-                    "x" -> if (buffer.cutSelection()) {}
-                    "v" -> buffer.pasteClipboard()
-                    "u" -> buffer.undo()
-                    "r" -> buffer.redo()
+                    "a" -> { buffer.selectAll(); handled = true }
+                    "c" -> { buffer.copySelection(); handled = true }
+                    "x" -> { buffer.cutSelection(); handled = true }
+                    "v" -> { buffer.pasteClipboard(); handled = true }
+                    "s" -> handled = true // save is handled by the owning editor
                 }
-            } else if (ctrl) {
+            } else if (ev.alt) {
                 when (key.lowercase()) {
-                    "a" -> buffer.selectAll()
-                    "s" -> {} // placeholder for save hook
+                    "c" -> { buffer.copySelection(); handled = true }
+                    "x" -> { buffer.cutSelection(); handled = true }
+                    "v" -> { buffer.pasteClipboard(); handled = true }
+                    "u" -> { buffer.undo(); handled = true }
+                    "r" -> { buffer.redo(); handled = true }
                 }
             } else if (!ev.alt && key.length == 1) {
                 buffer.insertText(key)
+                handled = true
             }
         }
     }
-    return buffer.text() != before
+    return handled || buffer.text() != before
 }
 
 fun renderBuffer(buffer: ITextBuffer, width: Int, height: Int, startLine: Int = 0): String {

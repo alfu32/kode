@@ -379,6 +379,7 @@ class TextBuffer : ITextBuffer {
     override fun copySelection(): Boolean {
         val r = selectionRange() ?: return false
         clipboard = extractText(r)
+        SystemClipboard.setText(clipboard)
         notifications.add(Notification(NotificationKind.COPY, clipboard))
         return true
     }
@@ -387,6 +388,7 @@ class TextBuffer : ITextBuffer {
         val r = selectionRange() ?: return false
         mutate {
             clipboard = extractText(r)
+            SystemClipboard.setText(clipboard)
             deleteSelection()
             notifications.add(Notification(NotificationKind.CUT, clipboard))
         }
@@ -394,7 +396,8 @@ class TextBuffer : ITextBuffer {
     }
 
     override fun pasteClipboard() {
-        if (clipboard.isNotEmpty()) insertText(clipboard)
+        val value = SystemClipboard.getText().also { clipboard = it }
+        if (value.isNotEmpty()) insertText(value)
     }
 
     override fun consumeNotifications(): List<Notification> {
@@ -993,4 +996,3 @@ private fun BufferSnapshotState.toSnapshot(): BufferSnapshot =
 
 data class Notification(val kind: NotificationKind, val text: String)
 enum class NotificationKind { COPY, CUT }
-

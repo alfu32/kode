@@ -14,6 +14,7 @@ import editor.ui.FormFieldRenderer
 import editor.ui.ModalDialogFrame
 import editor.ui.ModalDialogBounds
 import editor.ui.ModalTextInputDialog
+import editor.lib.SystemClipboard
 import java.nio.file.Path
 import react.BaseComponent
 import react.StyleSet
@@ -260,6 +261,19 @@ class RestPanelView(
         }
         if (event.kind != "key_down") return false
         if (filtering) {
+            if (event.ctrl) {
+                when (event.key?.lowercase()) {
+                    "c" -> { SystemClipboard.setText(filter); return true }
+                    "x" -> { SystemClipboard.setText(filter); filter = ""; filterCursor = 0; onInvalidate(); return true }
+                    "v" -> {
+                        val paste = SystemClipboard.getText()
+                        filter = filter.substring(0, filterCursor) + paste + filter.substring(filterCursor)
+                        filterCursor += paste.length
+                        onInvalidate()
+                        return true
+                    }
+                }
+            }
             when (event.key?.lowercase()) {
                 "escape", "esc" -> {
                     filter = ""

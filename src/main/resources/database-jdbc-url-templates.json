@@ -1,0 +1,306 @@
+{
+  "version": 1,
+  "drivers": [
+    {"driverId":"postgresql","recentFamily":"postgresql","defaultPort":5432,"templates":[
+      {"id":"basic","label":"TCP / host + port + database","template":"jdbc:postgresql://{host}:5432/{database}"},
+      {"id":"default-port","label":"TCP / default port","template":"jdbc:postgresql://{host}/{database}"},
+      {"id":"local","label":"Local/default host","template":"jdbc:postgresql:{database}","note":"Uses the driver's default host and port."},
+      {"id":"failover","label":"Multiple hosts / failover","template":"jdbc:postgresql://{host1}:5432,{host2}:5432/{database}"},
+      {"id":"primary","label":"Multiple hosts / require primary","template":"jdbc:postgresql://{host1}:5432,{host2}:5432/{database}?targetServerType=primary"},
+      {"id":"read-preferred","label":"Multiple hosts / prefer secondary + load balance","template":"jdbc:postgresql://{host1}:5432,{host2}:5432/{database}?targetServerType=preferSecondary&loadBalanceHosts=true"},
+      {"id":"tls-verify-full","label":"TLS / verify server identity","template":"jdbc:postgresql://{host}:5432/{database}?sslmode=verify-full"}
+    ]},
+    {"driverId":"mysql","recentFamily":"mysql","defaultPort":3306,"templates":[
+      {"id":"basic","label":"TCP","template":"jdbc:mysql://{host}:3306/{database}"},
+      {"id":"default-port","label":"TCP / default port","template":"jdbc:mysql://{host}/{database}"},
+      {"id":"multi-host","label":"Multiple hosts / failover","template":"jdbc:mysql://{host1}:3306,{host2}:3306/{database}"},
+      {"id":"loadbalance","label":"Load balancing","template":"jdbc:mysql:loadbalance://{host1}:3306,{host2}:3306/{database}"},
+      {"id":"replication","label":"Source / replica","template":"jdbc:mysql:replication://{source}:3306,{replica}:3306/{database}"},
+      {"id":"srv","label":"DNS SRV","template":"jdbc:mysql+srv://{dnsSrvService}/{database}","note":"DNS SRV form must not specify a port."},
+      {"id":"srv-loadbalance","label":"DNS SRV / load balancing","template":"jdbc:mysql+srv:loadbalance://{dnsSrvService}/{database}"},
+      {"id":"srv-replication","label":"DNS SRV / replication","template":"jdbc:mysql+srv:replication://{dnsSrvService}/{database}"},
+      {"id":"host-properties","label":"Host property syntax","template":"jdbc:mysql://(host={host},port=3306)/{database}","advanced":true},
+      {"id":"tls","label":"TLS required","template":"jdbc:mysql://{host}:3306/{database}?sslMode=VERIFY_IDENTITY"}
+    ]},
+    {"driverId":"mariadb","recentFamily":"mariadb","defaultPort":3306,"templates":[
+      {"id":"basic","label":"TCP","template":"jdbc:mariadb://{host}:3306/{database}"},
+      {"id":"default-port","label":"TCP / default port","template":"jdbc:mariadb://{host}/{database}"},
+      {"id":"sequential","label":"Sequential failover","template":"jdbc:mariadb:sequential://{host1}:3306,{host2}:3306/{database}"},
+      {"id":"loadbalance","label":"Load balancing","template":"jdbc:mariadb:loadbalance://{host1}:3306,{host2}:3306/{database}"},
+      {"id":"replication","label":"Primary / replica","template":"jdbc:mariadb:replication://{primary}:3306,{replica}:3306/{database}"},
+      {"id":"load-balance-read","label":"Primary failover + replica read balancing","template":"jdbc:mariadb:load-balance-read://{primary1}:3306,{primary2}:3306,address=(host={replica1})(port=3306)(type=replica)/{database}","minDriverVersion":"3.5.1"},
+      {"id":"local-socket","label":"Unix local socket","template":"jdbc:mariadb://address=(localSocket={socketPath})/{database}","minDriverVersion":"3.4.1","advanced":true},
+      {"id":"tls","label":"TLS / verify server identity","template":"jdbc:mariadb://{host}:3306/{database}?sslMode=verify-full"}
+    ]},
+    {"driverId":"oracle","recentFamily":"oracle","defaultPort":1521,"templates":[
+      {"id":"service","label":"Thin / host + service name","template":"jdbc:oracle:thin:@//{host}:1521/{serviceName}"},
+      {"id":"service-custom-port","label":"Thin / custom port + service name","template":"jdbc:oracle:thin:@//{host}:{port}/{serviceName}"},
+      {"id":"easy-connect-tcp","label":"Easy Connect Plus / TCP","template":"jdbc:oracle:thin:@tcp:{host}:1521/{serviceName}"},
+      {"id":"tcps","label":"Easy Connect Plus / TCPS","template":"jdbc:oracle:thin:@tcps:{host}:1521/{serviceName}"},
+      {"id":"multi-host","label":"Easy Connect Plus / multiple hosts","template":"jdbc:oracle:thin:@tcp:{host1}:1521,{host2}:1521/{serviceName}"},
+      {"id":"multi-host-different-ports","label":"Easy Connect Plus / multiple hosts and ports","template":"jdbc:oracle:thin:@tcp:{host1}:1521,{host2}:1522/{serviceName}"},
+      {"id":"tns-alias","label":"TNS alias","template":"jdbc:oracle:thin:@{tnsAlias}"},
+      {"id":"sid-legacy","label":"Thin / SID","template":"jdbc:oracle:thin:@{host}:1521:{sid}","legacy":true},
+      {"id":"descriptor","label":"Full DESCRIPTION / service","template":"jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={host})(PORT=1521))(CONNECT_DATA=(SERVICE_NAME={serviceName})))","advanced":true},
+      {"id":"descriptor-ha","label":"DESCRIPTION / load-balanced addresses","template":"jdbc:oracle:thin:@(DESCRIPTION=(LOAD_BALANCE=on)(ADDRESS_LIST=(ADDRESS=(PROTOCOL=TCP)(HOST={host1})(PORT=1521))(ADDRESS=(PROTOCOL=TCP)(HOST={host2})(PORT=1521)))(CONNECT_DATA=(SERVICE_NAME={serviceName})))","advanced":true},
+      {"id":"ldap","label":"LDAP naming","template":"jdbc:oracle:thin:@ldap://{ldapHost}:7777/{serviceName},cn=OracleContext,dc={domain},dc={tld}","advanced":true},
+      {"id":"ldaps","label":"LDAP over TLS","template":"jdbc:oracle:thin:@ldaps://{ldapHost}:1636/{serviceName},cn=OracleContext,dc={domain},dc={tld}","advanced":true}
+    ]},
+    {"driverId":"sqlserver","recentFamily":"sqlserver","defaultPort":1433,"templates":[
+      {"id":"basic","label":"TCP / database","template":"jdbc:sqlserver://{host}:1433;databaseName={database}"},
+      {"id":"custom-port","label":"TCP / custom port","template":"jdbc:sqlserver://{host}:{port};databaseName={database}"},
+      {"id":"named-instance","label":"Named instance","template":"jdbc:sqlserver://{host};instanceName={instance};databaseName={database}"},
+      {"id":"tls","label":"TLS / validate server certificate","template":"jdbc:sqlserver://{host}:1433;databaseName={database};encrypt=true;trustServerCertificate=false"},
+      {"id":"kerberos","label":"Java Kerberos","template":"jdbc:sqlserver://{host}:1433;databaseName={database};integratedSecurity=true;authenticationScheme=JavaKerberos","advanced":true}
+    ]},
+    {"driverId":"db2","recentFamily":"db2","defaultPort":50000,"templates":[
+      {"id":"luw","label":"Db2 LUW / Type 4","template":"jdbc:db2://{host}:50000/{database}"},
+      {"id":"custom-port","label":"Db2 / custom port","template":"jdbc:db2://{host}:{port}/{database}"},
+      {"id":"schema","label":"Db2 / current schema","template":"jdbc:db2://{host}:50000/{database}:currentSchema={schema};"},
+      {"id":"ssl","label":"Db2 / TLS","template":"jdbc:db2://{host}:50001/{database}:sslConnection=true;","note":"50001 is common for SSL-configured LUW installations but is not universal."},
+      {"id":"zos","label":"Db2 for z/OS / location","template":"jdbc:db2://{host}:446/{location}","advanced":true}
+    ]},
+    {"driverId":"sqlite","recentFamily":"sqlite","templates":[
+      {"id":"relative-file","label":"File / relative path","template":"jdbc:sqlite:{file}.db"},
+      {"id":"absolute-file","label":"File / absolute path","template":"jdbc:sqlite:{absolutePath}"},
+      {"id":"memory","label":"Private in-memory database","template":"jdbc:sqlite::memory:"},
+      {"id":"temporary","label":"Temporary database","template":"jdbc:sqlite:","note":"Empty SQLite database name creates a temporary database."},
+      {"id":"resource","label":"Classpath/resource database","template":"jdbc:sqlite::resource:{resourcePath}","advanced":true}
+    ]},
+    {"driverId":"h2","recentFamily":"h2","defaultPort":9092,"templates":[
+      {"id":"memory-private","label":"Private in-memory database","template":"jdbc:h2:mem:"},
+      {"id":"memory-named","label":"Named in-memory database","template":"jdbc:h2:mem:{database}"},
+      {"id":"memory-keep-alive","label":"Named memory / keep alive","template":"jdbc:h2:mem:{database};DB_CLOSE_DELAY=-1"},
+      {"id":"file-relative","label":"File / relative","template":"jdbc:h2:file:./{database}"},
+      {"id":"file-home","label":"File / user home","template":"jdbc:h2:~/{database}"},
+      {"id":"file-absolute","label":"File / absolute","template":"jdbc:h2:file:{absolutePath}"},
+      {"id":"tcp","label":"H2 TCP server","template":"jdbc:h2:tcp://{host}:9092/{databasePath}"},
+      {"id":"tcp-home","label":"H2 TCP / server user home","template":"jdbc:h2:tcp://{host}:9092/~/{database}"},
+      {"id":"tcp-memory","label":"H2 TCP / server-side in-memory database","template":"jdbc:h2:tcp://{host}:9092/mem:{database}"},
+      {"id":"tls","label":"H2 SSL server","template":"jdbc:h2:ssl://{host}:9092/{databasePath}"},
+      {"id":"encrypted-file","label":"Encrypted file database","template":"jdbc:h2:file:{absolutePath};CIPHER=AES","advanced":true}
+    ]},
+    {"driverId":"hsqldb","recentFamily":"hsqldb","defaultPort":9001,"templates":[
+      {"id":"memory","label":"In-memory database","template":"jdbc:hsqldb:mem:{database}"},
+      {"id":"file","label":"File database","template":"jdbc:hsqldb:file:{path}"},
+      {"id":"resource","label":"Resource database","template":"jdbc:hsqldb:res:{resourcePath}"},
+      {"id":"hsql","label":"HSQL server","template":"jdbc:hsqldb:hsql://{host}:9001/{alias}"},
+      {"id":"hsqls","label":"HSQL server / TLS","template":"jdbc:hsqldb:hsqls://{host}:{port}/{alias}"},
+      {"id":"http","label":"HTTP server","template":"jdbc:hsqldb:http://{host}:{port}/{alias}"},
+      {"id":"https","label":"HTTPS server","template":"jdbc:hsqldb:https://{host}:{port}/{alias}"}
+    ]},
+    {"driverId":"derby-embedded","recentFamily":"derby","templates":[
+      {"id":"database","label":"Embedded database","template":"jdbc:derby:{database}"},
+      {"id":"create","label":"Embedded database / create","template":"jdbc:derby:{database};create=true"},
+      {"id":"memory","label":"In-memory database / create","template":"jdbc:derby:memory:{database};create=true"},
+      {"id":"directory","label":"Directory database","template":"jdbc:derby:directory:{path}"},
+      {"id":"classpath","label":"Read-only classpath database","template":"jdbc:derby:classpath:{resourcePath}","advanced":true},
+      {"id":"jar","label":"Read-only database in JAR/ZIP","template":"jdbc:derby:jar:({archivePath}){databasePath}","advanced":true}
+    ]},
+    {"driverId":"derby-client","recentFamily":"derby-client","defaultPort":1527,"templates":[
+      {"id":"network","label":"Network Server","template":"jdbc:derby://{host}:1527/{database}"},
+      {"id":"network-custom","label":"Network Server / custom port","template":"jdbc:derby://{host}:{port}/{database}"},
+      {"id":"create","label":"Network Server / create database","template":"jdbc:derby://{host}:1527/{database};create=true"},
+      {"id":"memory","label":"Network Server / in-memory database","template":"jdbc:derby://{host}:1527/memory:{database};create=true"}
+    ]},
+    {"driverId":"firebird","recentFamily":"firebird","defaultPort":3050,"templates":[
+      {"id":"network","label":"Pure Java / TCP","template":"jdbc:firebird://{host}:3050/{database}"},
+      {"id":"default-port","label":"Pure Java / default port","template":"jdbc:firebird://{host}/{database}"},
+      {"id":"localhost","label":"Pure Java / localhost","template":"jdbc:firebird:///{database}"},
+      {"id":"compatibility-prefix","label":"firebirdsql compatibility prefix","template":"jdbc:firebirdsql://{host}:3050/{database}","advanced":true}
+    ]},
+    {"driverId":"informix","recentFamily":"informix","templates":[
+      {"id":"basic","label":"Informix server","template":"jdbc:informix-sqli://{host}:{port}/{database}:INFORMIXSERVER={serverName}"},
+      {"id":"locale","label":"Informix server / locales","template":"jdbc:informix-sqli://{host}:{port}/{database}:INFORMIXSERVER={serverName};DB_LOCALE={dbLocale};CLIENT_LOCALE={clientLocale}","advanced":true},
+      {"id":"sqlhosts","label":"sqlhosts file","template":"jdbc:informix-sqli:informixserver={serverName};SQLH_TYPE=FILE;SQLH_FILE={sqlhostsPath}","advanced":true}
+    ]},
+    {"driverId":"iris","recentFamily":"iris","defaultPort":1972,"templates":[
+      {"id":"basic","label":"IRIS namespace","template":"jdbc:IRIS://{host}:1972/{namespace}"},
+      {"id":"custom-port","label":"IRIS namespace / custom port","template":"jdbc:IRIS://{host}:{port}/{namespace}"}
+    ]},
+    {"driverId":"tibero","recentFamily":"tibero","defaultPort":8629,"templates":[
+      {"id":"basic","label":"Tibero Thin","template":"jdbc:tibero:thin:@{host}:8629:{databaseName}"},
+      {"id":"custom-port","label":"Tibero Thin / custom port","template":"jdbc:tibero:thin:@{host}:{port}:{databaseName}"},
+      {"id":"tac","label":"TAC / load balancing","template":"jdbc:tibero:thin:@(description=(load_balance=on)(address_list=(address=(host={host1})(port=8629))(address=(host={host2})(port=8629)))(DATABASE_NAME={databaseName}))","advanced":true},
+      {"id":"tac-failover","label":"TAC / failover + load balancing","template":"jdbc:tibero:thin:@(description=(failover=on)(load_balance=on)(address_list=(address=(host={host1})(port=8629))(address=(host={host2})(port=8629)))(DATABASE_NAME={databaseName}))","advanced":true}
+    ]},
+    {"driverId":"teradata","recentFamily":"teradata","templates":[
+      {"id":"basic","label":"Teradata / host","template":"jdbc:teradata://{host}"},
+      {"id":"database","label":"Default database","template":"jdbc:teradata://{host}/DATABASE={database}"},
+      {"id":"database-port","label":"Database + DBS port","template":"jdbc:teradata://{host}/DATABASE={database},DBS_PORT={port}"},
+      {"id":"encrypted","label":"Database + encrypted traffic","template":"jdbc:teradata://{host}/DATABASE={database},ENCRYPTDATA=ON","advanced":true},
+      {"id":"browser-sso","label":"Browser SSO","template":"jdbc:teradata://{host}/LOGMECH=BROWSER,BROWSER_TAB_TIMEOUT=0","advanced":true}
+    ]},
+    {"driverId":"vertica","recentFamily":"vertica","defaultPort":5433,"templates":[
+      {"id":"basic","label":"Vertica","template":"jdbc:vertica://{host}:5433/{database}"},
+      {"id":"custom-port","label":"Vertica / custom port","template":"jdbc:vertica://{host}:{port}/{database}"},
+      {"id":"server-only","label":"Server / database omitted","template":"jdbc:vertica://{host}:5433"},
+      {"id":"tls","label":"TLS / verify server","template":"jdbc:vertica://{host}:5433/{database}?TLSmode=verify-full"},
+      {"id":"backup-nodes","label":"Backup server nodes","template":"jdbc:vertica://{host}:5433/{database}?BackupServerNode={host2}:5433,{host3}:5433","advanced":true}
+    ]},
+    {"driverId":"exasol","recentFamily":"exasol","defaultPort":8563,"templates":[
+      {"id":"basic","label":"Exasol","template":"jdbc:exa:{host}:8563"},
+      {"id":"custom-port","label":"Exasol / custom port","template":"jdbc:exa:{host}:{port}"},
+      {"id":"multiple-hosts","label":"Multiple hosts","template":"jdbc:exa:{host1},{host2}:8563"},
+      {"id":"fingerprint-host","label":"TLS certificate fingerprint","template":"jdbc:exa:{host}/{fingerprint}:8563"},
+      {"id":"fingerprint-property","label":"TLS certificate fingerprint property","template":"jdbc:exa:{host}:8563;fingerprint={fingerprint};","advanced":true}
+    ]},
+    {"driverId":"sap-hana","recentFamily":"sap-hana","templates":[
+      {"id":"basic","label":"SAP HANA","template":"jdbc:sap://{host}:{port}"},
+      {"id":"database","label":"SAP HANA / database","template":"jdbc:sap://{host}:{port}/?databaseName={database}"},
+      {"id":"tls","label":"SAP HANA / TLS + certificate validation","template":"jdbc:sap://{host}:{port}/?databaseName={database}&encrypt=true&validateCertificate=true"},
+      {"id":"hana-cloud","label":"SAP HANA Cloud","template":"jdbc:sap://{instance}.{domain}.hanacloud.ondemand.com:443?encrypt=true","advanced":true}
+    ]},
+    {"driverId":"snowflake","recentFamily":"snowflake","templates":[
+      {"id":"basic","label":"Snowflake account","template":"jdbc:snowflake://{accountIdentifier}.snowflakecomputing.com/"},
+      {"id":"context","label":"Warehouse + database + schema","template":"jdbc:snowflake://{accountIdentifier}.snowflakecomputing.com/?warehouse={warehouse}&db={database}&schema={schema}"},
+      {"id":"context-role","label":"Warehouse + database + schema + role","template":"jdbc:snowflake://{accountIdentifier}.snowflakecomputing.com/?warehouse={warehouse}&db={database}&schema={schema}&role={role}"}
+    ]},
+    {"driverId":"redshift","recentFamily":"redshift","defaultPort":5439,"templates":[
+      {"id":"basic","label":"Redshift endpoint","template":"jdbc:redshift://{endpoint}:5439/{database}"},
+      {"id":"custom-port","label":"Redshift endpoint / custom port","template":"jdbc:redshift://{endpoint}:{port}/{database}"},
+      {"id":"ssl","label":"Redshift / SSL","template":"jdbc:redshift://{endpoint}:5439/{database};ssl=true"},
+      {"id":"iam-endpoint","label":"IAM / endpoint","template":"jdbc:redshift:iam://{endpoint}:5439/{database}"},
+      {"id":"iam-cluster","label":"IAM / cluster ID + region","template":"jdbc:redshift:iam://{clusterId}:{region}/{database}"},
+      {"id":"serverless-iam","label":"Redshift Serverless / IAM","template":"jdbc:redshift:iam://{workgroup}.{accountId}.{region}.redshift-serverless.amazonaws.com:5439/{database}","advanced":true}
+    ]},
+    {"driverId":"bigquery","recentFamily":"bigquery","defaultPort":443,"templates":[
+      {"id":"adc","label":"Application Default Credentials","template":"jdbc:bigquery://https://www.googleapis.com/bigquery/v2:443;ProjectId={projectId};OAuthType=3;"},
+      {"id":"adc-dataset","label":"ADC + default dataset","template":"jdbc:bigquery://https://www.googleapis.com/bigquery/v2:443;ProjectId={projectId};OAuthType=3;DefaultDataset={dataset};"},
+      {"id":"service-account-file","label":"Service-account key file","template":"jdbc:bigquery://https://www.googleapis.com/bigquery/v2:443;ProjectId={projectId};OAuthType=0;OAuthPvtKeyPath={serviceAccountJsonPath};","advanced":true}
+    ]},
+    {"driverId":"trino","recentFamily":"trino","templates":[
+      {"id":"server","label":"Trino server","template":"jdbc:trino://{host}:8080"},
+      {"id":"catalog","label":"Trino / catalog","template":"jdbc:trino://{host}:8080/{catalog}"},
+      {"id":"schema","label":"Trino / catalog + schema","template":"jdbc:trino://{host}:8080/{catalog}/{schema}"},
+      {"id":"tls","label":"Trino / TLS","template":"jdbc:trino://{host}:443/{catalog}/{schema}?SSL=true"}
+    ]},
+    {"driverId":"presto","recentFamily":"presto","templates":[
+      {"id":"server","label":"Presto server","template":"jdbc:presto://{host}:8080"},
+      {"id":"catalog","label":"Presto / catalog","template":"jdbc:presto://{host}:8080/{catalog}"},
+      {"id":"schema","label":"Presto / catalog + schema","template":"jdbc:presto://{host}:8080/{catalog}/{schema}"}
+    ]},
+    {"driverId":"hive","recentFamily":"hive","defaultPort":10000,"templates":[
+      {"id":"binary","label":"HiveServer2 / binary","template":"jdbc:hive2://{host}:10000/{database}"},
+      {"id":"embedded","label":"Embedded Hive","template":"jdbc:hive2:///"},
+      {"id":"http","label":"HiveServer2 / HTTP transport","template":"jdbc:hive2://{host}:10001/{database};transportMode=http;httpPath=cliservice","advanced":true},
+      {"id":"zookeeper","label":"ZooKeeper service discovery","template":"jdbc:hive2://{zk1}:2181,{zk2}:2181,{zk3}:2181/;serviceDiscoveryMode=zooKeeper;zooKeeperNamespace=hiveserver2","advanced":true},
+      {"id":"ssl","label":"HiveServer2 / SSL","template":"jdbc:hive2://{host}:10000/{database};ssl=true","advanced":true}
+    ]},
+    {"driverId":"databricks","recentFamily":"databricks","defaultPort":443,"templates":[
+      {"id":"compute","label":"Databricks compute","template":"jdbc:databricks://{serverHostname}:443;httpPath={httpPath}"},
+      {"id":"schema","label":"Databricks compute + schema","template":"jdbc:databricks://{serverHostname}:443/{schema};httpPath={httpPath}"},
+      {"id":"catalog-schema","label":"Databricks compute + catalog + schema","template":"jdbc:databricks://{serverHostname}:443/{schema};httpPath={httpPath};Catalog={catalog}"}
+    ]},
+    {"driverId":"clickhouse","recentFamily":"clickhouse","templates":[
+      {"id":"http-short","label":"HTTP / ch prefix","template":"jdbc:ch://{host}:8123/{database}"},
+      {"id":"http-explicit","label":"HTTP / explicit protocol","template":"jdbc:clickhouse:http://{host}:8123/{database}"},
+      {"id":"https","label":"HTTPS","template":"jdbc:ch:https://{host}:8443/{database}"},
+      {"id":"https-long","label":"HTTPS / clickhouse prefix","template":"jdbc:clickhouse:https://{host}:8443/{database}?ssl=true"}
+    ]},
+    {"driverId":"duckdb","recentFamily":"duckdb","templates":[
+      {"id":"memory-private","label":"Private in-memory database","template":"jdbc:duckdb:"},
+      {"id":"memory-explicit","label":"Private in-memory database / explicit","template":"jdbc:duckdb:memory:"},
+      {"id":"memory-named","label":"Named shared in-memory database","template":"jdbc:duckdb:memory:{name}"},
+      {"id":"file","label":"File database","template":"jdbc:duckdb:{path}"},
+      {"id":"file-options","label":"File + configuration","template":"jdbc:duckdb:{path};threads={threads};memory_limit={memoryLimit}","advanced":true},
+      {"id":"ducklake","label":"DuckLake","template":"jdbc:duckdb:ducklake:{metadataPath}","advanced":true}
+    ]},
+    {"driverId":"singlestore","recentFamily":"singlestore","defaultPort":3306,"templates":[
+      {"id":"basic","label":"SingleStore","template":"jdbc:singlestore://{host}:3306/{database}"},
+      {"id":"default-port","label":"SingleStore / default port","template":"jdbc:singlestore://{host}/{database}"},
+      {"id":"sequential","label":"Sequential failover","template":"jdbc:singlestore:sequential://{host1}:3306,{host2}:3306/{database}"},
+      {"id":"loadbalance","label":"Load balancing","template":"jdbc:singlestore:loadbalance://{host1}:3306,{host2}:3306/{database}"},
+      {"id":"host-description","label":"Host property syntax","template":"jdbc:singlestore://address=(host={host})(port=3306)/{database}","advanced":true}
+    ]},
+    {"driverId":"spanner","recentFamily":"spanner","templates":[
+      {"id":"basic","label":"Cloud Spanner","template":"jdbc:cloudspanner:/projects/{project}/instances/{instance}/databases/{database}"},
+      {"id":"emulator","label":"Local Spanner emulator / auto configure","template":"jdbc:cloudspanner:/projects/{project}/instances/{instance}/databases/{database};autoConfigEmulator=true","advanced":true}
+    ]},
+    {"driverId":"ignite2","recentFamily":"ignite2","defaultPort":10800,"templates":[
+      {"id":"basic","label":"Ignite Thin","template":"jdbc:ignite:thin://{host}:10800"},
+      {"id":"schema","label":"Ignite Thin / schema","template":"jdbc:ignite:thin://{host}:10800/{schema}"},
+      {"id":"multiple","label":"Multiple endpoints","template":"jdbc:ignite:thin://{host1}:10800,{host2}:10800/{schema}"},
+      {"id":"port-range","label":"Endpoint port range","template":"jdbc:ignite:thin://{host}:10800..10810/{schema}","advanced":true},
+      {"id":"semicolon-schema","label":"Semicolon property syntax","template":"jdbc:ignite:thin://{host}:10800;schema={schema}","advanced":true}
+    ]},
+    {"driverId":"mongodb-atlas","recentFamily":"mongodb-atlas","templates":[
+      {"id":"atlas-sql","label":"MongoDB Atlas SQL endpoint","template":"jdbc:mongodb://{atlasSqlHost}/{database}"},
+      {"id":"atlas-sql-options","label":"MongoDB Atlas SQL endpoint + options","template":"jdbc:mongodb://{atlasSqlHost}/{database}?{option}={value}","advanced":true}
+    ]},
+    {"driverId":"neo4j","recentFamily":"neo4j","defaultPort":7687,"templates":[
+      {"id":"basic","label":"Neo4j","template":"jdbc:neo4j://{host}:7687/{database}"},
+      {"id":"server","label":"Neo4j / database omitted","template":"jdbc:neo4j://{host}:7687"},
+      {"id":"secure","label":"Neo4j / TLS + CA validation","template":"jdbc:neo4j+s://{host}:7687/{database}"},
+      {"id":"secure-self-signed","label":"Neo4j / TLS + self-signed certificate","template":"jdbc:neo4j+ssc://{host}:7687/{database}","advanced":true}
+    ]},
+    {"driverId":"athena","recentFamily":"athena","templates":[
+      {"id":"region","label":"Athena / region + workgroup","template":"jdbc:athena://Region={region};WorkGroup={workgroup};"},
+      {"id":"context","label":"Athena / catalog + database + workgroup","template":"jdbc:athena://Region={region};Catalog={catalog};Database={database};WorkGroup={workgroup};"},
+      {"id":"output","label":"Athena / explicit output location","template":"jdbc:athena://Region={region};Catalog={catalog};Database={database};WorkGroup={workgroup};OutputLocation=s3://{bucket}/{prefix};"},
+      {"id":"legacy-v2-prefix","label":"Athena v2 compatibility prefix","template":"jdbc:awsathena://Region={region};Workgroup={workgroup};","legacy":true}
+    ]},
+    {"driverId":"documentdb","recentFamily":"documentdb","defaultPort":27017,"templates":[
+      {"id":"basic","label":"Amazon DocumentDB","template":"jdbc:documentdb://{clusterEndpoint}:27017/{database}"},
+      {"id":"default-port","label":"Amazon DocumentDB / default port","template":"jdbc:documentdb://{clusterEndpoint}/{database}"},
+      {"id":"scan","label":"Amazon DocumentDB / scan options","template":"jdbc:documentdb://{clusterEndpoint}:27017/{database}?scanMethod=idForward&scanLimit={scanLimit}","advanced":true}
+    ]},
+    {"driverId":"elasticsearch","recentFamily":"elasticsearch","defaultPort":9200,"templates":[
+      {"id":"basic","label":"Elasticsearch SQL","template":"jdbc:es://{host}:9200/"},
+      {"id":"long-prefix","label":"Elasticsearch SQL / long prefix","template":"jdbc:elasticsearch://{host}:9200/"},
+      {"id":"https","label":"Elasticsearch SQL / HTTPS","template":"jdbc:es://https://{host}:9200/"},
+      {"id":"https-options","label":"Elasticsearch SQL / HTTPS + timezone","template":"jdbc:es://https://{host}:9200/?timezone=UTC"}
+    ]},
+    {"driverId":"sybase-ase","recentFamily":"sybase-ase","templates":[
+      {"id":"basic","label":"SAP ASE / jConnect","template":"jdbc:sybase:Tds:{host}:{port}"},
+      {"id":"database","label":"SAP ASE / database","template":"jdbc:sybase:Tds:{host}:{port}/{database}"},
+      {"id":"properties","label":"SAP ASE / URL properties","template":"jdbc:sybase:Tds:{host}:{port}/{database}?{property}={value}","advanced":true},
+      {"id":"sap-prefix","label":"SAP ASE / current SAP prefix","template":"jdbc:sapase:Tds:{host}:{port}/{database}","advanced":true}
+    ]},
+    {"driverId":"denodo","recentFamily":"denodo","defaultPort":9999,"templates":[
+      {"id":"basic","label":"Denodo VDP","template":"jdbc:denodo://{host}:9999/{database}"},
+      {"id":"default-port","label":"Denodo VDP / default port","template":"jdbc:denodo://{host}/{database}"},
+      {"id":"ssl","label":"Denodo VDP / SSL","template":"jdbc:denodo://{host}:9999/{database}?ssl=true"},
+      {"id":"legacy-vdb","label":"Legacy VDB prefix","template":"jdbc:vdb://{host}:9999/{database}","legacy":true}
+    ]},
+    {"driverId":"mimer","recentFamily":"mimer","defaultPort":1360,"templates":[
+      {"id":"basic","label":"Mimer SQL","template":"jdbc:mimer://{host}:1360/{database}"},
+      {"id":"default-port","label":"Mimer SQL / default port","template":"jdbc:mimer://{host}/{database}"},
+      {"id":"properties","label":"Mimer SQL / property form","template":"jdbc:mimer:?databaseName={database}&serverName={host}&portNumber=1360","advanced":true},
+      {"id":"local","label":"Mimer SQL / local native connection","template":"jdbc:mimer:local:///{database}","advanced":true}
+    ]},
+    {"driverId":"openedge","recentFamily":"openedge","templates":[
+      {"id":"basic","label":"OpenEdge","template":"jdbc:datadirect:openedge://{host}:{port};databaseName={database};"},
+      {"id":"service-name","label":"OpenEdge / service name","template":"jdbc:datadirect:openedge://{host}:-1;databaseName={database};servicename={serviceName};","advanced":true},
+      {"id":"schema","label":"OpenEdge / default schema","template":"jdbc:datadirect:openedge://{host}:{port};databaseName={database};defaultSchema={schema};"}
+    ]},
+    {"driverId":"phoenix","recentFamily":"phoenix","templates":[
+      {"id":"configuration","label":"Phoenix / HBase configuration","template":"jdbc:phoenix"},
+      {"id":"zookeeper","label":"ZooKeeper registry","template":"jdbc:phoenix:{zk1},{zk2},{zk3}:2181:/hbase"},
+      {"id":"zookeeper-explicit","label":"ZooKeeper registry / explicit protocol","template":"jdbc:phoenix+zk:{zk1},{zk2},{zk3}:2181:/hbase"},
+      {"id":"master-registry","label":"HBase master registry","template":"jdbc:phoenix+master:{master1},{master2}","advanced":true},
+      {"id":"rpc-registry","label":"HBase RPC registry","template":"jdbc:phoenix+rpc:{server1}\\:{port1},{server2}\\:{port2}","advanced":true},
+      {"id":"query-server-thin","label":"Phoenix Query Server / Thin","template":"jdbc:phoenix:thin:url=http://{host}:8765","advanced":true}
+    ]},
+    {"driverId":"cockroachdb","recentFamily":"postgresql","inherit":"postgresql"},
+    {"driverId":"greenplum","recentFamily":"postgresql","inherit":"postgresql"},
+    {"driverId":"yugabytedb","recentFamily":"postgresql","inherit":"postgresql"},
+    {"driverId":"timescaledb","recentFamily":"postgresql","inherit":"postgresql"},
+    {"driverId":"citus","recentFamily":"postgresql","inherit":"postgresql"},
+    {"driverId":"aurora-postgresql","recentFamily":"postgresql","inherit":"postgresql"},
+    {"driverId":"tidb","recentFamily":"mysql","inherit":"mysql"},
+    {"driverId":"oceanbase-mysql","recentFamily":"mysql","inherit":"mysql"},
+    {"driverId":"aurora-mysql","recentFamily":"mysql","inherit":"mysql"},
+    {"driverId":"azure-sql","recentFamily":"sqlserver","inherit":"sqlserver","prepend":true,"templates":[
+      {"id":"azure","label":"Azure SQL Database","template":"jdbc:sqlserver://{server}.database.windows.net:1433;databaseName={database};encrypt=true;trustServerCertificate=false"}
+    ]},
+    {"driverId":"sqlserver-localdb","recentFamily":"sqlserver-localdb","templates":[]},
+    {"driverId":"spark-thrift","recentFamily":"hive","inherit":"hive"},
+    {"driverId":"tarantool","recentFamily":"tarantool","templates":[]},
+    {"driverId":"couchbase","recentFamily":"couchbase","templates":[]},
+    {"driverId":"cassandra","recentFamily":"cassandra","templates":[]},
+    {"driverId":"redis","recentFamily":"redis","templates":[]},
+    {"driverId":"dynamodb","recentFamily":"dynamodb","templates":[]},
+    {"driverId":"custom-jdbc","recentFamily":"custom-jdbc","templates":[]}
+  ]
+}

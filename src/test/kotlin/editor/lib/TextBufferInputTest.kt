@@ -17,5 +17,8 @@ class TextBufferInputTest {
 
         assertTrue(handleKeyForBuffer(buffer, UIEvent(kind = "key_down", key = "RETURN")))
         assertEquals("first\n\n", buffer.text())
+
+        assertTrue(handleKeyForBuffer(buffer, UIEvent(kind = "key_down", key = "\r")))
+        assertEquals("first\n\n\n", buffer.text())
     }
 }

@@ -1,5 +1,6 @@
 package editor.ui
 
+import editor.lib.SystemClipboard
 import react.BaseComponent
 import react.StyleSet
 import react.StyleSheet
@@ -144,6 +145,19 @@ open class ModalTextInputDialog(
             return true
         }
         if (event.kind != "key_down") return true
+        if (focus == 0 && event.ctrl) {
+            when (event.key?.lowercase()) {
+                "c" -> { SystemClipboard.setText(value); onInvalidate(); return true }
+                "x" -> { SystemClipboard.setText(value); value = ""; cursor = 0; onInvalidate(); return true }
+                "v" -> {
+                    val paste = SystemClipboard.getText()
+                    value = value.substring(0, cursor) + paste + value.substring(cursor)
+                    cursor += paste.length
+                    onInvalidate()
+                    return true
+                }
+            }
+        }
         when (event.key?.lowercase()) {
             "escape", "esc" -> finish(false)
             "tab", "down" -> focus = (focus + 1) % 3

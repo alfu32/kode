@@ -48,6 +48,7 @@ class CodeEditorView(
     private val onInvalidate: () -> Unit = {},
     private val onFileLoaded: (String) -> Unit = {}
 ) : BaseComponent(styleSheet) {
+    data class ExternalSuggestion(val label: String, val detail: String? = null)
     private companion object {
         private const val HOVER_INFO_DELAY_MS = 500L
         private const val MAX_DEFINITION_PREVIEW_LINES = 24
@@ -103,6 +104,8 @@ class CodeEditorView(
     private var paintedText: String = ""
     private var observedSemanticRevision: Long? = null
     private var transientHighlight: SelectionRange? = null
+    private var warningLines: Set<Int> = emptySet()
+    private var externalSuggestions: ((String) -> List<ExternalSuggestion>)? = null
     private data class PendingFileLoad(val requestId: Long, val content: String)
     private val fileLoadSequence = AtomicLong(0L)
     private val pendingFileLoad = AtomicReference<PendingFileLoad?>(null)
@@ -122,6 +125,17 @@ class CodeEditorView(
         if (transientHighlight == next) return
         transientHighlight = next
         onInvalidate()
+    }
+
+    fun setWarningLines(lines: Set<Int>) {
+        val next = lines.toSet()
+        if (warningLines == next) return
+        warningLines = next
+        onInvalidate()
+    }
+
+    fun setExternalSuggestions(provider: ((String) -> List<ExternalSuggestion>)?) {
+        externalSuggestions = provider
     }
 
     fun insertTextAtCursor(text: String): Boolean {
@@ -473,6 +487,9 @@ class CodeEditorView(
                 }.orEmpty() + transientHighlightToken(lineNumber, lineText).orEmpty().mapNotNull {
                     trimVisualHighlightToChunk(it, visualLine, wrapped.startColumn, wrapped.endColumn)
                 }
+                val lineStyle = if (lineNumber in warningLines) {
+                    localStyleSheet.getStyle("code-search-active").withDefaults(bodyStyle.fg, bodyStyle.bg)
+                } else bodyStyle
                 val hoveredUsageRange = hoveredUsage?.takeIf { it.line == lineNumber }?.let { hu ->
                     val start = maxOf(hu.startColumn, wrapped.startColumn)
                     val end = minOf(hu.endColumn, wrapped.endColumn)
@@ -490,7 +507,7 @@ class CodeEditorView(
                         maxCols = contentCols,
                         tokens = chunkTokens,
                         overlayTokens = chunkIntelTokens,
-                        baseStyle = bodyStyle,
+                        baseStyle = lineStyle,
                         selection = chunkSelection,
                         selectionStyle = selectionStyle,
                         foldStyle = foldPlaceholderStyle
@@ -504,7 +521,7 @@ class CodeEditorView(
                     startX = gutterWidth,
                     maxCols = contentCols,
                     tokens = chunkTokens,
-                    baseStyle = bodyStyle,
+                    baseStyle = lineStyle,
                     overlayTokens = chunkIntelTokens,
                     selection = chunkSelection,
                     selectionStyle = selectionStyle,
@@ -785,7 +802,8 @@ class CodeEditorView(
                         "backspace", "delete", "enter" -> true
                         else -> false
                     } || (!event.ctrl && !event.alt && (event.key?.length == 1)) ||
-                        (event.alt && (key == "x" || key == "v" || key == "u" || key == "r"))
+                        (event.alt && (key == "x" || key == "v" || key == "u" || key == "r")) ||
+                        (event.ctrl && (key == "x" || key == "v"))
                     if (mutating) return true
                 }
                 if (event.ctrl && key == "s") {
@@ -829,8 +847,12 @@ class CodeEditorView(
                 ensureCursorVisible(rows, searchHeight, updatedLayout, gutterWidth)
                 if (textChanged) {
                     triggerCodeIntel()
-                    suggestionPopup = null
-                    renderedSuggestion = null
+                    if (externalSuggestions != null && currentPrefix().isNotBlank()) {
+                        openSuggestions()
+                    } else {
+                        suggestionPopup = null
+                        renderedSuggestion = null
+                    }
                 }
                 return changed || moved || textChanged
             }
@@ -1091,6 +1113,8 @@ class CodeEditorView(
             if (name.isBlank()) return
             if (names.add(name)) results.add(SuggestionEntry(name, detail))
         }
+
+        externalSuggestions?.invoke(prefix).orEmpty().forEach { add(it.label, it.detail) }
 
         val lang = grammarLanguage ?: language
         val completions = codeIntel?.completions(
