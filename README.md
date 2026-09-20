@@ -1,16 +1,16 @@
 # KODE - Code Editor
 
-![img_20.png](assets/img_20.png)
+![img_20.png](assets/old/img_20.png)
 
-![img_14.png](assets/img_14.png)
+![img_14.png](assets/oldimg_14.png)
 
-![img_18.png](assets/img_18.png)
-![img_17.png](assets/img_17.png)
+![img_18.png](assets/old/img_18.png)
+![img_17.png](assets/old/img_17.png)
 
-![img_12.png](assets/img_12.png)
-![img_10.png](assets/img_10.png)
-![img_9.png](assets/img_9.png)
-![img_8.png](assets/img_8.png)
+![img_12.png](assets/old/img_12.png)
+![img_10.png](assets/old/img_10.png)
+![img_9.png](assets/old/img_9.png)
+![img_8.png](assets/old/img_8.png)
 
 ## Objectives
 - Build a terminal-first editor workspace with split panes, tabs, and multiple viewers (code, hex, image) selected by MIME.
@@ -64,20 +64,21 @@ using in combination with tmux with codex and the command promp
 ![img_19.png](assets/img_19.png)
 
 usage of the file management features : renaming file
-![img_18.png](assets/img_18.png)
+![img_18.png](assets/oldimg_18.png)
 
-![img_16.png](assets/img_16.png)
+![img_16.png](assets/oldimg_16.png)
 
-![img_14.png](assets/img_14.png)
-![img_11.png](assets/img_11.png)
-![img_10.png](assets/img_10.png)
-![img_9.png](assets/img_9.png)
-![img_8.png](assets/img_8.png)
-![img_7.png](assets/img_7.png)
-![img_6.png](assets/img_6.png)
-![img_5.png](assets/img_5.png)
-![img_4.png](assets/img_4.png)
-![img_3.png](assets/img_3.png)
-![img_2.png](assets/img_2.png)
-![img_1.png](assets/img_1.png)
-![img.png](assets/img.png)
+![img_14.png](assets/old/img_14.png)
+![img_11.png](assets/old/img_11.png)
+![img_10.png](assets/old/img_10.png)
+![img_9.png](assets/old/img_9.png)
+![img_8.png](assets/old/img_8.png)
+![img_7.png](assets/old/img_7.png)
+![img_6.png](assets/old/img_6.png)
+![img_5.png](assets/old/img_5.png)
+![img_4.png](assets/old/img_4.png)
+![img_3.png](assets/old/img_3.png)
+![img_2.png](assets/old/img_2.png)
+![img_1.png](assets/old/img_1.png)
+![img.png](assets/old/img.png)
+
