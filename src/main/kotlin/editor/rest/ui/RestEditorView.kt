@@ -173,7 +173,7 @@ class RestEditorView(
     init {
         responseEditor.setReadOnly(true)
         rawRequestEditor.setReadOnly(true)
-        headersEditor.setExternalSuggestions { prefix ->
+        headersEditor.setExternalSuggestions(autoShow = false) { prefix ->
             val cursor = headersEditor.currentCursorPosition()
             val used = headersEditor.textContent().lineSequence().mapIndexedNotNull { index, line ->
                 if (index == cursor.line) return@mapIndexedNotNull null

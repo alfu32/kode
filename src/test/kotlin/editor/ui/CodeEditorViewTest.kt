@@ -4,6 +4,8 @@ import editor.lib.Position
 import editor.lib.TextBuffer
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import react.StyleSheet
 import react.UIEvent
@@ -23,6 +25,21 @@ import editor.codeintel.Symbol
 import java.nio.file.Files
 
 class CodeEditorViewTest {
+    @Test
+    fun externalSuggestionsCanRequireExplicitCtrlSpace() {
+        val view = CodeEditorView(StyleSheet())
+        view.setExternalSuggestions(autoShow = false) {
+            listOf(CodeEditorView.ExternalSuggestion("Content-Type", "HTTP header"))
+        }
+        view.loadVirtualContent("<headers>", "Con", "text")
+        view.dispatch(UIEvent(kind = "key_down", key = "End"))
+        view.dispatch(UIEvent(kind = "key_down", key = "t"))
+        assertNull(privateFieldValue(view, "suggestionPopup"))
+
+        view.dispatch(UIEvent(kind = "key_down", key = "space", ctrl = true))
+        assertNotNull(privateFieldValue(view, "suggestionPopup"))
+    }
+
     @Test
     fun pageKeysTraverseWrappedRowsWithinOneLogicalLine() {
         val buffer = TextBuffer().apply { loadText("\t".repeat(100)) }
@@ -421,7 +438,11 @@ class CodeEditorViewTest {
         editor.codeintel.TextRange(TextPosition(line, 0), TextPosition(line, 3))
 
     private fun privateField(view: CodeEditorView, name: String): Any {
-        return CodeEditorView::class.java.getDeclaredField(name).apply { isAccessible = true }.get(view)!!
+        return privateFieldValue(view, name)!!
+    }
+
+    private fun privateFieldValue(view: CodeEditorView, name: String): Any? {
+        return CodeEditorView::class.java.getDeclaredField(name).apply { isAccessible = true }.get(view)
     }
 
     private fun privateInt(value: Any, name: String): Int =

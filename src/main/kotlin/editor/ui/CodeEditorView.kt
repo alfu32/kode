@@ -106,6 +106,7 @@ class CodeEditorView(
     private var transientHighlight: SelectionRange? = null
     private var warningLines: Set<Int> = emptySet()
     private var externalSuggestions: ((String) -> List<ExternalSuggestion>)? = null
+    private var autoShowExternalSuggestions = true
     private data class PendingFileLoad(val requestId: Long, val content: String)
     private val fileLoadSequence = AtomicLong(0L)
     private val pendingFileLoad = AtomicReference<PendingFileLoad?>(null)
@@ -134,8 +135,12 @@ class CodeEditorView(
         onInvalidate()
     }
 
-    fun setExternalSuggestions(provider: ((String) -> List<ExternalSuggestion>)?) {
+    fun setExternalSuggestions(
+        autoShow: Boolean = true,
+        provider: ((String) -> List<ExternalSuggestion>)?
+    ) {
         externalSuggestions = provider
+        autoShowExternalSuggestions = autoShow
     }
 
     fun insertTextAtCursor(text: String): Boolean {
@@ -847,7 +852,7 @@ class CodeEditorView(
                 ensureCursorVisible(rows, searchHeight, updatedLayout, gutterWidth)
                 if (textChanged) {
                     triggerCodeIntel()
-                    if (externalSuggestions != null && currentPrefix().isNotBlank()) {
+                    if (autoShowExternalSuggestions && externalSuggestions != null && currentPrefix().isNotBlank()) {
                         openSuggestions()
                     } else {
                         suggestionPopup = null
