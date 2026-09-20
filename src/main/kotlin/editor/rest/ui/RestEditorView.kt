@@ -794,16 +794,6 @@ class RestEditorView(
         }
         if (event.kind != "key_down") return false
         val key = event.key?.lowercase() ?: return true
-        if (responseTab == RestResponseTab.TRANSACTION && response != null) {
-            when (key) {
-                "up" -> { scrollTransaction(-1); return true }
-                "down" -> { scrollTransaction(1); return true }
-                "pageup" -> { scrollTransaction(-10); return true }
-                "pagedown" -> { scrollTransaction(10); return true }
-                "home" -> { transactionScroll = 0; onInvalidate(); return true }
-                "end" -> { transactionScroll = Int.MAX_VALUE; onInvalidate(); return true }
-            }
-        }
         if (event.ctrl && key == "enter") {
             onSend(currentPath)
             return true
@@ -822,6 +812,16 @@ class RestEditorView(
         }
         if (responseEditorFocused && responseEditorRegion != null) {
             return dispatchEditor(responseEditor, responseEditorRegion!!, event)
+        }
+        if (responseTab == RestResponseTab.TRANSACTION && response != null) {
+            when (key) {
+                "up" -> { scrollTransaction(-1); return true }
+                "down" -> { scrollTransaction(1); return true }
+                "pageup" -> { scrollTransaction(-10); return true }
+                "pagedown" -> { scrollTransaction(10); return true }
+                "home" -> { transactionScroll = 0; onInvalidate(); return true }
+                "end" -> { transactionScroll = Int.MAX_VALUE; onInvalidate(); return true }
+            }
         }
         if (key == "tab") {
             tab = nextTab()

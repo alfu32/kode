@@ -1,8 +1,13 @@
 package editor.rest
 
 import editor.lib.SystemClipboard
+import editor.rest.http.RestResponse
 import editor.rest.model.RestWorkspaceModel
+import editor.rest.model.RestNodePath
+import editor.rest.resolve.ResolvedRequest
+import editor.rest.ui.RestEditorTab
 import editor.rest.ui.RestEditorView
+import editor.rest.ui.RestResponseTab
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -44,4 +49,47 @@ class RestEditorViewTest {
         assertEquals("pasted", model.environment(environment.id)?.values?.single()?.key)
         assertEquals("ok", model.environment(environment.id)?.values?.single()?.value)
     }
+
+    @Test
+    fun focusedHeadersEditorKeepsArrowKeysWhenTransactionResponseIsVisible() {
+        val model = RestWorkspaceModel()
+        val path = model.addRequest(RestNodePath(), "Request")!!
+        val view = RestEditorView(
+            styleSheet = StyleSheet(),
+            model = model,
+            workspaceRoot = createTempDirectory("rest-header-editor"),
+            onSend = {},
+            onChanged = {},
+            onInvalidate = {}
+        )
+        view.open(path)
+        view.showResponse(
+            RestResponse(
+                request = ResolvedRequest(path, "GET", "https://example.test", emptyList()),
+                startedAt = 1L,
+                durationMs = 1L,
+                statusCode = 200,
+                bodyBytes = "ok".toByteArray()
+            )
+        )
+        setPrivate(view, "tab", RestEditorTab.HEADERS)
+        setPrivate(view, "responseTab", RestResponseTab.TRANSACTION)
+        val renderer = StringSnapshotRenderer(cols = 80, rows = 30)
+        view.render(renderer)
+        assertTrue(view.dispatch(UIEvent(kind = "mouse_down", x = 0, y = 9, cols = 80, rows = 30)))
+
+        val before = privateInt(view, "transactionScroll")
+        assertTrue(view.dispatch(UIEvent(kind = "key_down", key = "down", cols = 80, rows = 30)))
+        assertEquals(before, privateInt(view, "transactionScroll"))
+    }
+
+    private fun setPrivate(target: Any, name: String, value: Any) {
+        target.javaClass.getDeclaredField(name).apply {
+            isAccessible = true
+            set(target, value)
+        }
+    }
+
+    private fun privateInt(target: Any, name: String): Int =
+        target.javaClass.getDeclaredField(name).apply { isAccessible = true }.getInt(target)
 }
