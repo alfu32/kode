@@ -69,6 +69,9 @@ class RestPanelView(
     private var pendingRenamePath: RestNodePath? = null
     private var environmentSelectionId: String? = null
     private var pendingEnvironmentAction: String? = null
+    private var draggingEnvironmentSplitter = false
+    private var splitterRow = -1
+    private var environmentTop = -1
 
     override fun render(canvas: CanvasRenderer) {
         val cols = canvas.cols().coerceAtLeast(1)
@@ -97,7 +100,7 @@ class RestPanelView(
             filterRange = IntRange.EMPTY
         }
         val toolbar = mutableListOf<Hit>()
-        val toolbarWidth = if (cols >= 60) (cols / 2).coerceAtLeast(30) else cols
+        val toolbarWidth = cols
         renderButton(canvas, button, 0, 1, " [+request] ", Action.AddRequest(RestNodePath()), toolbar, toolbarWidth)
         renderButton(canvas, button, 13, 1, " [+folder] ", Action.AddFolder(RestNodePath()), toolbar, toolbarWidth)
         renderButton(canvas, button, 24, 1, " [run] ", Action.Run(RestNodePath()), toolbar, toolbarWidth)
@@ -111,10 +114,13 @@ class RestPanelView(
         }
         selected = selected.coerceIn(0, (lines.size - 1).coerceAtLeast(0))
         val listTop = 3
-        val sideEnvironmentWidth = if (cols >= 60) (cols / 2).coerceAtLeast(30) else 0
-        val treeWidth = if (sideEnvironmentWidth > 0) sideEnvironmentWidth else cols
-        val environmentHeight = if (sideEnvironmentWidth > 0) rows else minOf(8, (rows / 3).coerceAtLeast(5))
-        val treeBottom = if (sideEnvironmentWidth > 0) rows else (rows - environmentHeight).coerceAtLeast(listTop)
+        val canSplit = rows - listTop >= 10
+        val maxEnvironmentHeight = (rows - listTop - 4 - 1).coerceAtLeast(5)
+        val environmentHeight = if (canSplit) model.ui.environmentPanelHeight.coerceIn(5, maxEnvironmentHeight) else 0
+        splitterRow = if (canSplit) rows - environmentHeight - 1 else -1
+        environmentTop = if (canSplit) splitterRow + 1 else rows
+        val treeWidth = cols
+        val treeBottom = if (canSplit) splitterRow else rows
         val visible = (treeBottom - listTop).coerceAtLeast(0)
         scroll = scroll.coerceIn(0, (lines.size - visible).coerceAtLeast(0))
         val rowHits = mutableMapOf<Int, MutableList<Hit>>()
@@ -150,16 +156,13 @@ class RestPanelView(
             }
         }
         val environmentHits = mutableMapOf<Int, MutableList<Hit>>()
-        renderEnvironments(
-            canvas,
-            if (sideEnvironmentWidth > 0) sideEnvironmentWidth else 0,
-            if (sideEnvironmentWidth > 0) 0 else treeBottom,
-            if (sideEnvironmentWidth > 0) cols - sideEnvironmentWidth else cols,
-            rows,
-            base,
-            button,
-            environmentHits
-        )
+        if (canSplit) {
+            canvas.withStyle(styleSheet.getStyle("splitter").withDefaults(base.fg, base.bg)) {
+                drawText(0, splitterRow, "-".repeat(cols).take(cols))
+                if (cols >= 18) drawText(1, splitterRow, "[ environments ]".take(cols - 2))
+            }
+            renderEnvironments(canvas, 0, environmentTop, cols, rows, base, button, environmentHits)
+        }
         val allHits = mutableMapOf<Int, MutableList<Hit>>()
         allHits.getOrPut(1) { mutableListOf() }.addAll(toolbar)
         rowHits.forEach { (row, values) -> allHits.getOrPut(row) { mutableListOf() }.addAll(values) }
@@ -212,7 +215,24 @@ class RestPanelView(
             onInvalidate()
             return handled
         }
+        if (event.kind == "mouse_down" && splitterRow >= 0 && event.y == splitterRow) {
+            draggingEnvironmentSplitter = true
+            return true
+        }
+        if (event.kind == "mouse_move" && draggingEnvironmentSplitter) {
+            val rows = event.rows ?: return true
+            val y = event.y ?: return true
+            model.setEnvironmentPanelHeight(rows - y - 1)
+            onChanged()
+            onInvalidate()
+            return true
+        }
+        if (event.kind == "mouse_up") {
+            draggingEnvironmentSplitter = false
+            return true
+        }
         if (event.kind == "mouse_scroll") {
+            if (environmentTop >= 0 && (event.y ?: -1) >= environmentTop) return true
             scroll = (scroll - (event.scrollDelta ?: 0)).coerceAtLeast(0)
             onInvalidate()
             return true

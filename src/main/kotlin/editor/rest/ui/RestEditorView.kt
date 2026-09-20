@@ -131,6 +131,7 @@ class RestEditorView(
     private var entryKind: String = ""
     private var entryIndex: Int = -1
     private var draggingResponse = false
+    private var transactionScroll = 0
     private var revealSecrets = false
     private var requestBodyEditorFocused = false
     private var responseEditorFocused = false
@@ -147,6 +148,7 @@ class RestEditorView(
     private var headersEditorRegion: EditorRegion? = null
     private var rawRequestEditorRegion: EditorRegion? = null
     private var environmentEditorRegion: EditorRegion? = null
+    private var transactionRegion: EditorRegion? = null
     private val requestBodyEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
     private val responseEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
     private val headersEditor = CodeEditorView(styleSheet, syntaxProvider = syntaxProvider, onInvalidate = onInvalidate)
@@ -165,6 +167,7 @@ class RestEditorView(
         currentPath = path
         model.select(path)
         response = runResponses[path]
+        transactionScroll = 0
         runSummary = null
         running = false
         focused = null
@@ -195,6 +198,7 @@ class RestEditorView(
         running = true
         response = null
         streamText = ""
+        transactionScroll = 0
         runSummary = null
         onInvalidate()
     }
@@ -203,6 +207,7 @@ class RestEditorView(
         running = false
         response = result
         streamText = ""
+        transactionScroll = 0
         runResponses[currentPath] = result
         runSummary = null
         onInvalidate()
@@ -212,6 +217,7 @@ class RestEditorView(
         runResponses.clear()
         response = null
         streamText = ""
+        transactionScroll = 0
     }
 
     fun showStreamUpdate(text: String) {
@@ -241,6 +247,7 @@ class RestEditorView(
         headersEditorRegion = null
         rawRequestEditorRegion = null
         environmentEditorRegion = null
+        transactionRegion = null
         if (environmentId != null) {
             renderEnvironmentEditor(canvas, cols, rows, base, active)
             entryDialog?.render(canvas)
@@ -605,9 +612,13 @@ class RestEditorView(
         drawLine(canvas, base, start, "CLIENT", leftWidth)
         drawLineAt(canvas, base, rightX, start, "SERVER", rightWidth)
         val rows = (height - 1).coerceAtLeast(0)
+        val maxLines = maxOf(requestLines.size, responseLines.size)
+        transactionScroll = transactionScroll.coerceIn(0, (maxLines - rows).coerceAtLeast(0))
+        transactionRegion = EditorRegion(0, start + 1, cols, rows)
         repeat(rows) { index ->
-            drawLine(canvas, base, start + index + 1, requestLines.getOrNull(index).orEmpty(), leftWidth)
-            drawLineAt(canvas, base, rightX, start + index + 1, responseLines.getOrNull(index).orEmpty(), rightWidth)
+            val sourceIndex = transactionScroll + index
+            drawLine(canvas, base, start + index + 1, requestLines.getOrNull(sourceIndex).orEmpty(), leftWidth)
+            drawLineAt(canvas, base, rightX, start + index + 1, responseLines.getOrNull(sourceIndex).orEmpty(), rightWidth)
         }
     }
 
@@ -682,6 +693,10 @@ class RestEditorView(
             return handled
         }
         if (event.kind == "mouse_down" || event.kind == "mouse_scroll") {
+            if (event.kind == "mouse_scroll" && regionContains(transactionRegion, event)) {
+                scrollTransaction(-(event.scrollDelta ?: 0))
+                return true
+            }
             if (regionContains(environmentEditorRegion, event)) {
                 environmentEditorFocused = true
                 requestBodyEditorFocused = false
@@ -754,6 +769,16 @@ class RestEditorView(
         }
         if (event.kind != "key_down") return false
         val key = event.key?.lowercase() ?: return true
+        if (responseTab == RestResponseTab.TRANSACTION && response != null) {
+            when (key) {
+                "up" -> { scrollTransaction(-1); return true }
+                "down" -> { scrollTransaction(1); return true }
+                "pageup" -> { scrollTransaction(-10); return true }
+                "pagedown" -> { scrollTransaction(10); return true }
+                "home" -> { transactionScroll = 0; onInvalidate(); return true }
+                "end" -> { transactionScroll = Int.MAX_VALUE; onInvalidate(); return true }
+            }
+        }
         if (event.ctrl && key == "enter") {
             onSend(currentPath)
             return true
@@ -975,6 +1000,11 @@ class RestEditorView(
         workspaceRoot,
         model.activeEnvironmentVariables()
     )
+
+    private fun scrollTransaction(delta: Int) {
+        transactionScroll = (transactionScroll + delta).coerceAtLeast(0)
+        onInvalidate()
+    }
 
     private fun syncFields() {
         val node = model.node(currentPath) ?: model.collection

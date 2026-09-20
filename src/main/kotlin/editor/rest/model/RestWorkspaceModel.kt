@@ -105,6 +105,11 @@ class RestWorkspaceModel(
         onChanged?.invoke()
     }
 
+    fun setEnvironmentPanelHeight(height: Int) {
+        ui = ui.copy(environmentPanelHeight = height.coerceIn(5, 60))
+        onChanged?.invoke()
+    }
+
     fun setPrettyPrintResponses(enabled: Boolean) {
         ui = ui.copy(prettyPrintResponses = enabled)
         onChanged?.invoke()
