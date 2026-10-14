@@ -40,6 +40,7 @@
 - About panel: lists the current build version, the Kode MIT license, and credits (license links + source URLs) for bundled libraries (JGit, Korim/Korio, kotlinx-coroutines, kotlinx-serialization, JNA, ttyd, Tree-sitter).
 - Installation/run: build generates `kode.sh`/`kode.bat`/`kode.cmd` and `kode.ps1` launchers that set `-Dkode.home` to the install folder, so resources (styles, tm-scopes) load correctly even when binaries are invoked from elsewhere. `kode.jar` lives alongside these scripts in the bundle. The PowerShell launcher enables VT output for Windows consoles before running `java -jar`.
 - Code highlighting: keyword-only regex highlighter; patterns come from `keyword-patterns.txt` (language=regex) and colors from `token-colors.txt` (qualifier=hex). Tokens carry fg color directly to avoid stylesheet lookups.
+- Syntax suggestions include systemd unit directives and C+ (`.cp`) keywords; systemd unit types are routed to the systemd highlighter.
 - Hex editor: dual cursors (hex/ASCII), scroll keys, selection, and byte-buffer backing.
 - Image viewer: ASCII and Braille modes, width/gray/contrast sliders (mouse drag/click, toggle button), aspect-aware sizing, per-cell color from Korim-rendered samples.
 
