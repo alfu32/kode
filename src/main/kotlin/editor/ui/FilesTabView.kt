@@ -115,7 +115,7 @@ class FilesTabView(
                     return true
                 }
             }
-            if (mouseY == 0) return false
+            if (mouseY == 0 && event.kind != "mouse_move") return false
             if (hasRecents && mouseY in 1 until (headerRows + 1)) {
                 if (event.kind == "mouse_down") {
                     val idx = (mouseY - 2 + recentScroll)

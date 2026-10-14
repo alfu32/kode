@@ -22,6 +22,7 @@ class FileTreeView(
 ) : BaseComponent(styleSheet) {
 
     private var selectedPath: String? = null
+    private var hoveredPath: String? = null
     private var scrollOffset: Int = 0
     private val buttonAreas = mutableListOf<ButtonArea>()
     private val headerButtons = mutableListOf<ButtonArea>()
@@ -45,6 +46,7 @@ class FileTreeView(
     fun setTree(newTree: IFileTree) {
         tree = newTree
         selectedPath = null
+        hoveredPath = null
         scrollOffset = 0
         renameTarget = null
         renameDialog = null
@@ -123,35 +125,43 @@ class FileTreeView(
                     else -> "[=] "
                 }
                 val baseText = indent + prefix
-                val buttonStart = (cols - buttonsWidth).coerceAtLeast(baseText.length + 1)
+                val isHovered = entry.fullPath == hoveredPath
+                val metadata = rowMetadata(entry)
+                val rightWidth = if (isHovered) buttonsWidth else metadata.length
+                val buttonStart = (cols - rightWidth).coerceAtLeast(baseText.length + 1)
                 val nameSpace = (buttonStart - baseText.length).coerceAtLeast(1)
                 val name = entry.name.take(nameSpace)
                 val lineText = (baseText + name).padEnd(buttonStart, ' ')
                 drawText(0, rowY, lineText.take(cols))
 
-                var cursor = buttonStart
-                val actions = if (entry.typ == "folder") {
-                    listOf(
-                        Button(entry.fullPath, ButtonType.RENAME),
-                        Button(entry.fullPath, ButtonType.NEW_DIR),
-                        Button(entry.fullPath, ButtonType.NEW_FILE),
-                        Button(entry.fullPath, ButtonType.DELETE)
-                    )
+                if (!isHovered) {
+                    val metadataStart = (cols - metadata.length).coerceAtLeast(0)
+                    drawText(metadataStart, rowY, metadata.take(cols - metadataStart))
                 } else {
-                    listOf(
-                        Button(entry.fullPath, ButtonType.RENAME),
-                        Button(entry.fullPath, ButtonType.DELETE)
-                    )
-                }
-                actions.forEach { btn ->
-                    val label = btn.label
-                    val start = cursor
-                    val end = (cursor + label.length).coerceAtMost(cols)
-                    if (start < cols) {
-                        drawText(start, rowY, label.take(cols - start))
-                        buttonAreas += ButtonArea(rowY, start until end, btn)
+                    var cursor = buttonStart
+                    val actions = if (entry.typ == "folder") {
+                        listOf(
+                            Button(entry.fullPath, ButtonType.RENAME),
+                            Button(entry.fullPath, ButtonType.NEW_DIR),
+                            Button(entry.fullPath, ButtonType.NEW_FILE),
+                            Button(entry.fullPath, ButtonType.DELETE)
+                        )
+                    } else {
+                        listOf(
+                            Button(entry.fullPath, ButtonType.RENAME),
+                            Button(entry.fullPath, ButtonType.DELETE)
+                        )
                     }
-                    cursor += label.length
+                    actions.forEach { btn ->
+                        val label = btn.label
+                        val start = cursor
+                        val end = (cursor + label.length).coerceAtMost(cols)
+                        if (start < cols) {
+                            drawText(start, rowY, label.take(cols - start))
+                            buttonAreas += ButtonArea(rowY, start until end, btn)
+                        }
+                        cursor += label.length
+                    }
                 }
 
             }
@@ -202,6 +212,15 @@ class FileTreeView(
         val visibleCount = (rows - 1).coerceAtLeast(0)
 
         return when (event.kind) {
+            "mouse_move" -> {
+                val y = event.y ?: return false
+                val index = scrollOffset + y - 1
+                val next = if (y in 1 until rows && index in entries.indices) entries[index].fullPath else null
+                if (next == hoveredPath) false else {
+                    hoveredPath = next
+                    true
+                }
+            }
             "mouse_scroll" -> {
                 val delta = event.scrollDelta ?: 0
                 if (delta == 0) return false
@@ -325,6 +344,29 @@ class FileTreeView(
             .getOrElse { mimeDetector.detectFilename(name) }
         mimeCache[path] = MimeCacheEntry(lastModified, size, result)
         return result
+    }
+
+    private fun rowMetadata(entry: FileTreeEntry): String = when (entry.typ) {
+        "folder" -> {
+            val count = runCatching {
+                File(entry.fullPath).listFiles()?.count { it.name != ".kode" && it.name != ".kode.json" } ?: 0
+            }.getOrDefault(0)
+            "$count items"
+        }
+        "file" -> humanSize(File(entry.fullPath).length())
+        else -> entry.typ
+    }
+
+    private fun humanSize(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val units = listOf("KiB", "MiB", "GiB", "TiB", "PiB")
+        var value = bytes.toDouble()
+        var unit = -1
+        do {
+            value /= 1024.0
+            unit++
+        } while (value >= 1024.0 && unit < units.lastIndex)
+        return "%.1f %s".format(java.util.Locale.ROOT, value, units[unit])
     }
 
     private data class MimeCacheEntry(
